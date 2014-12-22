@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<!--
+Copyright 2013 Juergen Wothke
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+Author: Juergen Wothke 
+
+Credits: The visualization used on this page was strongly "inspired" by <a target="_blank" href="http://html5-demos.appspot.com/static/webaudio/createMediaSourceElement.html">this demo</a>
+-->
+<html>
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="X-UA-Compatible" content="chrome=1" />
+<title>TinyJSid - the first HTML5/JavaScript C64 music player</title>
+
+<meta name="description" content="Experimental JavaScript version of Tiny'R'Sid">
+<meta name="author" content="Juergen Wothke">
+<meta name="keywords" content="Web Audio API, HTML5, JavaScript, C64, SID, music, Tiny'R'Sid, TinyJSid">
+
+<!--link href="http://fonts.googleapis.com/css?family=Open+Sans:300" rel="stylesheet" type="text/css"-->
+<link href="font.css" rel="stylesheet" type="text/css">
+<link href="common.css" rel="stylesheet" type="text/css">
+<link rel="image_src" href="screenshot.gif" />
+
+
+
+<link rel="icon" href="favicon.ico" type="image/x-icon">
+<link rel="shortcut icon" type="image/x-icon" href="favicon.ico" />
+<link type="image/x-icon" href="favicon.ico" />
+
+
+<script type="text/javascript" src="tinyrsid.js"></script>
+<script type="text/javascript" src="tinyrsid_player.js"></script>
+
+
+<script>
+var someSongs = [	'/MUSICIANS/G/Galway_Martin/Arkanoid.sid;0;142',
+					'/MUSICIANS/G/Galway_Martin/Neverending_Story.sid;0;227',
+					'/MUSICIANS/G/Galway_Martin/Street_Hawk.sid;0;355',
+					'/MUSICIANS/0-9/20CC/Paul_Falco/Spijkerhoek_3.sid;0;126',
+					'/MUSICIANS/C/Crowther_Antony/R1D1.sid;0;141',
+					'/MUSICIANS/M/Mahoney/Monophono.sid;0;266',
+					'/MUSICIANS/M/Mitch_and_Dane/Dane/Andropolis.sid;0;372',
+					'/MUSICIANS/M/Mitch_and_Dane/Dane/Departure_I.sid;0;84',
+					'/MUSICIANS/M/Mitch_and_Dane/Dane/Eskimonika.sid;0;226',
+					'/MUSICIANS/M/Mitch_and_Dane/Dane/These_Greys.sid;0;99',
+					'/MUSICIANS/N/Norman_Paul/Super_Huey.sid;0;41',
+					'/MUSICIANS/P/PVCF/2_Canal_Diggi.sid;0;73',
+					'/MUSICIANS/D/Daglish_Ben/Kettle.sid;0;159',
+					'/MUSICIANS/D/Daglish_Ben/W_E_M_U_S_I_C_1.sid;7;116',
+					'/MUSICIANS/D/Daglish_Ben/Trap.sid;0;586',
+					'/MUSICIANS/D/Deenen_Charles/Eye_to_Eye_intro.sid;0;70',
+					'/MUSICIANS/F/Follin_Tim/Ghouls_n_Ghosts.sid;0;260',
+					'/MUSICIANS/G/Gray_Fred/ShadowFire.sid;1;88',
+					'/MUSICIANS/G/Gray_Fred/Implosion.sid;1;84',
+					'/MUSICIANS/G/Gray_Matt/Quedex.sid;0;241',
+					'/MUSICIANS/M/Mad_Donne_Marcel/Personal_Lady_intro.sid;0;79',
+					'/MUSICIANS/R/Red_Kimmel_Jeroen/Red_Hubbard.sid;0;35',
+					'/MUSICIANS/T/Tel_Jeroen/S-Express.sid;0;108',
+					'/MUSICIANS/T/Tel_Jeroen/Noisy_Pillars.sid;2;77',
+					'/MUSICIANS/T/THCM/Vicious_SID_part_2.sid;0;237',
+					'/MUSICIANS/T/THCM/Vicious_SID_2-Blood_Money.sid;0;253',
+					'/MUSICIANS/H/Hubbard_Rob/Delta.sid;11;77',
+					'/MUSICIANS/H/Hubbard_Rob/Zoolook.sid;0;260',
+					'/MUSICIANS/H/Hubbard_Rob/W_A_R.sid;0;574',
+					'/MUSICIANS/H/Hubbard_Rob/Nemesis_the_Warlock.sid;0;413',
+					'/MUSICIANS/H/Hubbard_Rob/Kentilla.sid;0;779'
+				];
+
+// ---------------------    setup player -----------------------------------
+var player= new SamplePlayer(onEnd);
+
+function onEnd() {
+	audio.playNextSong();
+
+}
+
+// ---------------------    drag&drop feature -----------------------------------
+function allowDrop(ev) {
+    ev.preventDefault();
+}
+function drop(ev) {
+    ev.preventDefault();
+    var data = ev.dataTransfer.getData("Text");
+	var file = ev.dataTransfer.files[0];
+	if (file instanceof File) {
+		var f= window.audio['playSongFile'].bind(window.audio);
+		f(file, 0, -1);
+	}
+}
+
+// ---------------------    WebAudio setup -----------------------------------
+Audio = function(songs, onUpdate) {
+	this.audioCtx;
+	this.bufferSource;
+	this.gainNode;
+	this.analyzerNode;
+	
+	this.current=-1;
+	this.someSongs= songs;
+	this.onUpdate= onUpdate;
+};
+
+Audio.prototype = {
+	initialAudioSetup: function() {
+		if (typeof this.bufferSource != 'undefined') { 
+			this.bufferSource.stop(0);
+		} else {
+			this.setupAudioNodes();
+		}
+	},
+	setupAudioNodes: function() {
+		if (typeof this.audioCtx == 'undefined') {
+			try {
+				window.AudioContext = window.AudioContext||window.webkitAudioContext;
+				this.audioCtx = new AudioContext();
+			} catch(e) {
+				alert('Web Audio API is not supported in this browser (get Chrome 18 or Firefox 26)');
+			}
+			this.analyzerNode = this.audioCtx.createAnalyser();
+			var scriptNode = player.createScriptProcessor(this.audioCtx);
+			this.gainNode = this.audioCtx.createGain();
+						
+			scriptNode.connect(this.gainNode);
+			this.gainNode.connect(this.analyzerNode);
+			this.analyzerNode.connect(this.audioCtx.destination);
+		}
+	},
+	playNextSong: function() {
+		this.current= (++this.current >=this.someSongs.length) ? 0 : this.current;
+		var someSong= this.someSongs[this.current];
+		this.playSong(someSong);
+	},
+	playPreviousSong: function() {
+		this.current= (--this.current<0) ? this.current+this.someSongs.length : this.current;
+		var someSong= this.someSongs[this.current];
+		this.playSong(someSong);
+	},
+	playSongFile: function(file, track, timeout) {
+		var reader = new FileReader();
+		reader.onload = function() {		
+			this.playSongBinary(new Uint8Array(reader.result), track, timeout);
+		}.bind(this);
+		reader.readAsArrayBuffer(file);		
+	},
+	playSongBinary: function(data, track, timeout) {
+		player.playSong(data, track, timeout);
+
+		this.initialAudioSetup();			
+		this.onUpdate();
+		this.startMusicPlayback();	
+	},
+	playSong: function(someSong) {
+		var arr= someSong.split(";");	
+		var track= arr.length>1?parseInt(arr[1]):-1;
+		var timeout= arr.length>2?parseInt(arr[2]):-1;
+			
+		var xhr = new XMLHttpRequest();
+		xhr.open("GET", "/provence/proxy/index.php?http://hvsc.perff.dk"+arr[0], true);
+		xhr.responseType = "arraybuffer";
+
+		xhr.onload = function (oEvent) {
+			this.playSongBinary(xhr.response, track, timeout);
+		}.bind(this);
+		xhr.send(null);
+	},
+	startMusicPlayback: function() {
+		player.setPauseMode(false);
+
+		if (typeof this.bufferSource === 'undefined') {
+			this.bufferSource = this.audioCtx.createBufferSource();
+			if (!this.bufferSource.start) {
+			  this.bufferSource.start = this.bufferSource.noteOn;
+			  this.bufferSource.stop = this.bufferSource.noteOff;
+			}
+			this.bufferSource.start(0);		
+		}
+	},
+};
+
+// ----------------------- setup some visuals ----------------------------
+Graphix = function(audio) {
+	this.audio= audio;
+	
+	this.WIDTH= 800;
+	this.HEIGHT= 200;
+	
+	this.canvasSpectrum = document.getElementById('spectrum');
+	this.ctxSpectrum = this.canvasSpectrum.getContext('2d');
+	this.canvasSpectrum.width = this.WIDTH;
+
+	var canvas2 = document.getElementById('logo');
+	this.ctxLegend = canvas2.getContext('2d');
+};
+
+Graphix.prototype = {
+	reqAnimationFrame: function() {
+		window.requestAnimationFrame(this.redrawSpectrum.bind(this));
+	},
+	redrawSpectrum: function() {
+		this.reqAnimationFrame();
+		
+		var freqByteData = new Uint8Array(this.audio.analyzerNode.frequencyBinCount);
+		this.audio.analyzerNode.getByteFrequencyData(freqByteData);
+
+		var SPACER_WIDTH = 10;
+		var BAR_WIDTH = 5;
+		var OFFSET = 100;
+
+		var numBars = Math.round(this.WIDTH / SPACER_WIDTH);
+
+		this.ctxSpectrum.clearRect(0, 0, this.WIDTH, this.HEIGHT);
+
+		this.ctxSpectrum.fillStyle = '#F6D565';
+		this.ctxSpectrum.lineCap = 'round';
+
+		for (var i = 0; i < numBars; ++i) {
+		var magnitude = freqByteData[i + OFFSET]*this.HEIGHT/255;
+			this.ctxSpectrum.fillRect(i * SPACER_WIDTH, this.HEIGHT, BAR_WIDTH, -magnitude);
+		}
+	},
+	text: function(ctx, text, x, y) {
+		ctx.strokeText(text, x, y);
+		ctx.fillText(text, x, y);
+	},
+	redrawSongInfo: function() {
+		this.reqAnimationFrame();
+		
+		this.ctxLegend.clearRect(0, 0, 800, 300);
+		
+		this.ctxLegend.textBaseline = "middle";
+		this.ctxLegend.fillStyle = '#000';
+		this.ctxLegend.strokeStyle = "#FFFFFF";
+		
+		this.ctxLegend.font = '90px serif bold';
+		
+		this.text(this.ctxLegend, "Tiny'R'Sid", 20, 70);
+		this.ctxLegend.font = '25px sans-serif';
+		this.text(this.ctxLegend, "c64 music nostalgia", 20, 125);
+
+		this.ctxLegend.fillStyle = '#888';
+		this.ctxLegend.font = '25px sans-serif';
+
+		this.ctxLegend.textBaseline = 'bottom';
+		this.text(this.ctxLegend, player.songName, 20, 190);
+		this.text(this.ctxLegend, player.songAuthor, 20, 230);
+		this.text(this.ctxLegend, player.songReleased, 20, 270);
+	},
+};
+
+function updateGUI() {
+	gfx.reqAnimationFrame();
+	gfx.redrawSongInfo();
+}
+
+
+// ----------------------- get the party going  --------------------------
+function init() {
+	audio= new Audio(someSongs, updateGUI);
+	gfx= new Graphix(audio);
+
+	document.getElementById("previous").onclick = audio.playPreviousSong.bind(audio);
+	document.getElementById("next").onclick = audio.playNextSong.bind(audio);
+			
+	document.getElementById("play").onclick = function(e){
+		player.setPauseMode(false);
+	};
+	document.getElementById("pause").onclick = function(e){
+		player.setPauseMode(true);
+	};
+	document.getElementById("gain").onchange = function(e){
+		audio.gainNode.gain.value= this.value/255;
+	};
+	document.getElementById("speed").onchange = function(e){
+		var tweak= 0.2; 			// allow 20% speed correction
+		var f= (this.value/50)-1;	// -1..1
+		
+		var s= player.getDefaultSampleRate();		
+		s= Math.round(s*(1+(tweak*f)));
+		
+		player.setSampleRate(s);
+	};
+
+	audio.playNextSong();
+}
+
+</script>
+
+</head>
+
+<body onload="init();">
+<div class="tooltip" alt="This is a hobby project, but it costs not only time to regularily maintain this site but also money to pay for the internet service provider (etc). If you want to keep this site up and running.. or if you just like my work (see https://jwothke.wordpress.com/) and you'd like to see more of it in the future, please make a contribution. Thank you!">
+<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_blank">
+<input type="hidden" name="cmd" value="_s-xclick">
+<input type="hidden" name="hosted_button_id" value="E7ACAHA7W5FYC">
+<input type="image" src="https://www.paypalobjects.com/en_US/i/btn/btn_donate_LG.gif" border="0" name="submit" alt="PayPal - The safer, easier way to pay online!">
+<img alt="" border="0" src="https://www.paypalobjects.com/en_US/i/scr/pixel.gif" width="1" height="1">
+</form>
+</div>
+
+<details>
+  <summary>What's this?</summary>
+  <div>
+    Experimental JavaScript/HTML5 version of <a href="http://www.wothke.ch/tinyrsid/" target="_blank">Tiny'R'Sid</a>.
+ 
+  <p>2013 by Juergen Wothke </p>
+ 
+  <p>This page does not use any plugins but is based exclusively on the draft version Web Audio API. 
+  You'll need Chrome or Firefox 26 (Nightly) to make it play the music. The visual effects 
+  work best in Chrome. (If Firefox passes out - press 'reload'... it's experimental.)
+  
+  <p>Contrarry to most other HTML5 based pages out there, the music here is NOT based on  
+  OscillatorNode based waveforms or the playback of some sampledata file. Instead the samples here 
+  are completely calculated within JavaScript. The respective logic emulates a C64 and plays back an
+  original *.sid file (You can use your own *.sid files by dropping them on the floppy drive image.).</p>
+  
+ <p>Credits: The Tiny'R'Sid JavaScript code was generated using <a href="https://github.com/kripken/emscripten/wiki" target="_blank">emscripten</a>.</p>
+ 
+ <p>Please use controls on the right (e.g. to play another song): 
+<button id="play"> &gt;</button>
+<button id="pause"> ||</button>
+<button id="previous"> |&lt;&lt;</button>
+<button id="next"> &gt;&gt;|</button>
+<input type="range" id="gain" name="gain" min="1" max="255" value="255">
+<input type="range" id="speed" name="speed" min="0" max="100" value="50">
+
+ </div>
+</details>
+<aside>
+  
+</aside>
+
+<section>
+  <div>
+	<canvas id="logo" class="logo" width="800" height="290"></canvas>
+    <canvas id="spectrum" class="spectrum" width="512" height="200"></canvas>
+  </div>
+  <div id="drop" class="drop" ondrop="drop(event)" ondragover="allowDrop(event)">
+ <img src="floppy_blinking2.gif" />
+  </div>
+  
+</section>
+
+</body>
+</html>
