@@ -46,7 +46,7 @@ void push(unsigned char val);
 unsigned char isIrqBlocked();
 unsigned char getmem(unsigned short addr);
 void sidPoke(int reg, unsigned char val);
-void synth_render (dword *buffer, unsigned long len);
+void synth_render (short *buffer, unsigned long len);
 void memSet(unsigned char *mem, char val, int len);
 
 #ifdef DEBUG

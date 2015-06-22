@@ -60,9 +60,10 @@ static unsigned long sPlaySpeed;
 
 unsigned char sMainProgStatus= 0; 				// 0: completed 1: interrupted by cycleLimit
 
-		
-dword sSoundBuffer[8*882];		// make it large enough for data of 8 PAL screens.. (allocate statically to ease passing to ActionScript)
-dword * sSynthBuffer= 0;
+#define BUFLEN 8*882
+int sSoundBufferLen= BUFLEN;
+short sSoundBuffer[BUFLEN];		// make it large enough for data of 8 PAL screens.. (allocate statically to ease passing to ActionScript)
+short * sSynthBuffer= 0;
 unsigned char * sDigiBuffer= 0;	// only contains the digi data for 1 screen .. and is directly merged into the sSoundBuffer
 
 unsigned long sChunkSize; 
@@ -102,7 +103,7 @@ void initBuffers() {
 	if (sSynthBuffer)	free(sSynthBuffer);
 	if (sDigiBuffer)	free(sDigiBuffer);
 
-	sSynthBuffer= (dword*)malloc(sizeof(dword)*sNumberOfSamplesPerCall + 1);
+	sSynthBuffer= (short*)malloc(sizeof(short)*sNumberOfSamplesPerCall + 1);
 	sDigiBuffer= (unsigned char*)malloc(sizeof(char*)*sNumberOfSamplesPerCall + 1);	
 }
 
@@ -114,7 +115,7 @@ unsigned char sMemorySnapshot[MEMORY_SIZE];
 /*
 * @param digi   is an unsigned 8-bit sample (i.e. origial $d418 4-bit samples have already been shifted
 */
-static int genDigi(int in, unsigned char digi) { 
+static short genDigi(short in, unsigned char digi) { 
     // transform unsigned 8 bit range into signed 16 bit (–32,768 to 32,767) range	(
 	// shift only 7 instead of 8 because digis are otherwise too loud)	
 	signed long value = in + (((digi & 0xff) << 7) - 0x4000); 
@@ -124,11 +125,12 @@ static int genDigi(int in, unsigned char digi) {
 		value = -clipValue;
 	} else if ( value > clipValue ) {
 		value = clipValue;
-	}	
-    return value;
+	}
+	short out= value;
+    return out;
 }
 
-static void mergeDigi(int hasDigi, dword *sound_buffer, unsigned char *digi_buffer, unsigned long len) {
+static void mergeDigi(int hasDigi, short *sound_buffer, unsigned char *digi_buffer, unsigned long len) {
 	if (hasDigi) {
 		int i;
 		for (i= 0; i<len; i++) {
@@ -189,7 +191,7 @@ static int EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 		if (sNumberOfSamplesRendered + sNumberOfSamplesToRender > sChunkSize) {
 			int availableSpace = sChunkSize-sNumberOfSamplesRendered;
 			
-			memcpy(&sSoundBuffer[sNumberOfSamplesRendered], &sSynthBuffer[sampleBufferIdx], sizeof(dword)*availableSpace);
+			memcpy(&sSoundBuffer[sNumberOfSamplesRendered], &sSynthBuffer[sampleBufferIdx], sizeof(short)*availableSpace);
 	
 			mergeDigi(hasDigi, &sSoundBuffer[sNumberOfSamplesRendered], &sDigiBuffer[sampleBufferIdx], availableSpace);			
 			
@@ -197,7 +199,7 @@ static int EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 			sNumberOfSamplesToRender -= availableSpace;
 			sNumberOfSamplesRendered = sChunkSize;
 		} else {
-			memcpy(&sSoundBuffer[sNumberOfSamplesRendered], &sSynthBuffer[sampleBufferIdx], sizeof(dword)*sNumberOfSamplesToRender);
+			memcpy(&sSoundBuffer[sNumberOfSamplesRendered], &sSynthBuffer[sampleBufferIdx], sizeof(short)*sNumberOfSamplesToRender);
 
 			mergeDigi(hasDigi, &sSoundBuffer[sNumberOfSamplesRendered], &sDigiBuffer[sampleBufferIdx], sNumberOfSamplesToRender);
 		
@@ -257,8 +259,8 @@ static void setupPsidPlayMemoryBank() {
 	}	
 }
 
-static void playTune(int selectedTrack)  __attribute__((noinline));
-static void EMSCRIPTEN_KEEPALIVE playTune(int selectedTrack) {
+static int playTune(int selectedTrack)  __attribute__((noinline));
+static int EMSCRIPTEN_KEEPALIVE playTune(int selectedTrack) {
 	sActualSubsong= selectedTrack;
 
 	reInitEngine();
@@ -303,7 +305,7 @@ static void EMSCRIPTEN_KEEPALIVE playTune(int selectedTrack) {
 		
 	initBuffers();
 	setupPsidPlayMemoryBank();
-	
+	return 0;
 }
 
 	// 0: loadAddr;
@@ -317,9 +319,9 @@ void* loadResult [7];
 
 static 	char song_name[32], song_author[32], song_copyright[32];
 
-static void * loadSidFile(void * inBuffer, int inBufSize)  __attribute__((noinline));
-static void * EMSCRIPTEN_KEEPALIVE loadSidFile(void * inBuffer, int inBufSize) {
-    sSampleRate= 44100;
+static int loadSidFile(void * inBuffer, int inBufSize)  __attribute__((noinline));
+static int EMSCRIPTEN_KEEPALIVE loadSidFile(void * inBuffer, int inBufSize) {
+    sSampleRate= 44100;		// TODO: extend API & use actual target sample rate
 	sInitAddr= 0;
 	sPlayAddr= 0;
 	sLoadEndAddr= 0;
@@ -357,11 +359,25 @@ static void * EMSCRIPTEN_KEEPALIVE loadSidFile(void * inBuffer, int inBufSize) {
 	loadResult[5]= song_author;
 	loadResult[6]= song_copyright;
 
+	return 0;
+}
+
+static char** getMusicInfo() __attribute__((noinline));
+static char** EMSCRIPTEN_KEEPALIVE getMusicInfo() {
 	return loadResult;
 }
 
-static dword* getSoundBuffer() __attribute__((noinline));
-static dword* EMSCRIPTEN_KEEPALIVE getSoundBuffer() {
-	return sSoundBuffer;
+static int getSoundBufferLen() __attribute__((noinline));
+static int EMSCRIPTEN_KEEPALIVE getSoundBufferLen() {
+	return sNumberOfSamplesRendered;	// in samples
 }
 
+static char* getSoundBuffer() __attribute__((noinline));
+static char* EMSCRIPTEN_KEEPALIVE getSoundBuffer() {
+	return (char*) sSoundBuffer;
+}
+
+static int getSampleRate() __attribute__((noinline));
+static int EMSCRIPTEN_KEEPALIVE getSampleRate() {
+	return sSampleRate;
+}

@@ -12,6 +12,14 @@
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
 
+
+This is a JavaScript/WebAudio plugin of Tiny'R'Sid. This plugin is designed to work with version 1.0 of my 
+generic WebAudio ScriptProcessor music player (see separate project). 
+
+It allows to play RSID and PSID format *.sid music files. (Respective music files can be found here: http://www.hvsc.c64.org/)
+
+A live demo of this program can be found here: http://www.wothke.ch/websid/
+
 Howto build:
 
 You'll need Emscripten (I used the win installer on WinXP: emsdk-1.13.0-full-32bit.exe which could be found here: 

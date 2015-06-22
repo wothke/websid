@@ -298,7 +298,7 @@ void synth_init(unsigned long mixfrq)
 }
 
 // render a buffer of n samples with the actual register contents
-void synth_render (dword *buffer, unsigned long len)
+void synth_render (short *buffer, unsigned long len)
 {
     unsigned long bp;
     // step 1: convert the not easily processable sid registers into some
@@ -555,14 +555,15 @@ void synth_render (dword *buffer, unsigned long len)
 		final_sample= GenerateDigi(final_sample);		// Rockbox <<13
 
 		// Clipping
-		const int clipValue = 32700; // 32767
+		const int clipValue = 32767;
 		if ( final_sample < -clipValue ) {
 			final_sample = -clipValue;
 		} else if ( final_sample > clipValue ) {
 			final_sample = clipValue;
 		}
 
-		*(buffer+bp)=(signed short) final_sample;
+		short out= final_sample;
+		*(buffer+bp)= out;
     }
 }
 

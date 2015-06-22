@@ -5,7 +5,7 @@ extern word sInitAddr, sPlayAddr, sLoadEndAddr;
 
 extern unsigned char sIsPSID;
 extern unsigned long sIrqTimeout;
-extern dword * sSynthBuffer;
+extern short * sSynthBuffer;
 extern unsigned char * sDigiBuffer;
 
 extern unsigned long sTotalCyclesPerScreen;

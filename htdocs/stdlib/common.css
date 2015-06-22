@@ -1,3 +1,4 @@
+/* general definitions for background, <details>, etc*/
 ::selection {
   color: #eee;
   background: darkred;
@@ -30,12 +31,6 @@ body ::-webkit-scrollbar-button {
 }
 body ::-webkit-scrollbar-corner {
   background: transparent;
-}
-html, body {
-  height: 100%;
-  overflow: hidden;
-  margin: 0;
-  padding: 0;
 }
 body {
   color: #222;
@@ -76,6 +71,11 @@ details > summary {
   cursor: pointer;
   white-space: nowrap;
 }
+/* Firefox workaround */
+.no-details details > summary:before { float: left; width: 15px; content: '\25B6'; }
+.no-details details.open > summary:before { content: '\25BC'; }
+
+
 button {
   display: inline-block;
   background: -webkit-gradient(linear, 0% 40%, 0% 70%, from(#F9F9F9), to(#E3E3E3));
@@ -111,11 +111,35 @@ button:not(:disabled).active {
   background: -o-linear-gradient(#E3E3E3 40%, #F9F9F9 70%);
   background: linear-gradient(#E3E3E3 40%, #F9F9F9 70%);
 }
+
+
 input[type="range"]{
-  -webkit-appearance: none !important;
+  -webkit-appearance: none !important;  
+  margin: -5px 0;	/*align with center line of buttons in FF*/
+}
+
+input[type=range]::-webkit-slider-runnable-track {
   background-color: #555;
   box-shadow: 0 -1px 1px rgba(255,255,255,0.5) inset;
   border-radius: 10px;
+}
+
+input[type="range"]::-moz-range-track {
+  border: 0px;
+  background: #555;
+  height: 7px;
+  border-radius: 10px;
+  top: 45px;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 20px;
+  height: 7px;
+  box-shadow: 1px 1px 5px rgba(0,0,0,1);
+  border-radius: 2px;
+  cursor: pointer;
+  border-top: 1px solid #fff;
+  background: #ccc -moz-linear-gradient(top, rgb(240, 240, 240), rgb(210, 210, 210));
 }
 
 input[type="range"]::-webkit-slider-thumb {
@@ -152,9 +176,11 @@ body > section {
   box-sizing: border-box;
   height: 100%;
   -webkit-perspective: 900;
-  -moz-perspective: 900;
+  -moz-perspective: 900px;
+  perspective: 900px;
   -webkit-transform-style: preserve-3d;
   -moz-transform-style: preserve-3d;
+
 }
 section > * {
   display: -webkit-flex;
@@ -176,6 +202,7 @@ section > * {
 	top: 15px;
 	left: -10px;
 	padding: 5px 15px;
+	z-index: 101;
 
 }
 .tooltip:hover
@@ -194,7 +221,7 @@ section > * {
     float: right;
 	display: inline;
 	background: #333;
-	background: rgba(254,233,192,1.0);
+	background: rgba(254,233,192,.9);
 	border: solid;
 	border-width: 1px;
 	border-radius: 5px;
@@ -204,7 +231,7 @@ section > * {
 	left: -400px;
 	padding: 5px 15px;
 	position: absolute;
-	z-index: 101;
+	z-index: 102;
 	width: 350px;
 }
 .tooltip:hover:before
@@ -216,49 +243,18 @@ section > * {
 	border-width: 6px 0px 6px 6px;
 	top: 20px;
 	content: "";
-	left: -125px;
+	left: -120px;
 	position: relative;
 	z-index: 102;
 }
-.logo {
-  position: relative;
-  top: 40px;
-  left: 800px;
-z-index:2;
 
-}
-#logo {
-  -webkit-transform: translateX(-50px) translateY(50px) translateZ(-290px) rotateX(-10deg) rotateY(-55deg) rotateZ(0deg);
-  -moz-transform: translateX(-50px) translateY(50px) translateZ(-290px) rotateX(-10deg) rotateY(-55deg) rotateZ(0deg);
-  -webkit-box-reflect: below 0px -webkit-linear-gradient(top, transparent 30%, transparent 50%, rgba(255,255,255,0.4));
-}
-.spectrum {
-  position: relative;
-  top: -20px;
-  left: 265px;
-  z-index:1; 
-  -webkit-box-reflect: below 5px -webkit-linear-gradient(top, transparent, transparent 50%, rgba(255,255,255,0.4));
-}
-#spectrum {
-  -webkit-transform: translateX(-650px) translateY(-60px) translateZ(-560px) rotateX(-40deg) rotateY(35deg);
-  -moz-transform: translateX(-450px) translateY(-60px) translateZ(-560px) rotateX(-40deg) rotateY(35deg);
-}
 aside {
   position: absolute;
   left: 1em;
   top: 3em;
   z-index: 10;
 }
-.drop {
-  position: relative;
-}
-#drop {
-  -webkit-transform: translateX(0px) translateY(0px) translateZ(0px) rotateX(10deg) rotateY(-5deg) rotateZ(8deg);
-  -moz-transform: translateX(0px) translateY(0px) translateZ(0px) rotateX(10deg) rotateY(-5deg) rotateZ(8deg);  
-  -webkit-box-reflect: below 0px -webkit-linear-gradient(top, transparent 30%, transparent 50%, rgba(255,255,255,0.4));
-}
-
-
 label {
   cursor: pointer;
 }
+
