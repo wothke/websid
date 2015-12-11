@@ -46,7 +46,7 @@ SIDBackendAdapter = (function(){ var $this = function () {
 		registerFileData: function(pathFilenameArray, data) {
 			return 0;	// FS not used in Tiny'R'Sid
 		},
-		loadMusicData: function(sampleRate, path, filename, data) {
+		loadMusicData: function(sampleRate, path, filename, data, options) {
 			var buf = this.Module._malloc(data.length);
 			this.Module.HEAPU8.set(data, buf);
 			var ret = this.Module.ccall('loadSidFile', 'number', ['number', 'number'], [buf, data.length]);
