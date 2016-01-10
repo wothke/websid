@@ -18,40 +18,55 @@
 #define FLAG_Z 2
 #define FLAG_C 1
 
-// fixme restructure code / avoid to expose all these internals..
-extern unsigned int sDigiCount;
-extern unsigned long sDigiTime[DIGI_BUF_SIZE];	
-extern unsigned char sDigiVolume[DIGI_BUF_SIZE];
-extern unsigned int sOverflowDigiCount;
-extern unsigned long sOverflowDigiTime[DIGI_BUF_SIZE];
-extern unsigned char sOverflowDigiVolume[DIGI_BUF_SIZE];
-extern unsigned long sCycles;
-extern unsigned short pc;
-extern word sInitAddr, sPlayAddr;
-extern unsigned int sProgramMode;
-extern unsigned char a,x,y,s,p;
-extern unsigned char sMainLoopOnlyMode;
-extern unsigned char sSynthDisabled;
-extern unsigned long sTodInMillies;
+// SID register definition
+struct s6581 {
+    struct sidvoice {
+        unsigned short freq;
+        unsigned short pulse;
+        unsigned char wave;
+        unsigned char ad;
+        unsigned char sr;
+    } v[3];
+    unsigned char ffreqlo;
+    unsigned char ffreqhi;
+    unsigned char res_ftv;
+    unsigned char ftp_vol;
+};
 
-void initC64Rom();
+extern struct s6581 sid;
+
+// init/reset
 void synth_init(unsigned long mixfrq);
 
-void reInitEngine();
-unsigned short LoadSIDFromMemory(void *pSidData, unsigned short *load_addr, unsigned short *load_end_addr, 
-					unsigned short *init_addr, unsigned short *play_addr, unsigned char *subsongs, unsigned char *startsong, unsigned long *speed, unsigned short size);
+// used by CPU side to interact with SID
+void sidPoke(int reg, unsigned char val);
+
+// get playback rate (e.g. 44100 samples/sec)
+unsigned long getSampleFrequency();
+
+// may be used from hack.c
+void setCiaNmiVectorHack();
+
+// used for digis..
+void setMute(unsigned char voice);
+
+// exposed rsidengine.c FIXME move all the CPU stuff into one place
+// ---------->
+extern unsigned long sCycles;
+extern unsigned short pc;
+extern unsigned char a,x,y,s,p;
+extern unsigned char sSynthDisabled;
+void incFrameCount();
 void cpuParse(void);
 void cpuReset(void);
 void push(unsigned char val);
 unsigned char isIrqBlocked();
 unsigned char getmem(unsigned short addr);
-void sidPoke(int reg, unsigned char val);
 void synth_render (short *buffer, unsigned long len);
-void memSet(unsigned char *mem, char val, int len);
+// <-------------
 
 #ifdef DEBUG
 void trace(unsigned short addr, char *text);
 #endif
-
 
 #endif

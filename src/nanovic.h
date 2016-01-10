@@ -1,7 +1,7 @@
 #ifndef TINYRSID_NANOVIC_H
 #define TINYRSID_NANOVIC_H
 
-void initVic();
+void resetVic();
 void initRasterlineSim(unsigned long rasterPosInCycles);
 void simRasterline();
 unsigned int getRasterlineTimer();

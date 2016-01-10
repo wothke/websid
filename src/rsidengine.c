@@ -1,8 +1,8 @@
 /*
  * This file contains additional emulation logic used to play RSID files.
  * 
- * <p>version 0.77
- * <p>Tiny'R'Sid (c) 2013 Jürgen Wothke
+ * <p>version 0.80
+ * <p>Tiny'R'Sid (c) 2015 Jürgen Wothke
  * 
  * <p>This is not a full fledged/cycle correct C64 emulator. The current implementation 
  * has grown on a "need to have" basis: e.g. adding CIA based timing, adding NMI handling, 
@@ -13,7 +13,7 @@
  * timers are not simulated on a cycle by cycle basis.
  *
  * <p>But since most songs actually work and I was actually most interrested to run the "good old" 
- * stuff (Galway, Hubbard, etc) I am not very concerned enough about these limitations...
+ * stuff (Galway, Hubbard, etc) I am not concerned enough about these limitations...
  *
  * <p>Known Limitations: Songs that use busy-waiting schemes (e.g. on $d41b, CIA underflows or specific counter values,
  * D012 raster positions) most likely will not work properly. (e.g. Monster_Museum.sid, Thud_Ridge.sid, Wings_of_Fury.sid) 
@@ -24,6 +24,10 @@
  * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
  *
  * Change log:
+ *
+ * version 0.8     replaced original envelope generator with new impl that also handles ADSR-bug, fixed bugs in 
+ *                 6502 emu (additional ILLIGAL ops, wrong V-flag calculation), refactored digi-sample handling, 
+ *                 various cleanups, removed Storebror.sid hack (no longer needed)
  *
  * version 0.77: - refactored & improved nanocia.c to fix issues with some of the songs of Kris Hatlelid; added hack  
  *                 for mixed raster/timer IRQ scenarios; added Lame_Tune.sid hack; DC0D polling hack to make Kai Walter 
@@ -74,8 +78,10 @@
  */
 
 #include <string.h>
+#include <stdio.h>
 
 #include "defines.h"
+#include "digi.h"
 #include "nanovic.h"
 #include "nanocia.h"
 #include "sidengine.h"
@@ -86,23 +92,123 @@
 
 enum timertype { RASTER_TIMER = 0, CIA1_TIMER = 1, NO_IRQ = 2};
 
-unsigned long INVALID_TIME= (0x1 << 27);	// large enough so that any regular timestamp will get preference
-unsigned int IDX_NOT_FOUND= 0x1fff;			// we'll never have that many samples for one screen..
-
-static unsigned char sCurrentDigi=  0x80;		// last digi sample / default: neutral value 
-
-static unsigned long sSortedDigiTime[DIGI_BUF_SIZE];
-static unsigned char sSortedDigiVolume[DIGI_BUF_SIZE];
-
 
 unsigned char memory[MEMORY_SIZE];
 unsigned char kernal_rom[KERNAL_SIZE];	// mapped to $e000-$ffff
 unsigned char io_area[IO_AREA_SIZE];	// mapped to $d000-$dfff
 
 
+static unsigned int sProgramMode= MAIN_OFFSET_MASK;
+static unsigned char sMainLoopOnlyMode= 0;
 
-int isRsid() {
+// poor man's TOD sim (only secs & 10th of sec), see Kawasaki_Synthesizer_Demo.sid
+unsigned long sTodInMillies= 0;
+
+unsigned char sMainProgStatus= 0; 				// 0: completed 1: interrupted by cycleLimit
+
+unsigned char sIsPSID;
+
+unsigned long sIrqTimeout= 18000;	// will be reset anyway
+
+// snapshot of current registers and stack (so we can ignore IRQ/NMI effects)
+static unsigned char sSnapshotAcc, sSnapshotX, sSnapshotY, sSnapshotPFlags, sSnapshotStackpointer;
+static unsigned short sSnapshotPC;
+static unsigned char sSnapshotStack[0xff];
+
+void setIrqTimeout(unsigned long t) {
+	sIrqTimeout= t;		// in cpu cycles
+} 
+
+
+void setProgramStatus(unsigned char s) {
+	sMainProgStatus= s;
+} 
+
+unsigned long getTimeOfDayMillis() {
+	return sTodInMillies;
+}
+
+void updateTimeOfDay10thOfSec(unsigned char value) {
+	sTodInMillies= ((unsigned long)(sTodInMillies/1000))*1000 + value*100;
+}
+void updateTimeOfDaySec(unsigned char value) {
+	sTodInMillies= value*1000 + (sTodInMillies%1000);	// ignore minutes, etc
+}
+
+void memSet(unsigned char *mem, char val, int len) {
+	// for some reason 'memset' does not seem to work in Alchemy...
+	int i;
+	for (i= 0; i<len; i++) {
+		mem[i]= val;
+	}
+}
+
+unsigned char isMainLoopMode() {
+	return sMainLoopOnlyMode;
+}
+
+unsigned int getProgramMode() {
+	return sProgramMode;
+}
+
+static void setIO(unsigned int addr, unsigned char value) {
+	io_area[addr - 0xd000]= value;
+}
+
+static void resetIO(unsigned long cyclesPerScreen, unsigned char isRsid) {
+    memSet(&io_area[0], 0x0, IO_AREA_SIZE);
+
+	// Master_Blaster_intro.sid actually checks this:
+	io_area[0x0c01]= 0xff;	 	// Port B, keyboard matrix rows and joystick #1
+
+	// CIA 1 defaults	(by default C64 is configured with CIA1 timer / not raster irq)
+	setIO(0xdc0d, 0x81);	// interrupt control	(interrupt through timer A)
+	setIO(0xdc0e, 0x01); 	// control timer A: start - must already be started (e.g. Phobia, GianaSisters, etc expect it)
+	setIO(0xdc0f, 0x08); 	// control timer B (start/stop) means auto-restart
+	setIO(0xdc04, cyclesPerScreen&0xff); 	// timer A (1x pro screen refresh)
+	setIO(0xdc05, cyclesPerScreen>>8);
+	
+	if (isRsid) {	
+		// by default C64 is configured with CIA1 timer / not raster irq
+		setIO(0xd01a, 0x00); 	// raster irq not active
+		setIO(0xd011, 0x1B);
+		setIO(0xd012, 0x00); 	// raster at line x
+
+		// CIA 2 defaults
+		setIO(0xdd0e, 0x08); 	// control timer 2A (start/stop)
+		setIO(0xdd0f, 0x08); 	// control timer 2B (start/stop)		
+	}
+
+	resetCiaTimer();
+	resetVic();
+	
+	io_area[0x0418]= 0xf;					// turn on full volume	
+	sidPoke(0x18, 0xf);  
+}
+
+void resetRSID() {
+	sProgramMode= MAIN_OFFSET_MASK;
+	sMainLoopOnlyMode= 0;
+	sTodInMillies= 0;
+	
+	// some IRQ players don't finish within one screen, e.g. A-Maze-Ing.sid and Axel_F.sid 
+	// (Sean Connolly) even seems to play digis during multi-screen IRQs (so give them more time)			
+	setIrqTimeout(getCyclesPerScreen()*4);
+	
+	// reset IO area
+    resetIO(getCyclesPerScreen(), isRsid());	
+}
+
+unsigned char isRsid() {
 	return (sIsPSID == 0);
+}
+
+void setPsidMode(unsigned char m) {
+	sIsPSID= m;
+}
+
+unsigned char isPsid() {
+	return sIsPSID;
 }
 
 unsigned int getNmiVector() {
@@ -111,13 +217,12 @@ unsigned int getNmiVector() {
 	return nmi_addr;
 }
 
-
 unsigned char isPsidDummyIrqVector() {
 	// PSID use of 0314/0315 vector which is technically not setup correctly (e.g. Ode_to_Galway_Remix.sid):
 	// PSIDs may actually set the 0314/15 vector via INIT, turn off the kernal ROM and 
 	// not provide a useful fffe/f vector.. and we need to handle that crap..
 	
-	if ((sPlayAddr != 0) || (((getmem(0xfffe)|(getmem(0xffff)<<8)) == 0) && sIsPSID &&
+	if ((getSidPlayAddr() != 0) || (((getmem(0xfffe)|(getmem(0xffff)<<8)) == 0) && sIsPSID &&
 			((getmem(0x0314)|(getmem(0x0315)<<8)) != 0))) {
 		
 		return 1;
@@ -126,10 +231,10 @@ unsigned char isPsidDummyIrqVector() {
 }
 
 unsigned int getIrqVector() {
-	if (sPlayAddr != 0) {
+	if (getSidPlayAddr() != 0) {
 		// no point going through the standard interrupt routines with this PSID crap.. we
 		// cannot tell if it behaves like a 0314/15 or like a fffe/f routine anyway... (and the stack will likely be messed up)
-		return sPlayAddr;	
+		return getSidPlayAddr();	
 	} 
 
 	unsigned int irq_addr= (getmem(0xfffe)|(getmem(0xffff)<<8));	
@@ -141,40 +246,8 @@ unsigned int getIrqVector() {
 
 }
 
-void markSampleOrigin(unsigned long mask, unsigned long offset, unsigned long originalDigiCount) {
-	/*
-	* Due to the current implementation which only considers timer start times but not delays through 
-	* interrupts - the enties in the digi-sample recording may be out of sequence (e.g. if IRQ starts first 
-	* it will first write all its values and the NMI will only then add its data - eventhough the NMI's entry 
-	* logically may belong between some IRQ's entries. The same applies to the main prog which adds all its 
-	* entries at the very end - after the interrupt routines have already added all their enties)
-	*
-	* For the rendering the respective sample recording list must first be sorted (by timestamp). To avoid a 
-	* full fledged sort of the complete list, the timestamps generated by the different producer streams (NMI/IRQ/main 
-	* prog) are flagged using a producer specific bit. This then is used as a shortcut when sorting..
-	*
-	* This method turns the original relative timestamps into absolute ones by adding a respective offset. It also 
-	* sets the producer specific bit. 
-	*
-	* Mystery time: Instead setting the start time to 0 and then adding the below stuff to the recordings afterwards, the
-	* original idea was to directly set the flag and offset in the start time for the simulation. This should have led to 
-	* the same result.. alone it did not :( mb it's a C skills problem or just some Alchemy bug.. for now the hack works.
-	*/
-	
-	unsigned int len= sDigiCount - originalDigiCount;
-	
-	int i;
-	if (len > 0) {
-		for (i= 0; i<len; i++) {
-			sDigiTime[originalDigiCount+i] = (offset + sDigiTime[originalDigiCount+i]) | mask;
-		}
-	}
-}
-
-static unsigned char sCurrentVolume= 0xf;
-
 void initCycleCount(unsigned long relOffset, unsigned long basePos) {
-	sCycles= relOffset;	
+	sCycles= relOffset;
 	initRasterlineSim(basePos+ relOffset);
 }
 
@@ -182,7 +255,7 @@ unsigned long processInterrupt(unsigned long intMask, unsigned short npc, unsign
 	// known limitation: if the code uses ROM routines (e.g. register restore/return sequence) then we will 
 	// be missing those cpu cycles in our calculation..
 	
-	unsigned long originalDigiCount= sDigiCount;
+	unsigned long originalDigiCount= getDigiCount();
 	
 	if (isPsidDummyIrqVector()) {
 		// no point in trying to keep the stack consistent for a PSID
@@ -210,19 +283,26 @@ unsigned long processInterrupt(unsigned long intMask, unsigned short npc, unsign
         cpuParse();
 		
 	sProgramMode= MAIN_OFFSET_MASK;
-
-	if (intMask == IRQ_OFFSET_MASK) {
-		sCurrentVolume= getmem(0xd418);
-	}
 	
 	markSampleOrigin(intMask, startTime, originalDigiCount);		
 
 	return sCycles;
 }
 
+static void updateTOD() {
+	sTodInMillies+= (getCurrentSongSpeed() ? 17 : 20);	
+}
+
+int isTimerDrivenPsid() {
+	return ((sIsPSID == 1) && (getCurrentSongSpeed() == 1));
+}
+
+int isRasterDrivenPsid() {
+	return ((sIsPSID == 1) && (getCurrentSongSpeed() == 0));
+}
+
 int isCiaActive(struct timer *t) {
-	return (!isIrqBlocked() && ((isTimer_Started(t, TIMER_A) && isTimer_Armed(t, TIMER_A)) || (isTimer_Started(t, TIMER_B) && isTimer_Armed(t, TIMER_B)))) ||
-			isTimerDrivenPsid();
+	return (!isIrqBlocked() && isTimerActive(t)) || isTimerDrivenPsid();
 }
 
 enum timertype getIrqTimerMode(struct timer *t) {	
@@ -241,35 +321,6 @@ enum timertype getIrqTimerMode(struct timer *t) {
 			return NO_IRQ;
 		}
 	}
-}
-
-int isVal(unsigned long mask, unsigned long val) {
-	return val&mask;		// is this a value of the selected "mask" category?
-}
-
-unsigned long getValue(unsigned long mask, unsigned int fromIdx) {
-	if (fromIdx == IDX_NOT_FOUND) {
-		return INVALID_TIME;			// only relevant while it is used for comparisons..
-	}
-	return (sDigiTime[fromIdx])&(~mask);	// remove marker flag
-}
-
-// must only be used for valid "fromIdx"
-void copy(unsigned long mask, unsigned int toIdx, unsigned int fromIdx) {
-	sSortedDigiTime[toIdx]= getValue(mask, fromIdx);
-	sSortedDigiVolume[toIdx]= sDigiVolume[fromIdx];
-}
-
-unsigned int next(unsigned long mask, unsigned int toIdx, unsigned int fromIdx) {
-	copy(mask, toIdx, fromIdx);
-
-	unsigned int i; 
-	for (i= fromIdx+1; i<sDigiCount; i++) {
-		if(isVal(mask, sDigiTime[i])) {
-			return i;	// advance index to the next value of this category
-		}
-	}
-	return IDX_NOT_FOUND;
 }
 
 #ifdef DEBUG
@@ -309,124 +360,6 @@ void traceBuffer(char *label, unsigned char *buf, int bufLen) {
 }
 #endif
 
-
-void sortDigiSamples() {
-	if (sDigiCount >0) {
-		// IRQ and NMI routines are only more or less aligned and may actually be executed in an overlapping
-		// manner. Samples may therefore be stored out of sequence and we need to sort them here first before we render
-				
-		// the three sample providers:
-		unsigned int irqIdx= IDX_NOT_FOUND;
-		unsigned int nmiIdx= IDX_NOT_FOUND;
-		unsigned int mainIdx= IDX_NOT_FOUND;
-
-		unsigned int i;
-		unsigned int noOfIrqSamples= 0;
-		unsigned int noOfMainSamples= 0;
-		
-		// find respective start index for data generated by IRQ/NMI/main
-		for (i= 0; i<sDigiCount; i++) {
-			unsigned long val= sDigiTime[i];
-			if (val & MAIN_OFFSET_MASK) {
-				noOfMainSamples+= 1;
-
-				if (mainIdx == IDX_NOT_FOUND) mainIdx= i;
-			} else if (val & IRQ_OFFSET_MASK) {
-				noOfIrqSamples+= 1;
-				
-				if (irqIdx == IDX_NOT_FOUND) irqIdx= i;
-			} else if (val & NMI_OFFSET_MASK){
-				
-				if (nmiIdx == IDX_NOT_FOUND) nmiIdx= i;
-			} else {
-				// error..
-			}
-		}
-		
-		char ignoreIrqValue= (noOfIrqSamples == 1);	// not meant as digi (Digi-Piece_for_Telecomsoft.sid uses IRQ for digi..)
-		
-		if (nmiIdx != IDX_NOT_FOUND) {
-			ignoreIrqValue= 1;			// see Coma_Light_13_tune_4.sid (players will typically not mix the two..)
-		}
-
-		char ignoreMainValue= (noOfMainSamples < 10);	// not meant as digi		
-
-		// create new list with strictly ascending timestamps
-		unsigned int toIdx;
-		signed char offset= 0;
-		for (toIdx= 0; toIdx<sDigiCount; toIdx++) {
-			if (getValue(MAIN_OFFSET_MASK, mainIdx) < getValue(IRQ_OFFSET_MASK, irqIdx)) {
-				if (getValue(MAIN_OFFSET_MASK, mainIdx) < getValue(NMI_OFFSET_MASK, nmiIdx)) {		// "main" is next
-					mainIdx= next(MAIN_OFFSET_MASK, toIdx+offset, mainIdx);
-					
-					if (ignoreMainValue) {
-						offset--;
-					}
-				} else {									// "nmi" is next 
-					nmiIdx= next(NMI_OFFSET_MASK, toIdx+offset, nmiIdx);				
-				}				
-			} else if (getValue(IRQ_OFFSET_MASK, irqIdx) < getValue(MAIN_OFFSET_MASK, mainIdx)) {
-				if (getValue(IRQ_OFFSET_MASK, irqIdx) < getValue(NMI_OFFSET_MASK, nmiIdx)) {		// "irq" is next
-					irqIdx= next(IRQ_OFFSET_MASK, toIdx+offset, irqIdx);
-					
-					if (ignoreIrqValue) {
-						offset--;
-					}
-				} else {									// "nmi" is next 
-					nmiIdx= next(NMI_OFFSET_MASK, toIdx+offset, nmiIdx);	
-				}								
-			} else { 
-				nmiIdx= next(NMI_OFFSET_MASK, toIdx+offset, nmiIdx);	// only "nmi" left		
-			}			
-		}
-		sDigiCount+= offset;		
-	}	
-}
-
-void fillDigi(int startIdx, int endIdx, unsigned char digi) {
-	if (endIdx>=startIdx) {
-		memSet( &sDigiBuffer[startIdx], digi, (endIdx-startIdx)+1 );
-	}
-}
-
-int renderDigiSamples(unsigned long cyclesPerScreen, unsigned int samplesPerCall) {
-
-	/*
-	* if there are too few signals, then it's probably just the player setting filters or
-	* resetting the volume with no intention to play a digi-sample, e.g. Transformers.sid (Russel Lieblich)
-	*/
-
-	
-	if (sDigiCount > 5) {
-		sortDigiSamples();
-
-		// render digi samples
-		unsigned int fromIdx=0;	
-		int j;
-		for (j= 0; j<sDigiCount; j++) {
-			float scale= (float) (samplesPerCall-1) / cyclesPerScreen;
-			unsigned int toIdx= scale*((sSortedDigiTime[j] > cyclesPerScreen) ? cyclesPerScreen : sSortedDigiTime[j]);
-
-			fillDigi(fromIdx, toIdx, sCurrentDigi);				
-
-			fromIdx= toIdx;
-			sCurrentDigi= sSortedDigiVolume[j];
-		}
-		fillDigi(fromIdx, (samplesPerCall-1), sCurrentDigi);
-
-		if (getRasterlineTimer() == 0xf8) {
-			// hack fixes volume issue in Ferrari_Formula_One.sid
-			// todo: the rasterline check is a rather brittle impl... a more 
-			// robost/foolproof impl fix needs to be found here
-			
-			sidPoke(0xd418 & 0x1f, sCurrentVolume);	
-		}
-
-		return 1;
-	}
-	return 0;
-}
-
 /*
 * Moves to the next interrupt event (if any) which will occur within the specific
 * window of time.
@@ -448,15 +381,16 @@ unsigned long forwardToNextInterrupt(enum timertype timerType, struct timer *t, 
 	}
 }
 
-void renderSynth(unsigned long cyclesPerScreen, unsigned int samplesPerCall, unsigned long fromTime, unsigned long toTime){
+void renderSynth(short *synthBuffer, unsigned long cyclesPerScreen, unsigned int samplesPerCall, unsigned long fromTime, unsigned long toTime){
 	if (fromTime < cyclesPerScreen) {
 		if (toTime > cyclesPerScreen) toTime= cyclesPerScreen;
 		
 		float scale= (float)samplesPerCall/cyclesPerScreen;
 		unsigned int len= (toTime - fromTime)*scale;
-		unsigned int startIdx= fromTime*scale;
-
-		synth_render(&sSynthBuffer[startIdx], len+1);
+		if(len) {
+			unsigned int startIdx= fromTime*scale;
+			synth_render(&synthBuffer[startIdx], len+1);
+		}
 	}
 }
 
@@ -477,12 +411,6 @@ int isIrqNext(unsigned long currentIrqTimer, unsigned long currentNmiTimer, unsi
 	}
 	return irqIsNext;
 }
-
-
-// snapshot of current registers and stack (so we can ignore IRQ/NMI effects)
-static unsigned char sSnapshotAcc, sSnapshotX, sSnapshotY, sSnapshotPFlags, sSnapshotStackpointer;
-static unsigned short sSnapshotPC;
-static unsigned char sSnapshotStack[0xff];
 
 void saveRegisters() {
     sSnapshotAcc = a;
@@ -529,7 +457,7 @@ unsigned char callMain(unsigned short npc, unsigned char na, unsigned long start
     while (pc > 1) {
 		// if a main progs is already producing samples then it is done with the "init" phase and
 		// we interrupt it when we have enough samples for one screen (see Suicide_Express.sid)
-		if (((cycleLimit >0) && (sCycles >=cycleLimit)) || (sOverflowDigiCount>0)) {	
+		if (((cycleLimit >0) && (sCycles >=cycleLimit)) || (getDigiOverflowCount() >0)) {	
 			saveRegisters();			
 			return 1;
 		}		
@@ -539,18 +467,18 @@ unsigned char callMain(unsigned short npc, unsigned char na, unsigned long start
 }
 
 void processMain(unsigned long cyclesPerScreen, unsigned long startTime, signed long timeout) {
-	// the current impl may cause the interrupt routines to burn more cycles than would be normally possibe (e.g. if
+	// the current impl may cause the interrupt routines to burn more cycles than would be normally possible (e.g. if
 	// they use busy-wait for some condition which does not materialize in our emulator env. Consequently our 
 	// "timeout" may be completely off the target...
 
 	if ((sMainProgStatus >0) && (timeout >0)) {		// might be the rest of some "init" logic... or some loop playing samples		
-		unsigned long originalDigiCount= sDigiCount;
+		unsigned long originalDigiCount= getDigiCount();
 		sMainProgStatus= callMain(0, 0, startTime, timeout);	// continue where interrupted	
 		markSampleOrigin(MAIN_OFFSET_MASK, startTime, originalDigiCount);
 	}
 }
 
-static void runScreenSimulation(unsigned long cyclesPerScreen, unsigned int samplesPerCall) {	
+static void runScreenSimulation(short *synthBuffer, unsigned long cyclesPerScreen, unsigned int samplesPerCall) {	
 	struct timer *cia1= &(cia[0]);		// the different CIA timers
 	struct timer *cia2= &(cia[1]);
 
@@ -564,10 +492,14 @@ static void runScreenSimulation(unsigned long cyclesPerScreen, unsigned int samp
 
 	/*
 	* process NMI and IRQ interrupts in their order of appearance - and as long as they fit into this screen
-	*/
-		
+	*/	
 	unsigned long currentIrqTimer= forwardToNextInterrupt(getIrqTimerMode(cia1), cia1, availableIrqCycles);
 	unsigned long currentNmiTimer= isRsid() ? forwardToNextCiaInterrupt(cia2, availableNmiCycles) : NO_INT;
+
+	// KNOWN LIMITATION: ideally all 4 timers should be kept in sync - not just A/B within the same unit! 
+	// however progs that actually rely on multiple timers (like Vicious_SID_2-Carmina_Burana.sid) probably 
+	// need timer info that is continuously updated - so that effort would only make sense in a full fledged 
+	// cycle-by-cycle emulator.
 	
 	unsigned char hack= isRasterIrqActive() && isCiaActive(cia1);
 	
@@ -586,6 +518,7 @@ static void runScreenSimulation(unsigned long cyclesPerScreen, unsigned int samp
 		for (;(currentIrqTimer != NO_INT) || (currentNmiTimer != NO_INT) ;) {				
 			
 			// periodically give unused cycles to main program (needed, e.g. by THCM's stuff)	
+			
 			if (tDone > mainProgStart) {
 				// todo: the handing of main prog cycles is rather flawed (timing for main code that would normally run before 
 				// 'mainProgStep'). In an alternative "improved" impl I ran "main" directly before "processInterrupt" calls below - letting 
@@ -602,6 +535,10 @@ static void runScreenSimulation(unsigned long cyclesPerScreen, unsigned int samp
 				}			
 				mainProgStart= tDone + mainProgStep;	
 			}
+			
+			// FIXME: we should better allow NMI to interrupt IRQ, i.e. set respectice cycle-limit
+			// accordingly - and then resume the IRQ later. see Ferrari_Formula_One.sid
+			
 			if (!isIrqNext(currentIrqTimer, currentNmiTimer, tIrq, tNmi)) {		// handle next NMI
 				tDone= tNmi;
 				nmiCycles+= processInterrupt(NMI_OFFSET_MASK, getNmiVector(), tNmi, cyclesPerScreen);
@@ -609,10 +546,10 @@ static void runScreenSimulation(unsigned long cyclesPerScreen, unsigned int samp
 				availableNmiCycles-= currentNmiTimer;		
 				currentNmiTimer= forwardToNextCiaInterrupt(cia2, availableNmiCycles);
 				
-				tNmi+= currentNmiTimer;		// will be garbage on last run..				
+				tNmi+= currentNmiTimer;		// will be garbage on last run..		
 			} else {															// handle next IRQ
 				tDone= tIrq;								
-				renderSynth(cyclesPerScreen, samplesPerCall, synthPos, tIrq);			
+				renderSynth(synthBuffer, cyclesPerScreen, samplesPerCall, synthPos, tIrq);
 				synthPos= tIrq;
 				
 				if (hack) {
@@ -644,63 +581,45 @@ static void runScreenSimulation(unsigned long cyclesPerScreen, unsigned int samp
 				tIrq+= currentIrqTimer;		// will be garbage on last run..	
 			}
 		}
-		renderSynth(cyclesPerScreen, samplesPerCall, synthPos, cyclesPerScreen);	// fill remainder of buffer	
+		renderSynth(synthBuffer, cyclesPerScreen, samplesPerCall, synthPos, cyclesPerScreen);	// fill remainder of buffer	
 	}
-		
+	
 	mainProgCycles= cyclesPerScreen - (nmiCycles + irqCycles + mainProgCycles);
 	
 	if (mainProgCycles >0) {		
 		processMain(cyclesPerScreen, mainProgStart, mainProgCycles);
 		
-		if (sMainLoopOnlyMode && isRsid() && !sSynthDisabled) {
+		if (sMainLoopOnlyMode && isRsid()) {
 			// e.g. Dane's "Crush.sid"
-			renderSynth(cyclesPerScreen, samplesPerCall, synthPos, cyclesPerScreen);
+			renderSynth(synthBuffer, cyclesPerScreen, samplesPerCall, synthPos, cyclesPerScreen);
 		}
 	}
-}
-
-void initDigiBuffer() {	
-	if (sOverflowDigiCount > 0) {
-		memcpy(sDigiTime, sOverflowDigiTime, sizeof(long)*sOverflowDigiCount);		
-		memcpy(sDigiVolume, sOverflowDigiVolume, sizeof(long)*sOverflowDigiCount);		
-	}
-	sDigiCount= sOverflowDigiCount;
-	sOverflowDigiCount= 0;	
-}
-
-static void updateTOD() {
-	sTodInMillies+= (getCurrentSongSpeed() ? 17 : 20);	
 }
 
 /*
 * @return 		1: if digi data available   0: if not
 */
-int processOneScreen(unsigned long cyclesPerScreen, unsigned int samplesPerCall) {
+int processOneScreen(short *synthBuffer, unsigned char *digiBuffer, unsigned long cyclesPerScreen, unsigned int samplesPerCall) {
 	
-	initDigiBuffer();
+	moveDigiBuffer2NextFrame();
 	initCycleCount(0, 0);
 
 	updateTOD();
 	
-#ifdef DEBUG				
-screen+=1;
-#endif
-	if (!sPlayAddr) {
+	incFrameCount();
+	if (!getSidPlayAddr()) {
 		sIsPSID = 0;	
 	}
 
-	if ((isTimerDrivenPsid() || isRasterIrqActive() || isRsid())) {
-		runScreenSimulation(cyclesPerScreen, samplesPerCall);
-		
-		return renderDigiSamples(cyclesPerScreen, samplesPerCall);
-		
-	} else {		
+	if (isTimerDrivenPsid() || isRasterIrqActive() || isRsid()) {
+		runScreenSimulation(synthBuffer, cyclesPerScreen, samplesPerCall);
+		return renderDigiSamples(digiBuffer, cyclesPerScreen, samplesPerCall);
+	} else {
 		// legacy PSID mode: one "IRQ" call per screen refresh (a PSID may actually setup CIA 1 
 		// timers but without wanting to use them - e.g. ZigZag.sid track2)
-
 		processInterrupt(IRQ_OFFSET_MASK, getIrqVector(), 0, -1);
-		synth_render(sSynthBuffer, samplesPerCall);	
-		sDigiCount= 0;		
+		synth_render(synthBuffer, samplesPerCall);	
+		clearDigiBuffer();		
 		return 0;
 	}
 }

@@ -30,16 +30,14 @@ extern struct timer cia[2];
 extern unsigned char TIMER_A;
 extern unsigned char TIMER_B;
 
-void initCia();
-unsigned long getTimerLatch(struct timer *t, unsigned char timerId);
+void resetCiaTimer();
 void setInterruptMask(struct timer *t, unsigned char value);
 unsigned char getInterruptStatus(struct timer *t);
-int isTimer_Started(struct timer *t, unsigned char timerId);
-int isTimer_Armed(struct timer *t, unsigned char timerId);
-void signalTimerInterrupt(struct timer *t);
+int isTimerActive(struct timer *t);
 void signalTimerUnderflow(struct timer *t, unsigned char timerId);
 void setTimer(struct timer *t, unsigned int offset, unsigned char value);
-unsigned long forwardToNextCiaInterrupt(struct timer *t, unsigned long timeLimit);
 
+unsigned long forwardToNextCiaInterrupt(struct timer *t, unsigned long timeLimit);
+void simTimerPolling(unsigned short ad, unsigned long *cycles, unsigned short progCount);
 
 #endif

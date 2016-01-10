@@ -23,6 +23,7 @@ struct timer cia[2];
 unsigned char TIMER_A= 0;
 unsigned char TIMER_B= 1;
 
+static unsigned long sLastPolled[4];
 
 int isBLinkedToA(struct timer *t) {
 	// '10' is the only "special mode currently implemented here
@@ -54,7 +55,7 @@ unsigned int getTimer_NextCounter(struct timer *t, unsigned char timerId) {
 	return counter;
 }
 
-unsigned long getTimerLatch(struct timer *t, unsigned char timerId) {
+static unsigned long getTimerLatch(struct timer *t, unsigned char timerId) {
 	return 	(*t).ts[timerId].timer_latch;
 }
 
@@ -73,9 +74,11 @@ void initTimerData(unsigned int memoryAddress, struct timer *t) {
 	(*t).timer_interruptStatus= 0;
 }
 
-void initCia() {
+void resetCiaTimer() {
 	initTimerData(ADDR_CIA1, &(cia[0]));
 	initTimerData(ADDR_CIA2, &(cia[1]));
+	
+	memSet( (unsigned char*)&sLastPolled, 0, sizeof(sLastPolled) ); 	
 }
 	
 void setInterruptMask(struct timer *t, unsigned char value) {
@@ -96,7 +99,7 @@ unsigned char getInterruptStatus(struct timer *t) {
 }
 
 // "running" means "not stopped"
-int isTimer_Started(struct timer *t, unsigned char timerId) {
+static int isTimer_Started(struct timer *t, unsigned char timerId) {
 	return ((io_area[(*t).memoryAddress + (0x0e + timerId)]&0x1) != 0) && (!(*t).ts[timerId].timer_suspended || 
 		((timerId == TIMER_B) && isBLinkedToA(t) && isTimer_Started(t, TIMER_A)));
 }
@@ -114,11 +117,11 @@ void stopTimer(struct timer *t, unsigned char timerId) {
 }
 
 // "armed" means an underflow if this timer will trigger an interrupt
-int isTimer_Armed(struct timer *t, unsigned char timerId) {
+static int isTimer_Armed(struct timer *t, unsigned char timerId) {
 	return (io_area[(*t).memoryAddress + 0x0d]&(timerId==TIMER_A ? 0x1 : 0x2)) != 0;
 }
 
-void signalTimerInterrupt(struct timer *t) {
+static void signalTimerInterrupt(struct timer *t) {
 	(*t).timer_interruptStatus|= 0x80;
 }
 
@@ -317,4 +320,34 @@ unsigned long forwardToNextCiaInterrupt(struct timer *t, unsigned long timeLimit
 		}
 	}
 	return waited;
+}
+
+void simTimerPolling(unsigned short ad, unsigned long *cycles, unsigned short progCount) {
+	// handle busy polling for CIA underflow (e.g. Kai Walter stuff) 
+	// the timing of the below hack is bound to be pretty inaccurate but better than nothing.. 
+	if (((ad == 0xdc0d) || (ad == 0xdd0d)) && (memory[progCount] == 0xf0) && (memory[progCount+1] == 0xfb) /*BEQ above read*/) {
+		unsigned char i= (ad == 0xdc0d) ? 0 : 1;
+		
+		struct timer *t= &(cia[i]);
+		char timerId= (isTimer_Started(t, TIMER_A) ? TIMER_A : 
+			(isTimer_Started(t, TIMER_B) ? TIMER_B : -1));
+
+		if (timerId >= 0) {
+			unsigned long latch= getTimerLatch(t, timerId);	
+			unsigned long usedCycles= (*cycles);
+			if (sLastPolled[(i<<1) + timerId] < usedCycles) {
+				usedCycles-= sLastPolled[(i<<1) + timerId];					
+			}				
+			if (usedCycles<latch) {
+				(*cycles)+= (latch-usedCycles);	// sim busywait
+			}				
+			sLastPolled[(i<<1) + timerId]= (*cycles);
+			
+			signalTimerInterrupt(t);
+		}	
+	}				
+}
+
+int isTimerActive(struct timer *t) {
+	return (isTimer_Started(t, TIMER_A) && isTimer_Armed(t, TIMER_A)) || (isTimer_Started(t, TIMER_B) && isTimer_Armed(t, TIMER_B));
 }

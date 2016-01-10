@@ -18,9 +18,9 @@ static unsigned int sCurrentRasterPos= 0;		// 	simulated "read" raster position 
 static unsigned long sLastRelativeCyclePos= 0;		// sim progression of rasterline during current code execution..
 static unsigned long sRemainingCyclesThisRaster= 0;
 
-void initVic() {
-	sLastRasterInterrupt= -1;
+void resetVic() {
 	sTimerCarryOverIrq= -1;
+	sLastRasterInterrupt= -1;
 	sCurrentRasterPos= 0;
 	sLastRelativeCyclePos= 0;
 	sRemainingCyclesThisRaster= 0;
@@ -28,12 +28,12 @@ void initVic() {
 
 void setCurrentRasterPos(unsigned long cycleTime) {
 // FIXME maybe badlines should be considered here?
-	sCurrentRasterPos= ((unsigned long)((float)cycleTime/sCyclesPerRaster))%sLinesPerScreen;	
+	sCurrentRasterPos= ((unsigned long)((float)cycleTime/getCyclesPerRaster()))%getLinesPerScreen();	
 }
 
 void incCurrentRasterPos() {
 	sCurrentRasterPos+=1;
-	if (sCurrentRasterPos == sLinesPerScreen) {
+	if (sCurrentRasterPos == getLinesPerScreen()) {
 		sCurrentRasterPos= 0;
 	}
 }
@@ -41,7 +41,7 @@ void incCurrentRasterPos() {
 void initRasterlineSim(unsigned long rasterPosInCycles) {
 	setCurrentRasterPos(rasterPosInCycles);
 	
-	sRemainingCyclesThisRaster=rasterPosInCycles-(sCurrentRasterPos*sCyclesPerRaster);
+	sRemainingCyclesThisRaster=rasterPosInCycles-(sCurrentRasterPos*getCyclesPerRaster());
 	
 	sLastRelativeCyclePos= sCycles;
 }
@@ -58,7 +58,7 @@ void simRasterline() {
 	long cdiff= sCycles-sLastRelativeCyclePos;
 	if (cdiff > sRemainingCyclesThisRaster) {
 		incCurrentRasterPos();					// sim progress of VIC raster line..
-		sRemainingCyclesThisRaster+= sCyclesPerRaster;	// badlines korrektur?
+		sRemainingCyclesThisRaster+= getCyclesPerRaster();	// badlines korrektur?
 	}	
 	sRemainingCyclesThisRaster-= cdiff;
 	sLastRelativeCyclePos= sCycles;	
@@ -66,10 +66,10 @@ void simRasterline() {
 	
 /*	
 	unsigned long progress= sCycles-sLastRelativeCyclePos;
-	if (progress >= sCyclesPerRaster) {
+	if (progress >= getCyclesPerRaster()) {
 		incCurrentRasterPos();					// sim progress of VIC raster line..
 
-		unsigned long overflow= progress - sCyclesPerRaster;
+		unsigned long overflow= progress - getCyclesPerRaster();
 		sLastRelativeCyclePos= sCycles - overflow;
 	}
 	
@@ -106,7 +106,7 @@ unsigned int getRasterlineTimer() {
 }
 
 static unsigned int getCycleTime(unsigned int rasterTime) {
-	return rasterTime * sCyclesPerRaster;
+	return rasterTime * getCyclesPerRaster();
 }
 
 int isRasterIrqActive() {

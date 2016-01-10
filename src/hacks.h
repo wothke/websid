@@ -2,6 +2,6 @@
 #define TINYRSID_HACKS_H
 
 
-void hackIfNeeded();	
+void hackIfNeeded(word *initAddr);	
 
 #endif
