@@ -558,13 +558,14 @@ static void runScreenSimulation(short *synthBuffer, unsigned long cyclesPerScree
 					signalTimerUnderflow(cia1, TIMER_A); 
 				}
 				
+				// FIXME: multi-frame IRQ handling would be necessary to deal with songs like: Musik_Run_Stop.sid				
 				unsigned long usedCycles= processInterrupt(IRQ_OFFSET_MASK, getIrqVector(), tIrq, sIrqTimeout);				
 				// flaw: IRQ might have switched off NMI, e.g. Vicious_SID_2-Blood_Money.sid
 				
 				if (usedCycles >=sIrqTimeout) { // IRQ gets aborted due to a timeout
 					if (p & FLAG_I) {
 						// this IRQ handler does not want to be interrupted.. (either the code got stuck due to some impossible
-						// condition - e.g. waiting for a timer which we dont update - or it is an endless IRQ routine that needs to 
+						// condition - e.g. waiting for a timer which we don't update - or it is an endless IRQ routine that needs to 
 						// continue..)						
 					} else {
 						// this IRQ handler was intentionally waiting to get interrupted - and it would normally not have burned

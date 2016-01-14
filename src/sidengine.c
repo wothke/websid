@@ -575,7 +575,6 @@ void traceSidPoke(int reg, unsigned char val) {
 	pokeInfo[10]= hex1[(val>>4)];
 	pokeInfo[11]= hex1[(val&0xf)];
 	
-//	AS3_Trace(AS3_String(pokeInfo));		
 	fprintf(stderr, "%s\n", pokeInfo);
 	free(pokeInfo);
 }
@@ -1174,27 +1173,6 @@ void cpuReset(void)
     pc= 0;
 }
 
-#ifdef DEBUG
-unsigned short lastTraced;
-// poor man's util to check what's going on..
-void trace(unsigned short addr, char *text) {
-/*
-	if (pc == addr) {
-		if (lastTraced != addr) {
-			lastTraced= addr;
-			AS3_Trace(AS3_String(text));
-			
-			if (addr == 0x1E0C) {
-			AS3_Trace(AS3_String("mem:"));
-			AS3_Trace(AS3_Number(memory[0x1]));
-			}
-			
-		}	
-	}
-	*/
-}
-#endif
-
 // KNOWN LIMITATION: flag handling in BCD mode is not implemented (see http://www.oxyron.de/html/opcodes02.html)
 void cpuParse(void)
 {
@@ -1337,7 +1315,7 @@ void cpuParse(void)
             setflags(FLAG_N,wval&0x80);      
             setflags(FLAG_C,y>=bval);
             break;
-        case dcp:		// used by: Clique_Baby.sid
+        case dcp:		// used by: Clique_Baby.sid, Musik_Run_Stop.sid
             bval=getaddr(opc, mode);
 			// dec
             bval--;
@@ -1728,9 +1706,9 @@ void cpuParse(void)
             break;
 			
 		default:			
-//AS3_Trace(AS3_String("------------ use of illegal opcode ---------------"));
-//AS3_Trace(AS3_Number(opc));
-//fprintf(stderr, "op code not implemented: %d at %d\n", opc, pc);
+#ifdef DEBUG
+			fprintf(stderr, "op code not implemented: %d at %d\n", opc, pc);
+#endif
 			getaddr(opc, mode);	 // at least make sure the PC is advanced correctly (potentially used in timing)
     }
 }

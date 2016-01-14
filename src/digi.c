@@ -304,6 +304,26 @@ static unsigned char handleIceGuysDigi(unsigned char voice, unsigned char reg, u
 }
 
 // -------------------------------------------------------------------------------------------
+// Mahoney's D418 "8-bit" digi sample technique..
+// -------------------------------------------------------------------------------------------
+
+// based on Mahoney's amplitude_table_8580.txt
+const unsigned char sMahoneySample[256]= {164, 170, 176, 182, 188, 194, 199, 205, 212, 218, 224, 230, 236, 242, 248, 254, 164, 159, 153, 148, 142, 137, 132, 127, 120, 115, 110, 105, 99, 94, 89, 84, 164, 170, 176, 181, 187, 193, 199, 205, 212, 217, 223, 229, 235, 241, 246, 252, 164, 159, 153, 148, 142, 137, 132, 127, 120, 115, 110, 105, 100, 94, 90, 85, 164, 170, 176, 182, 188, 194, 200, 206, 213, 219, 225, 231, 237, 243, 249, 255, 164, 159, 154, 149, 143, 138, 133, 128, 122, 117, 112, 107, 102, 97, 92, 87, 164, 170, 176, 182, 188, 194, 199, 205, 212, 218, 224, 230, 236, 242, 248, 253, 164, 159, 154, 149, 143, 138, 133, 128, 122, 117, 112, 107, 102, 97, 92, 87, 164, 164, 164, 164, 164, 164, 164, 164, 163, 163, 163, 163, 163, 163, 163, 163, 164, 153, 142, 130, 119, 108, 97, 86, 73, 62, 52, 41, 30, 20, 10, 0, 164, 164, 164, 164, 164, 164, 163, 163, 163, 163, 163, 163, 163, 163, 162, 162, 164, 153, 142, 131, 119, 108, 97, 87, 73, 63, 52, 42, 31, 21, 11, 1, 164, 164, 164, 164, 164, 164, 164, 165, 165, 165, 165, 165, 165, 165, 165, 165, 164, 153, 142, 131, 120, 109, 98, 88, 75, 64, 54, 44, 33, 23, 13, 3, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 153, 142, 131, 120, 109, 99, 88, 75, 65, 55, 44, 34, 24, 14, 4} ;
+
+inline static unsigned char isMahoneyDigi() {
+	// Mahoney's "8-bit" D418 sample-technique requires a specific SID setup
+	if (((getmem(0xd406) == 0xff) && (getmem(0xd40d) == 0xff) && (getmem(0xd414) == 0xff)) && // correct SR
+		((getmem(0xd404) == 0x49) && (getmem(0xd40b) == 0x49) && (getmem(0xd412) == 0x49)) && // correct waveform
+		((getmem(0xd415) == 0xff) && (getmem(0xd416) == 0xff) ) && // correct filter cutoff
+		(getmem(0xd417) == 0x3)) {	// voice 1&2 through filter
+		
+		return 1;
+	} else {
+		return 0;
+	}
+}
+
+// -------------------------------------------------------------------------------------------
 // Swallow 'pulse width modulation': the players handled here use some PWM approach but without 
 // the more recent test-bit technique.. each player depends on specific frequency 
 // settings and differs in how sample values are transformed and then written as 
@@ -574,7 +594,7 @@ void handleSidWrite(unsigned short addr, unsigned char value) {
 		// hack: to avoid these issues SID settings from within an NMI are limited to the volume register
 		if (addr == 0xd418) {	// traditional digis
 			// note: some tunes also set filters while they play digis, e.g. Digi-Piece_for_Telecomsoft.sid
-			recordSample(value << 4);	// this may lead to false positives..
+			recordSample(isMahoneyDigi() ? sMahoneySample[value] : value << 4);	// this may lead to false positives..
 
 			sidPoke(addr&0x1f, value);	// GianaSisters seems to rely on setting made from NMI
 			// hack: don't write io_area so that NMI digis don't disturb loudness of Ferrari_Formula_One.sid
@@ -582,7 +602,7 @@ void handleSidWrite(unsigned short addr, unsigned char value) {
 	} else {
 		// normal handling
 		if (!isPsid() && (addr == 0xd418)) {
-			recordSample(value << 4);		// mb a digi from some main loop (false positives will be filtered later)			
+			recordSample(isMahoneyDigi() ? sMahoneySample[value] : value << 4);	// this may lead to false positives..
 		}					
 		// info: Fanta_in_Space.sid, digital_music.sid need regular volume settings produced here from Main..
 		sidPoke(addr&0x1f, value);							

@@ -129,7 +129,7 @@ static void resetTimings() {
 	// hack: correct cycle handling would consider badlines, usage of sprites, bus takeover cycles, etc
 	// but we just use the following hack to fix obvious problems with the playback of THCM's stuff..  without 
 	// which THCM's player makes too many NMI calls per screen..
-	int badlineCycles= sCyclesPerRaster*3;
+	int badlineCycles= sCyclesPerRaster*4;	// increased to 4 for the benefit of Kapla_Caves.sid
 	sTotalCyclesPerScreen= sCyclesPerRaster*sLinesPerScreen- badlineCycles;			// NTSC: 17095	/ PAL: 19656		
 	sTotalCyclesPerSec= sTotalCyclesPerScreen*fps; // NTSC: 1025700 (clock would be: 1022727);		/ PAL: 982800 (clock would be; 985248);			
 }
