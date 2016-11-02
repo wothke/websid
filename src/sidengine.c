@@ -43,6 +43,7 @@
  // http://www.sidmusic.org/sid/sidtech2.html
  // http://www.oxyron.de/html/opcodes02.html
  
+ 
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -53,7 +54,7 @@
 
 // switch between 'cycle' or 'sample' based envelope-generator counter 
 // (performance wise it does not seem to make much difference)
-//#define USE_SAMPLE_ENV_COUNTER
+#define USE_SAMPLE_ENV_COUNTER
 
 
 #include "sidengine.h"
@@ -64,6 +65,7 @@
 #include "nanocia.h"
 #include "rsidengine.h"
 #include "sidplayer.h"
+#include "hacks.h"
 
 typedef enum {
     Attack=0,
@@ -73,79 +75,82 @@ typedef enum {
 } EnvelopePhase;
 
 
-int sFrameCount= 0;
+int32_t sFrameCount= 0;				// keeps track of current frame
+uint32_t sCycles= 0;		// counter of burned cpu cycles within current frame
+uint32_t sAbsCycles= 0;		// counter of burned cpu cycles since start of emu
+uint32_t sLastFrameCycles= 0;	// cycles used on the last screen 
 
 // hacks
-unsigned char sFake_d012_count=0;
-unsigned char sFake_d012_loop=0;
+uint8_t sFake_d012_count=0;
+uint8_t sFake_d012_loop=0;
 
-unsigned int sCiaNmiVectorHack= 0;
+uint16_t sCiaNmiVectorHack= 0;
 
 void setCiaNmiVectorHack(){
 	sCiaNmiVectorHack= 1;
 }
 
 /* Routines for quick & dirty float calculation */
-static inline int pfloat_ConvertFromInt(int i) 		{ return (i<<16); }
-static inline int pfloat_ConvertFromFloat(float f) 	{ return (int)(f*(1<<16)); }
-static inline int pfloat_Multiply(int a, int b) 	{ return (a>>8)*(b>>8); }
-static inline int pfloat_ConvertToInt(int i) 		{ return (i>>16); }
+static inline int32_t pfloat_ConvertFromInt(int32_t i) 		{ return (i<<16); }
+static inline int32_t pfloat_ConvertFromFloat(float f) 	{ return (int32_t)(f*(1<<16)); }
+static inline int32_t pfloat_Multiply(int32_t a, int32_t b) 	{ return (a>>8)*(b>>8); }
+static inline int32_t pfloat_ConvertToInt(int32_t i) 		{ return (i>>16); }
 
 
 // internal oscillator def
 struct sidosc {
-    unsigned long freq;
-    unsigned long pulse;
-    unsigned char wave;
-    unsigned char filter;
-    unsigned long attack;
-    unsigned long decay;
-    unsigned long sustain;
-    unsigned long release;
-    unsigned long counter;
+    uint32_t freq;
+    uint32_t pulse;
+    uint8_t wave;
+    uint8_t filter;
+    uint32_t attack;
+    uint32_t decay;
+    uint32_t sustain;
+    uint32_t release;
+    uint32_t counter;
 
 	// updated envelope generation based on reSID
-	unsigned char envelopeOutput;
-	signed int currentLFSR;	// sim counter	
-	unsigned char zero_lock;  
-	unsigned char exponential_counter;
+	uint8_t envelopeOutput;
+	int16_t currentLFSR;	// sim counter	
+	uint8_t zero_lock;  
+	uint8_t exponential_counter;
 	
-    unsigned char envphase;
-    unsigned long noisepos;
-    unsigned long noiseval;
-    unsigned char noiseout;
+    uint8_t envphase;
+    uint32_t noisepos;
+    uint32_t noiseval;
+    uint8_t noiseout;
 };
 
 // internal filter def
 struct sidflt {
-    int freq;
-    unsigned char  l_ena;
-	unsigned char  b_ena;
-    unsigned char  h_ena;
-    unsigned char  v3ena;
-    int vol;
-    int rez;
-    int h;
-    int b;
-    int l;
+    int32_t freq;
+    uint8_t  l_ena;
+	uint8_t  b_ena;
+    uint8_t  h_ena;
+    uint8_t  v3ena;
+    int32_t vol;
+    int32_t rez;
+    int32_t h;
+    int32_t b;
+    int32_t l;
 };
 
 
-int limit_LFSR= 0;	// the original cycle counter would be 15-bit (but we are counting samples & may rescale the counter accordingly)
-int envelope_counter_period[16];
-int envelope_counter_period_clck[16];
+int32_t limit_LFSR= 0;	// the original cycle counter would be 15-bit (but we are counting samples & may rescale the counter accordingly)
+int32_t envelope_counter_period[16];
+int32_t envelope_counter_period_clck[16];
 
 
 // note: decay/release times are 3x longer (implemented via exponential_counter)
-static const int attackTimes[16]  =	{
+static const int32_t attackTimes[16]  =	{
 	2, 8, 16, 24, 38, 56, 68, 80, 100, 240, 500, 800, 1000, 3000, 5000, 8000
 };
 
-static unsigned long  mixing_frequency;
-static unsigned long  freqmul;
-static int  filtmul;
+static uint32_t  mixing_frequency;
+uint32_t  freqmul;
+static int32_t  filtmul;
 
-unsigned long getSampleFrequency() {
+uint32_t getSampleFrequency() {
 	return mixing_frequency;
 }
 
@@ -153,41 +158,46 @@ struct s6581 sid;
 static struct sidosc osc[3];
 static struct sidflt filter;
 
-static unsigned int sMuteVoice[3];
+static uint16_t sMuteVoice[3];
 
-void setMute(unsigned char voice) {
+void setMute(uint8_t voice) {
 	sMuteVoice[voice] = 1;
 }
 
-/* Get the bit from an unsigned long at a specified position */
-static inline unsigned char get_bit(unsigned long val, unsigned char b)
+/* Get the bit from an uint32_t at a specified position */
+static inline uint8_t get_bit(uint32_t val, uint8_t b)
 {
-    return (unsigned char) ((val >> b) & 1);
+    return (uint8_t) ((val >> b) & 1);
 }
 
 /*
 * @return 0 if RAM is visible; 1 if ROM is visible
 */ 
-static char isKernalRomVisible() {
+static uint8_t isKernalRomVisible() {
 	return memory[0x0001] & 0x2;
 }
 
 /*
 * @return 0 if RAM is visible; 1 if IO area is visible
 */ 
-static char isIoAreaVisible() {
-	unsigned char bits= memory[0x0001] & 0x7;	
+static uint8_t isIoAreaVisible() {
+	uint8_t bits= memory[0x0001] & 0x7;	
 	return ((bits & 0x4) != 0) && (bits != 0x4);
 }
 
-unsigned short pc;
+uint16_t pc;
 
-unsigned long sCycles= 0;					// counter keeps track of burned cpu cycles
+uint8_t getIO(uint16_t addr) {
+	if ((addr&0xfc00)==0xd400) {			
+		return io_area[(addr&0xfc1f) - 0xd000];
+	}
+	return io_area[addr-0xd000];
+}
 
-unsigned long sAdsrBugTriggerTime= 0;					// detection of ADSR-bug conditions
-unsigned long sAdsrBugFrameCount= 0;
+uint32_t sAdsrBugTriggerTime= 0;					// detection of ADSR-bug conditions
+uint32_t sAdsrBugFrameCount= 0;
 
-static unsigned char sDummyDC04;
+static uint8_t sDummyDC04;
 
 
 // poor man's lookup table for combined pulse/triangle waveform (this table does not 
@@ -195,7 +205,7 @@ static unsigned char sDummyDC04;
 // feel free to come up with a better impl!
 // FIXME: this table was created by sampling kentilla output.. i.e. it already reflects the envelope 
 // used there and may actually be far from the correct waveform
-signed char pulseTriangleWavetable[] =
+int8_t pulseTriangleWavetable[] =
 {
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x06, 0x00, 
 	0x00, 0x06, 0x06, 0x06, 0x00, 0x00, 0x00, 0x06, 0x06, 0x06, 0x06, 0x00, 0x06, 0x06, 0x00, 0x10, 
@@ -218,20 +228,18 @@ signed char pulseTriangleWavetable[] =
 	0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x06, 0x06, 0x06, 0x00, 0x00, 0x00, 0x06, 0x06, 0x06, */
 };
 
-unsigned char exponential_delays[256];
+uint8_t exponential_delays[256];
 
 float cyclesPerSample= 0;	// rename global stuff
 float cycleOverflow= 0;
 
 // supposedly DC level for MOS6581 (whereas it would be 0x80 for the "crappy new chip")
-const unsigned level_DC= 0x38;
+const uint8_t level_DC= 0x38;
 
-#ifdef DEBUG
-const unsigned char voiceEnableMask= 0x7;	// for debugging: allows to mute certain voices..
-#endif
+uint8_t voiceEnableMask= 0x7;	// for debugging: allows to mute certain voices..
 
 // util related to envelope generator LFSR counter
-int clocksToSamples(int clocks) {
+int32_t clocksToSamples(int32_t clocks) {
 #ifdef USE_SAMPLE_ENV_COUNTER
 	return round(((float)clocks)/cyclesPerSample)+1;
 #else
@@ -242,7 +250,7 @@ int clocksToSamples(int clocks) {
 /*
 * check if LFSR threshold was reached 
 */
-unsigned char triggerLFSR_Threshold(unsigned int threshold, signed int *end) {
+uint8_t triggerLFSR_Threshold(uint16_t threshold, int16_t *end) {
 	if (threshold == (*end)) {
 		(*end)= 0; // reset counter
 		return 1;
@@ -250,17 +258,17 @@ unsigned char triggerLFSR_Threshold(unsigned int threshold, signed int *end) {
 	return 0;
 }
 
-unsigned char handleExponentialDelay(unsigned char voice) {
+uint8_t handleExponentialDelay(uint8_t voice) {
 	osc[voice].exponential_counter+= 1;
 	
-	unsigned char result= (osc[voice].exponential_counter >= exponential_delays[osc[voice].envelopeOutput]);
+	uint8_t result= (osc[voice].exponential_counter >= exponential_delays[osc[voice].envelopeOutput]);
 	if (result) {
 		osc[voice].exponential_counter= 0;	// reset to start next round
 	}
 	return result;
 }
 
-void simOneEnvelopeCycle(unsigned char v) {
+void simOneEnvelopeCycle(uint8_t v) {
 	// now process the volume according to the phase and adsr values
 	// (explicit switching of ADSR phase is handled in sidPoke() so there is no need to handle that here)
 
@@ -275,7 +283,7 @@ void simOneEnvelopeCycle(unsigned char v) {
 		osc[v].currentLFSR= 0;
 	}
 	
-	unsigned char previousEnvelopeOutput = osc[v].envelopeOutput;
+	uint8_t previousEnvelopeOutput = osc[v].envelopeOutput;
 				
 	switch (osc[v].envphase) {
 		case Attack: {                          // Phase 0 : Attack
@@ -332,23 +340,24 @@ void simOneEnvelopeCycle(unsigned char v) {
 }	  
 
 // render a buffer of n samples with the actual register contents
-void synth_render (short *buffer, unsigned long len)
+void synth_render (int16_t *buffer, uint32_t len)
 {
-    unsigned long bp;
+    uint32_t bp;
     // step 1: convert the not easily processable sid registers into some
     //           more convenient and fast values (makes the thing much faster
     //          if you process more than 1 sample value at once)
-    unsigned char v;
+    uint8_t v;
     for (v=0;v<3;v++) {
         osc[v].pulse   = (sid.v[v].pulse & 0xfff) << 16;
         osc[v].filter  = get_bit(sid.res_ftv,v);
         osc[v].attack  = envelope_counter_period[sid.v[v].ad >> 4];		// threshhold to be reached before incrementing volume
         osc[v].decay   = envelope_counter_period[sid.v[v].ad & 0xf];
-		unsigned char sustain= sid.v[v].sr >> 4;
+		uint8_t sustain= sid.v[v].sr >> 4;
         osc[v].sustain = sustain<<4 | sustain;
         osc[v].release = envelope_counter_period[sid.v[v].sr & 0xf];
         osc[v].wave    = sid.v[v].wave;
-        osc[v].freq    = ((unsigned long)sid.v[v].freq)*freqmul;
+
+        osc[v].freq    = ((uint32_t)sid.v[v].freq)*freqmul;
     }
 
 #ifdef USE_FILTER
@@ -376,8 +385,8 @@ void synth_render (short *buffer, unsigned long len)
   
 	// now render the buffer
 	for (bp=0;bp<len;bp++) {		
-		int outo=0;
-		int outf=0;
+		int32_t outo=0;
+		int32_t outf=0;
 		
 		// step 2 : generate the two output signals (for filtered and non-
 		//          filtered) from the osc/eg sections
@@ -391,20 +400,20 @@ void synth_render (short *buffer, unsigned long len)
 				osc[v].noisepos = 0;
 				osc[v].noiseval = 0xffffff;
 			}
-			unsigned char refosc = v?v-1:2;  // reference oscillator for sync/ring
+			uint8_t refosc = v?v-1:2;  // reference oscillator for sync/ring
 			// sync oscillator to refosc if sync bit set 
 			if (osc[v].wave & 0x02)
 				if (osc[refosc].counter < osc[refosc].freq)
 					osc[v].counter = osc[refosc].counter * osc[v].freq / osc[refosc].freq;
 			// generate waveforms with really simple algorithms
-			unsigned char tripos = (unsigned char) (osc[v].counter>>19);
-			unsigned char triout= tripos;
+			uint8_t tripos = (uint8_t) (osc[v].counter>>19);
+			uint8_t triout= tripos;
 			if (osc[v].counter>>27) {
 				triout^=0xff;
 			}
-			unsigned char sawout = (unsigned char) (osc[v].counter >> 20);
+			uint8_t sawout = (uint8_t) (osc[v].counter >> 20);
 
-			unsigned char plsout = (unsigned char) ((osc[v].counter > osc[v].pulse)-1);			
+			uint8_t plsout = (uint8_t) ((osc[v].counter > osc[v].pulse)-1);			
 			if (osc[v].wave&0x8) {
 				// TEST (Bit 3): The TEST bit, when set to one, resets and locks oscillator 1 at zero 
 				// until the TEST bit is cleared. The noise waveform output of oscillator 1 is also 
@@ -439,7 +448,7 @@ void synth_render (short *buffer, unsigned long len)
 						(get_bit(osc[v].noiseval, 4) << 1) |
 						(get_bit(osc[v].noiseval, 2) << 0);
 			}
-			unsigned char nseout = osc[v].noiseout;
+			uint8_t nseout = osc[v].noiseout;
 
 			// modulate triangle wave if ringmod bit set 
 			if (osc[v].wave & 0x04)
@@ -453,19 +462,18 @@ void synth_render (short *buffer, unsigned long len)
 			
 			// => wothke: the above statement is nonsense: there are many songs that need $50!
 
-			unsigned char outv=0xFF;
-#ifdef DEBUG			
+			uint8_t outv=0xFF;
+
 			if ((0x1 << v) & voiceEnableMask) {
-#endif
 				if ((osc[v].wave & 0x40) && (osc[v].wave & 0x10))  {		
 					// this is a poor man's impl for $50 waveform to improve playback of 
 					// songs like Kentilla.sid, Convincing.sid, etc
 					
-					unsigned char idx= tripos > 0x7f ? 0xff-tripos : tripos;							
+					uint8_t idx= tripos > 0x7f ? 0xff-tripos : tripos;							
 					outv &= pulseTriangleWavetable[idx];					
 					outv &= plsout;	// either on or off
 				} else {
-					int updated= 0;
+					int32_t updated= 0;
 				
 					if ((osc[v].wave & 0x10) && ++updated)  outv &= triout;					
 					if ((osc[v].wave & 0x20) && ++updated)  outv &= sawout;
@@ -473,21 +481,20 @@ void synth_render (short *buffer, unsigned long len)
 					if ((osc[v].wave & 0x80) && ++updated)  outv &= nseout;
 					if (!updated) 	outv &= level_DC;			
 				}
-#ifdef DEBUG			
 			} else {
 				outv=level_DC;
 			}
-#endif						
+
 #ifdef USE_SAMPLE_ENV_COUNTER
 			// using samples
 			simOneEnvelopeCycle(v);
 #else
 			// using cycles
 			float c= cyclesPerSample+cycleOverflow;
-			unsigned int cycles= (unsigned int)c;		
+			uint16_t cycles= (uint16_t)c;		
 			cycleOverflow= c-cycles;
 			
-			for (int i= 0; i<cycles; i++) {
+			for (int32_t i= 0; i<cycles; i++) {
 				simOneEnvelopeCycle(v);
 			}	  
 #endif
@@ -497,14 +504,14 @@ void synth_render (short *buffer, unsigned long len)
 #ifdef USE_FILTER
 			if (((v<2) || filter.v3ena) && !sMuteVoice[v]) {
 				if (osc[v].filter) {
-					outf+=( ((int)(outv-0x80)) * (int)((osc[v].envelopeOutput)) ) >>6;
+					outf+=( ((int32_t)(outv-0x80)) * (int32_t)((osc[v].envelopeOutput)) ) >>6;
 				} else {
-					outo+=( ((int)(outv-0x80)) * (int)((osc[v].envelopeOutput)) ) >>6;
+					outo+=( ((int32_t)(outv-0x80)) * (int32_t)((osc[v].envelopeOutput)) ) >>6;
 				}
 			}
 #else
 			// Don't use filters, just mix all voices together
-			if (!sMuteVoice[v]) outf+= (int)(((signed short)(outv-0x80)) * (osc[v].envelopeOutput)); 
+			if (!sMuteVoice[v]) outf+= (int32_t)(((int16_t)(outv-0x80)) * (osc[v].envelopeOutput)); 
 #endif
 		}
 
@@ -535,22 +542,22 @@ void synth_render (short *buffer, unsigned long len)
 			if (filter.h_ena) outf+=pfloat_ConvertToInt(filter.h);
 		}		
 
-		int final_sample = (filter.vol*(outo+outf));
+		int32_t final_sample = (filter.vol*(outo+outf));
 #else
-		int final_sample = outf>>2;
+		int32_t final_sample = outf>>2;
 #endif
 
 		final_sample= generatePsidDigi(final_sample);	// PSID stuff
 
 		// Clipping
-		const int clipValue = 32767;
+		const int32_t clipValue = 32767;
 		if ( final_sample < -clipValue ) {
 			final_sample = -clipValue;
 		} else if ( final_sample > clipValue ) {
 			final_sample = clipValue;
 		}
 
-		short out= final_sample;
+		int16_t out= final_sample;
 		*(buffer+bp)= out;
     }
 }
@@ -559,7 +566,7 @@ void synth_render (short *buffer, unsigned long len)
 char hex1 [16]= {'0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'};
 char *pokeInfo;
 
-void traceSidPoke(int reg, unsigned char val) {
+void traceSidPoke(uint8_t reg, uint8_t val) {
 	pokeInfo= malloc(sizeof(char)*13);
 
 	pokeInfo[0]= hex1[(sFrameCount>>12)&0xf];
@@ -580,9 +587,9 @@ void traceSidPoke(int reg, unsigned char val) {
 }
 #endif
 
-unsigned char sTraceon= 0;
+uint8_t sTraceon= 0;
 
-unsigned long getFrameCount() {
+uint32_t getFrameCount() {
 	return sFrameCount;
 }
 
@@ -590,14 +597,12 @@ void incFrameCount() {
 	sFrameCount++;
 }
 
-unsigned long sLastFrameCount= 0;
-
 //
 // Poke a value into the sid register
 //
-void sidPoke(int reg, unsigned char val)
+void sidPoke(uint8_t reg, uint8_t val)
 {
-    int voice=0;
+    uint8_t voice=0;
 #ifdef DEBUG
 //		if (sTraceon) traceSidPoke(reg, val);	
 #endif	
@@ -607,7 +612,7 @@ void sidPoke(int reg, unsigned char val)
 
     switch (reg) {		
         case 0: { // Set frequency: Low byte
-            sid.v[voice].freq = (sid.v[voice].freq&0xff00) | val;
+			sid.v[voice].freq = (sid.v[voice].freq&0xff00) | val;
             break;
         }
         case 1: { // Set frequency: High byte
@@ -623,9 +628,11 @@ void sidPoke(int reg, unsigned char val)
             break;
         }
         case 4: {
-			unsigned char oldGate= sid.v[voice].wave&0x1;
-			unsigned char oldTest= sid.v[voice].wave&0x8;		// oscillator stop
-			unsigned char newGate= val & 0x01;
+			simStartOscillatorVoice3(voice, val);
+			
+			uint8_t oldGate= sid.v[voice].wave&0x1;
+			uint8_t oldTest= sid.v[voice].wave&0x8;		// oscillator stop
+			uint8_t newGate= val & 0x01;
 
 			sid.v[voice].wave = val;
 			
@@ -656,7 +663,7 @@ void sidPoke(int reg, unsigned char val)
 			// sets up an A/D that is bound to already have run over then we can be pretty sure what he is after..			
 
 			if (sAdsrBugFrameCount == getFrameCount()) {				// limitation: only works within the same frame
-				int delay= envelope_counter_period_clck[val >> 4];
+				int32_t delay= envelope_counter_period_clck[val >> 4];
 				if ((sCycles-sAdsrBugTriggerTime) > delay ) {
 					osc[voice].currentLFSR= clocksToSamples(delay);	// force ARSR-bug by setting counter higher than the threshold
 				}
@@ -673,7 +680,8 @@ void sidPoke(int reg, unsigned char val)
     return;
 }
 
-unsigned char getmem(unsigned short addr)
+
+uint8_t getmem(uint16_t addr)
 {
 	if (addr < 0xd000) {
 		return  memory[addr];
@@ -686,7 +694,9 @@ unsigned char getmem(unsigned short addr)
 					// filter impl seems to be rather shitty.. and if the actual envelopeOutput
 					// is used, then the filter will almost mute the signal 
 					return osc[2].envelopeOutput*4/5+20;	// use hack to avoid the worst
-					
+				case 0xd41b:
+					if (isMainLoopPolling()) { return simReadD41B(); }					
+					return getIO(addr);
 				// CIA	
 				case 0xdc01:
 					return 0xff;	// some songs use this as an exit criteria.. see Master_Blaster_intro.sid
@@ -719,16 +729,25 @@ unsigned char getmem(unsigned short addr)
 
 				// fixme: getmem is also used for write.. clearing the status here then might be a problem:
 				case 0xdc0d:
+					if (isMainLoopPolling()) { return simReadICR_1(); }
 					return getInterruptStatus(&(cia[0]));	
-				case 0xdd0d:		
+				case 0xdd0d:
+					if (isMainLoopPolling()) { return simReadICR_2(); }
 					return getInterruptStatus(&(cia[1]));
-				
+				case 0xdc0e:
+				case 0xdc0f:
+					if (isMainLoopPolling()) { return simReadCRAB(0, addr-0xdc0e); }
+					return getIO(addr);
+				case 0xdd0e:
+				case 0xdd0f:
+					if (isMainLoopPolling()) { return simReadCRAB(1, addr-0xdd0e); }
+					return getIO(addr);
 				case 0xdc08: 
 					// TOD tenth of second
 					return (getTimeOfDayMillis()%1000)/100;
 				case 0xdc09: 
 					// TOD second
-					return ((unsigned int)(getTimeOfDayMillis()/1000))%60;
+					return ((uint16_t)(getTimeOfDayMillis()/1000))%60;
 					
 				// VIC
 				case 0xd011:
@@ -739,10 +758,7 @@ unsigned char getmem(unsigned short addr)
 					return getD019();
 							
 				default:
-					if ((addr&0xfc00)==0xd400) {			
-						return io_area[(addr&0xfc1f) - 0xd000];
-					}
-					return io_area[addr-0xd000];
+					return getIO(addr);
 			}
 		} else {
 			// normal RAM access
@@ -759,9 +775,9 @@ unsigned char getmem(unsigned short addr)
 }
 
 // ----------------------------------------------------------------- Register
-unsigned char a,x,y,s,p;	// p= status register
+uint8_t a,x,y,s,p;	// p= status register
 
-static void setmem(unsigned short addr, unsigned char value)
+static void setmem(uint16_t addr, uint8_t value)
 {
 	if ((addr >= 0xd000) && (addr < 0xe000)) {	// handle I/O area 
 		if (isIoAreaVisible()) {
@@ -769,6 +785,8 @@ static void setmem(unsigned short addr, unsigned char value)
 			// CIA timers
 			if ((addr >= 0xdc00) && (addr < 0xde00)) {
 				addr&=0xFF0F;	// handle the 16 mirrored CIA registers just in case
+				
+				simWriteTimer(addr, value);
 				
 				switch (addr) {
 					case 0xdc0d:
@@ -782,7 +800,7 @@ static void setmem(unsigned short addr, unsigned char value)
 					case 0xdc06:
 					case 0xdc07:	
 						setTimer(&(cia[0]), addr-ADDR_CIA1, value);
-						break;						
+						break;	
 					case 0xdc08: 
 						updateTimeOfDay10thOfSec(value);
 						break;
@@ -852,7 +870,7 @@ enum {
 	l_a, c_a// additional pseudo ops used for D012 polling hack (replaces 2 jam ops..)
 };
 	
-static unsigned int isClass2(int cmd) {
+static uint16_t isClass2(int32_t cmd) {
 	switch (cmd) {
 		case adc:
 		case and:
@@ -874,7 +892,7 @@ static unsigned int isClass2(int cmd) {
 	}
 }
 	
-static const int opcodes[256]  = {
+static const int32_t opcodes[256]  = {
 	brk,ora,l_a,slo,nop,ora,asl,slo,php,ora,asl,anc,nop,ora,asl,slo,
 	bpl,ora,c_a,slo,nop,ora,asl,slo,clc,ora,nop,slo,nop,ora,asl,slo,
 	jsr,and,jam,rla,bit,and,rol,rla,plp,and,rol,anc,bit,and,rol,rla,
@@ -893,7 +911,7 @@ static const int opcodes[256]  = {
 	beq,sbc,jam,isb,nop,sbc,inc,isb,sed,sbc,nop,isb,nop,sbc,inc,isb
 };
 
-static const int modes[256]  = {
+static const int32_t modes[256]  = {
 	imp,idx,abs,idx,zpg,zpg,zpg,zpg,imp,imm,acc,imm,abs,abs,abs,abs,
 	rel,idy,abs,idy,zpx,zpx,zpx,zpx,imp,aby,imp,aby,abx,abx,abx,abx,
 	abs,idx,imp,idx,zpg,zpg,zpg,zpg,imp,imm,acc,imm,abs,abs,abs,abs,
@@ -913,7 +931,7 @@ static const int modes[256]  = {
 };
 
 // cycles per operation (adjustments apply)
-static const int opBaseCycles[256] = {
+static const int32_t opbaseFrameCycles[256] = {
 	7,6,4,8,3,3,5,5,3,2,2,2,4,4,6,6,
 	2,5,4,8,4,4,6,6,2,4,2,7,4,4,7,7,
 	6,6,0,8,3,3,5,5,4,2,2,2,4,4,6,6,
@@ -933,32 +951,13 @@ static const int opBaseCycles[256] = {
 };
 
 // ----------------------------------------------- globale Faulheitsvariablen
-static unsigned char bval;
-static unsigned short wval;
+static uint8_t bval;
+static uint16_t wval;
 
-static unsigned long sLastPolledOsc;
-static void simOsc3Polling(unsigned short ad) {
-	// handle busy polling for sid oscillator3 (e.g. Ring_Ring_Ring.sid)
-	if ((ad == 0xd41b) && (memory[pc] == 0xd0) && (memory[pc+1] == 0xfb) /*BEQ above read*/) {					
-		unsigned int t=(16777216/sid.v[2].freq)>>8; // cycles per 1 osc step up (if waveform is "sawtooth")
-		
-		unsigned long usedCycles= sCycles;
-		if (sLastPolledOsc < usedCycles) {
-			usedCycles-= sLastPolledOsc;					
-		}				
-		if (usedCycles<t) {
-			sCycles+= (t-usedCycles);	// sim busywait	(just give them evenly spaced signals)
-		}
-		sLastPolledOsc= sCycles;
-
-		io_area[0x041b]+= 1;	// this hack should at least avoid endless loops
-	}				
-}
-
-static unsigned char getaddr(unsigned char opc, int mode)
+static uint8_t getaddr(uint8_t opc, int32_t mode)
 {
 	// reads all the bytes belonging to the operation and advances the pc accordingly
-    unsigned short ad,ad2;  
+    uint16_t ad,ad2;  
     switch(mode)
     {
         case imp:
@@ -968,10 +967,6 @@ static unsigned char getaddr(unsigned char opc, int mode)
         case abs:
             ad=getmem(pc++);
             ad|=getmem(pc++)<<8;
-
-			simTimerPolling(ad, &sCycles, pc);
-			simOsc3Polling(ad);
-			
             return getmem(ad);
         case abx:
         case aby:			
@@ -979,8 +974,11 @@ static unsigned char getaddr(unsigned char opc, int mode)
             ad|=getmem(pc++)<<8;
             ad2=ad +(mode==abx?x:y);
 
-			if (isClass2(opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00)))	// page boundary crossed
+			if (isClass2(opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00))) {
+				// page boundary crossed
 				sCycles++;
+				sAbsCycles++;
+			}
 				
             return getmem(ad2);
         case zpg:
@@ -1009,8 +1007,11 @@ static unsigned char getaddr(unsigned char opc, int mode)
             ad2|=getmem((ad+1)&0xff)<<8;
             ad=ad2+y;
 			
-			if (isClass2(opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00)))	// page boundary crossed
+			if (isClass2(opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00)))	{
+				// page boundary crossed
 				sCycles++;
+				sAbsCycles++;					
+			}
             return getmem(ad);
         case acc:
             return a;
@@ -1018,11 +1019,11 @@ static unsigned char getaddr(unsigned char opc, int mode)
     return 0;
 }
 
-static void setaddr(unsigned char opc, int mode, unsigned char val)
+static void setaddr(uint8_t opc, int32_t mode, uint8_t val)
 {
 	// note: orig impl only covered the modes used by "regular" ops but
 	// for the support of illegal ops there are some more..
-    unsigned short ad,ad2;
+    uint16_t ad,ad2;
     switch(mode)
     {
         case abs:
@@ -1053,8 +1054,11 @@ static void setaddr(unsigned char opc, int mode, unsigned char val)
             ad2|=getmem((ad+1)&0xff)<<8;
             ad=ad2+y;
 			
-			if (isClass2(opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00)))	// page boundary crossed
+			if (isClass2(opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00))) {
+				// page boundary crossed
 				sCycles++;
+				sAbsCycles++;				
+			}
 			setmem(ad,val);
             return;
         case zpg:
@@ -1073,9 +1077,9 @@ static void setaddr(unsigned char opc, int mode, unsigned char val)
     }
 }
 
-static void putaddr(unsigned char opc, int mode, unsigned char val)
+static void putaddr(uint8_t opc, int32_t mode, uint8_t val)
 {
-    unsigned short ad,ad2;
+    uint16_t ad,ad2;
     switch(mode)
     {
         case abs:
@@ -1089,8 +1093,11 @@ static void putaddr(unsigned char opc, int mode, unsigned char val)
             ad|=getmem(pc++)<<8;				
             ad2=ad +(mode==abx?x:y);
 
-			if (isClass2(opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00)))	// page boundary crossed
+			if (isClass2(opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00))) {
+				// page boundary crossed
 				sCycles++;
+				sAbsCycles++;
+			}
 				
             setmem(ad2,val);
             return;
@@ -1130,37 +1137,39 @@ static void putaddr(unsigned char opc, int mode, unsigned char val)
     }
 }
 
-static void setflags(int flag, int cond)
+static void setflags(int32_t flag, int32_t cond)
 {
     if (cond) p|=flag;
     else p&=~flag;
 }
 
-unsigned char isIrqBlocked()
+uint8_t isIrqBlocked()
 {
-	unsigned char irqSet= (p & FLAG_I) != 0;	
+	uint8_t irqSet= (p & FLAG_I) != 0;	
 	return irqSet;
 }
 
-void push(unsigned char val)
+void push(uint8_t val)
 {
     setmem(0x100+s,val);	
 	s= (s-1)&0xff;			// real stack just wraps around...
 }
 
-static unsigned char pop(void)
+static uint8_t pop(void)
 {
 	s= (s+1)&0xff;			// real stack just wraps around...	
     return getmem(0x100+s);	// pos is now the new first free element..
 }
 
-static void branch(unsigned char opc, int flag)
+static void branch(uint8_t opc, int32_t flag)
 {
-    signed char dist;
-    dist=(signed char)getaddr(opc, imm);
+    int8_t dist;
+    dist=(int8_t)getaddr(opc, imm);
     wval=pc+dist;
-    if (flag) { 		
-    	sCycles+=((pc&0x100)!=(wval&0x100))?2:1; // + 1 if branch occurs to same page/ + 2 if branch occurs to different page		
+    if (flag) {
+		uint8_t diff= ((pc&0x100)!=(wval&0x100))?2:1;
+    	sCycles+= diff; // + 1 if branch occurs to same page/ + 2 if branch occurs to different page
+		sAbsCycles+= diff;
 		pc=wval; 
 	}
 }
@@ -1178,25 +1187,27 @@ void cpuParse(void)
 {
 	simRasterline();
 
-    unsigned char opc=getmem(pc++);
+    uint8_t opc=getmem(pc++);
 	
-    int cmd=opcodes[opc];
-    int mode=modes[opc];
+    int32_t cmd=opcodes[opc];
+    int32_t mode=modes[opc];
 	
-	sCycles += opBaseCycles[opc];	// see adjustments in "branch", "putaddr" and "getaddr"
+	uint8_t diff= opbaseFrameCycles[opc];	// see adjustments in "branch", "putaddr" and "getaddr"
+	sCycles += diff;
+	sAbsCycles += diff;
     
-	int c;  
+	int32_t c;  
     switch (cmd)
     {
         case adc: {
-			unsigned char in1= a;
-			unsigned char in2= getaddr(opc, mode);
+			uint8_t in1= a;
+			uint8_t in2= getaddr(opc, mode);
 			
 			// note: The carry flag is used as the carry-in (bit 0) for the operation, and the 
 			// resulting carry-out (bit 8) value is stored in the carry flag.
-            wval=(unsigned short)in1+in2+((p&FLAG_C)?1:0);	// "carry-in"
+            wval=(uint16_t)in1+in2+((p&FLAG_C)?1:0);	// "carry-in"
             setflags(FLAG_C, wval&0x100);
-            a=(unsigned char)wval;
+            a=(uint8_t)wval;
             setflags(FLAG_Z, !a);
             setflags(FLAG_N, a&0x80);
 			
@@ -1225,7 +1236,7 @@ void cpuParse(void)
         case asl:
             wval=getaddr(opc, mode);
             wval<<=1;
-            setaddr(opc, mode,(unsigned char)wval);
+            setaddr(opc, mode,(uint8_t)wval);
             setflags(FLAG_Z,!(wval&0xff));
             setflags(FLAG_N,wval&0x80);
             setflags(FLAG_C,wval&0x100);
@@ -1296,21 +1307,21 @@ void cpuParse(void)
             break;
         case cmp:
             bval=getaddr(opc, mode);
-            wval=(unsigned short)a-bval;
+            wval=(uint16_t)a-bval;
             setflags(FLAG_Z,!wval);		// a == bval
             setflags(FLAG_N,wval&0x80);	// a < bval
             setflags(FLAG_C,a>=bval);
             break;
         case cpx:
             bval=getaddr(opc, mode);
-            wval=(unsigned short)x-bval;
+            wval=(uint16_t)x-bval;
             setflags(FLAG_Z,!wval);
             setflags(FLAG_N,wval&0x80);      
             setflags(FLAG_C,x>=bval);
             break;
         case cpy:
             bval=getaddr(opc,mode);
-            wval=(unsigned short)y-bval;
+            wval=(uint16_t)y-bval;
             setflags(FLAG_Z,!wval);
             setflags(FLAG_N,wval&0x80);      
             setflags(FLAG_C,y>=bval);
@@ -1321,7 +1332,7 @@ void cpuParse(void)
             bval--;
             setaddr(opc,mode,bval);
 			// cmp
-            wval=(unsigned short)a-bval;
+            wval=(uint16_t)a-bval;
             setflags(FLAG_Z,!wval);
             setflags(FLAG_N,wval&0x80);
             setflags(FLAG_C,a>=bval);
@@ -1375,12 +1386,12 @@ void cpuParse(void)
             setflags(FLAG_N,bval&0x80);
 
 			// + sbc			
-			unsigned char in1= a;
-			unsigned char in2= bval;
+			uint8_t in1= a;
+			uint8_t in2= bval;
 			
-            wval=(unsigned short)in1+in2+((p&FLAG_C)?1:0);
+            wval=(uint16_t)in1+in2+((p&FLAG_C)?1:0);
             setflags(FLAG_C, wval&0x100);
-            a=(unsigned char)wval;
+            a=(uint8_t)wval;
             setflags(FLAG_Z, !a);
             setflags(FLAG_N, a&0x80);
 			
@@ -1441,9 +1452,9 @@ void cpuParse(void)
             break;
         case lsr:      
             bval=getaddr(opc, mode); 
-			wval=(unsigned char)bval;
+			wval=(uint8_t)bval;
             wval>>=1;
-            setaddr(opc,mode,(unsigned char)wval);
+            setaddr(opc,mode,(uint8_t)wval);
             setflags(FLAG_Z,!wval);
             setflags(FLAG_N,wval&0x80);
             setflags(FLAG_C,bval&1);
@@ -1515,12 +1526,12 @@ void cpuParse(void)
             setaddr(opc,mode,bval);
 
 			// + adc
-			unsigned char in1= a;
-			unsigned char in2= bval;
+			uint8_t in1= a;
+			uint8_t in2= bval;
 			
-            wval=(unsigned short)in1+in2+((p&FLAG_C)?1:0);
+            wval=(uint16_t)in1+in2+((p&FLAG_C)?1:0);
             setflags(FLAG_C, wval&0x100);
-            a=(unsigned char)wval;
+            a=(uint8_t)wval;
             setflags(FLAG_Z, !a);
             setflags(FLAG_N, a&0x80);
 			
@@ -1557,12 +1568,12 @@ void cpuParse(void)
         case sbc:    {
             bval=getaddr(opc, mode)^0xff;
 			
-			unsigned char in1= a;
-			unsigned char in2= bval;
+			uint8_t in1= a;
+			uint8_t in2= bval;
 						
-            wval=(unsigned short)in1+in2+((p&FLAG_C)?1:0);
+            wval=(uint16_t)in1+in2+((p&FLAG_C)?1:0);
             setflags(FLAG_C, wval&0x100);
-            a=(unsigned char)wval;
+            a=(uint8_t)wval;
             setflags(FLAG_Z, !a);
             setflags(FLAG_N, a&0x80);
 			
@@ -1591,7 +1602,7 @@ void cpuParse(void)
 			// asl
             wval=getaddr(opc, mode);
             wval<<=1;
-            setaddr(opc,mode,(unsigned char)wval);
+            setaddr(opc,mode,(uint8_t)wval);
             setflags(FLAG_Z,!wval);
             setflags(FLAG_N,wval&0x80);
             setflags(FLAG_C,wval&0x100);
@@ -1604,9 +1615,9 @@ void cpuParse(void)
         case sre:      		// see Spasmolytic_part_6.sid
 			// lsr
             bval=getaddr(opc, mode); 
-			wval=(unsigned char)bval;
+			wval=(uint8_t)bval;
             wval>>=1;
-            setaddr(opc,mode,(unsigned char)wval);
+            setaddr(opc,mode,(uint8_t)wval);
             setflags(FLAG_Z,!wval);
             setflags(FLAG_N,wval&0x80);
             setflags(FLAG_C,bval&1);
@@ -1653,6 +1664,16 @@ void cpuParse(void)
             setflags(FLAG_Z, !a);
             setflags(FLAG_N, a&0x80);
             break; 
+/*
+		case shs:	// 	TAS						
+			s= a&x;
+			bval= (getmem(pc+1) + 1) & s;
+
+			getaddr(opc, mode);	 		// make sure the PC is advanced correctly
+			setaddr(opc,mode,bval);		// setaddr
+		
+            break;
+*/			
 		// ----- D012 hacks ->	
         case c_a:
 			// this op (0x12) - which is normally illegal (and would freeze the machine)
@@ -1669,7 +1690,7 @@ void cpuParse(void)
 			if (--sFake_d012_count == 0) {
 				bval= a;
 			}	
-            wval=(unsigned short)a-bval;
+            wval=(uint16_t)a-bval;
             setflags(FLAG_Z,!wval);
             setflags(FLAG_N,wval&0x80);
             setflags(FLAG_C,a>=bval);
@@ -1713,19 +1734,21 @@ void cpuParse(void)
     }
 }
 
-static void resetEngine(unsigned long mixfrq) 
+static void resetEngine(uint32_t mixfrq) 
 {
 	mixing_frequency = mixfrq;
 	
-	freqmul = 15872000 / mixfrq;
+//	freqmul = 15872000 / mixfrq;		// FIXME XXX Logik hinter der original Konstanten? 
+	freqmul = getCyclesPerSec()*16 / mixfrq; 	// accu uses 28 rather than 24 bits (therefore *16)
+	
+		
 	filtmul = pfloat_ConvertFromFloat(21.5332031f)/mixfrq;
 
-	memSet((unsigned char*)&sid,0,sizeof(sid));
-	memSet((unsigned char*)osc,0,sizeof(osc));
-	memSet((unsigned char*)&filter,0,sizeof(filter));
+	memSet((uint8_t*)&sid,0,sizeof(sid));
+	memSet((uint8_t*)&osc,0,sizeof(osc));
+	memSet((uint8_t*)&filter,0,sizeof(filter));
 	
-	int i;
-	for (i=0;i<3;i++) {
+	for (uint8_t i=0;i<3;i++) {
 		// note: by default the rest of sid, osc & filter 
 		// above is set to 0
 		osc[i].envphase= Release;
@@ -1743,6 +1766,7 @@ static void resetEngine(unsigned long mixfrq)
 	// status
 	sFrameCount= 0;	
 	sCycles= 0;
+	sAbsCycles= 0;
 	
 	sAdsrBugTriggerTime= 0;
 	sAdsrBugFrameCount= 0;
@@ -1753,18 +1777,17 @@ static void resetEngine(unsigned long mixfrq)
 	sFake_d012_count= 0;
 	sFake_d012_loop= 0;
 		
-	sLastPolledOsc= 0;
 }
 
 //   initialize SID and frequency dependant values
-void synth_init(unsigned long mixfrq)
+void synth_init(uint32_t mixfrq)
 {
 	resetEngine(mixfrq);
 	
 	resetPsidDigi();
 	
 	// envelope-generator stuff
-	unsigned long cyclesPerSec= getCyclesPerSec();
+	uint32_t cyclesPerSec= getCyclesPerSec();
 	
 	cycleOverflow= 0;
 	cyclesPerSample= ((float)cyclesPerSec/mixfrq);
@@ -1774,28 +1797,28 @@ void synth_init(unsigned long mixfrq)
 	// granularity then is 'one sample' (not 'one cpu cycle' - but around 20).. instead of still trying to simulate a
 	// 15-bit cycle-counter we may directly use a sample-counter instead (which also reduces rounding issues).
 	
-	int i;
+	uint16_t i;
 #ifdef USE_SAMPLE_ENV_COUNTER
 	limit_LFSR= round(((float)0x8000)/cyclesPerSample);	// original counter was 15-bit
 	for (i=0; i<16; i++) {
 		// counter must reach respective threshold before envelope value is incremented/decremented
-		envelope_counter_period[i]= (int)round((float)(attackTimes[i]*cyclesPerSec)/1000/256/cyclesPerSample)+1;	// in samples
-		envelope_counter_period_clck[i]= (int)round((float)(attackTimes[i]*cyclesPerSec)/1000/256)+1;				// in clocks
+		envelope_counter_period[i]= (int32_t)round((float)(attackTimes[i]*cyclesPerSec)/1000/256/cyclesPerSample)+1;	// in samples
+		envelope_counter_period_clck[i]= (int32_t)round((float)(attackTimes[i]*cyclesPerSec)/1000/256)+1;				// in clocks
 	}
 #else
 	limit_LFSR= 0x8000;	// counter 15-bit
 	for (i=0;i<16;i++) {
 		// counter must reach respective threshold before envelope value is incremented/decremented
-		envelope_counter_period[i]=      (int)floor((float)(attackTimes[i]*cyclesPerSec)/1000/256)+1;	// in samples
-		envelope_counter_period_clck[i]= (int)floor((float)(attackTimes[i]*cyclesPerSec)/1000/256)+1;	// in clocks
+		envelope_counter_period[i]=      (int32_t)floor((float)(attackTimes[i]*cyclesPerSec)/1000/256)+1;	// in samples
+		envelope_counter_period_clck[i]= (int32_t)floor((float)(attackTimes[i]*cyclesPerSec)/1000/256)+1;	// in clocks
 	}
 #endif	
 	// lookup table for decay rates
-	unsigned char from[] =  {93, 54, 26, 14,  6,  0};
-	unsigned char val[] = { 1,  2,  4,  8, 16, 30};
+	uint8_t from[] =  {93, 54, 26, 14,  6,  0};
+	uint8_t val[] = { 1,  2,  4,  8, 16, 30};
 	for (i= 0; i<256; i++) {
-		unsigned char v= 1;
-		for (unsigned char j= 0; j<6; j++) {
+		uint8_t v= 1;
+		for (uint8_t j= 0; j<6; j++) {
 			if (i>from[j]) {
 				v= val[j];
 				break;

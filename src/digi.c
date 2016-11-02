@@ -22,49 +22,52 @@
 #include "nanovic.h"	// for getRasterlineTimer
 #include "sidplayer.h"	// for getCyclesPerScreen();
 
-unsigned long INVALID_TIME= (0x1 << 27);	// large enough so that any regular timestamp will get preference
-unsigned int IDX_NOT_FOUND= 0x1fff;			// we'll never have that many samples for one screen..
+uint32_t INVALID_TIME= (0x1 << 27);	// large enough so that any regular timestamp will get preference
+uint16_t IDX_NOT_FOUND= 0x1fff;			// we'll never have that many samples for one screen..
 
-static unsigned char sCurrentDigi=  0x80;		// last digi sample / default: neutral value 
+static uint8_t sCurrentDigi=  0x80;		// last digi sample / default: neutral value 
 
 
- /*
+/*
 * work buffers used to record digi samples produced by NMI/IRQ/main
 */ 
-unsigned int sDigiCount= 0;
+uint16_t sDigiCount= 0;
 
 
-unsigned long sDigiTime[DIGI_BUF_SIZE];		// time in cycles counted from the beginning of the current screen
-unsigned char sDigiVolume[DIGI_BUF_SIZE];	// 8-bit sample
+// FIXME cleanup: use consistent naming convention
 
-static unsigned long sSortedDigiTime[DIGI_BUF_SIZE];
-static unsigned char sSortedDigiVolume[DIGI_BUF_SIZE];
+uint32_t sDigiTime[DIGI_BUF_SIZE];		// time in cycles counted from the beginning of the current screen
+uint8_t sDigiVolume[DIGI_BUF_SIZE];	// 8-bit sample
 
-static unsigned char sIsC64compatible= 1;
+static uint32_t sSortedDigiTime[DIGI_BUF_SIZE];
+static uint8_t sSortedDigiVolume[DIGI_BUF_SIZE];
+
+static uint8_t sIsC64compatible= 1;
 
 /*
 * samples which already belong to the next screen, e.g. produced by some long running IRQ which
 * crossed over to the next screen..
 */
-unsigned int sOverflowDigiCount= 0;
-unsigned long sOverflowDigiTime[DIGI_BUF_SIZE];
-unsigned char sOverflowDigiVolume[DIGI_BUF_SIZE];
+uint16_t sOverflowDigiCount= 0;
+uint32_t sOverflowDigiTime[DIGI_BUF_SIZE];
+uint8_t sOverflowDigiVolume[DIGI_BUF_SIZE];
 
-const unsigned char sTestBitDetectTimeout = 12; 	// in cycles
+const uint8_t sTestBitDetectTimeout = 12;	 // minimum that still works for "Vortex" is 10
+const uint8_t sPulseTestBitDetectTimeout = 7; 	// already reduced this one to avoid false positive in "Yie ar kung fu"
 
 /* legacy PSID sample playback */
-static int sample_active;
-static int sample_position, sample_start, sample_end, sample_repeat_start;
-static int fracPos = 0;  /* Fractal position of sample */
-static int sample_period;
-static int sample_repeats;
-static int sample_order;
-static int sample_nibble;
+static int32_t sample_active;
+static int32_t sample_position, sample_start, sample_end, sample_repeat_start;
+static int32_t fracPos = 0;  /* Fractal position of sample */
+static int32_t sample_period;
+static int32_t sample_repeats;
+static int32_t sample_order;
+static int32_t sample_nibble;
 
-static int internal_period, internal_order, internal_start, internal_end,
+static int32_t internal_period, internal_order, internal_start, internal_end,
 internal_add, internal_repeat_times, internal_repeat_start;
 
-static void recordSample(unsigned char sample) {
+static void recordSample(uint8_t sample) {
 	if (sCycles <= getCyclesPerScreen()) {
 		sDigiTime[sDigiCount%(DIGI_BUF_SIZE-1)]= sCycles;
 		sDigiVolume[sDigiCount%(DIGI_BUF_SIZE-1)]= sample;	// always use 8-bit to ease handling									
@@ -106,14 +109,14 @@ typedef enum {
 
 // relevant timing state is tracked for each of the 3 channels
 static FreqDetectState sFreqDetectState[3];
-static unsigned long sFreqDetectTimestamp[3];
-static unsigned char sFreqDetectDelayedSample[3];
+static uint32_t sFreqDetectTimestamp[3];
+static uint8_t sFreqDetectDelayedSample[3];
 
-inline unsigned char isWithinFreqDetectTimeout(unsigned char voice) {
+inline uint8_t isWithinFreqDetectTimeout(uint8_t voice) {
 	return (sCycles-sFreqDetectTimestamp[voice]) < sTestBitDetectTimeout;
 }
 
-static unsigned char recordFreqSample(unsigned char voice, unsigned char sample) {
+static uint8_t recordFreqSample(uint8_t voice, uint8_t sample) {
 	recordSample(sample);
 
 	// reset those SID regs before envelope generator does any damage
@@ -125,13 +128,13 @@ static unsigned char recordFreqSample(unsigned char voice, unsigned char sample)
 	return 1;
 }
 
-static unsigned char handleFreqModulationDigi(unsigned char voice, unsigned char reg, unsigned char value) {
+static uint8_t handleFreqModulationDigi(uint8_t voice, uint8_t reg, uint8_t value) {
 	// test-bit approach: the following settings are performed on the waveform/freq register in short order:
 	// 1) Triangle+GATE, 2) TEST+GATE 3) GATE only 4) then the desired output sample is played by setting 
 	// the "frequency hi-byte" (the whole sequence usually takes about 20-30 cycles.. - exaxt limits
 	// still to be verified) .. possible variations: GATE is not set in step 2 and/or steps 3 and 4 are 
 	// switched (see LMan - Vortex.sid)
-	
+		
 	if (reg == 4) {	// waveform
 		value &= 0x19;	// mask all excess bits..
 		switch (value) {
@@ -196,15 +199,15 @@ typedef enum {
 
 // relevant timing state is tracked for each of the 3 channels
 static PulseDetectState sPulseDetectState[3];
-static unsigned long sPulseDetectTimestamp[3];
-static unsigned char sPulseDetectDelayedSample[3];
-static unsigned char sPulseDetectMode[3];	// 2= Pulse width LO/ 3= Pulse width HI
+static uint32_t sPulseDetectTimestamp[3];
+static uint8_t sPulseDetectDelayedSample[3];
+static uint8_t sPulseDetectMode[3];	// 2= Pulse width LO/ 3= Pulse width HI
 
-inline unsigned char isWithinPulseDetectTimeout(unsigned char voice) {
-	return (sCycles-sPulseDetectTimestamp[voice]) < sTestBitDetectTimeout;
+inline uint8_t isWithinPulseDetectTimeout(uint8_t voice) {
+	return (sCycles-sPulseDetectTimestamp[voice]) < sPulseTestBitDetectTimeout;
 }
 
-static unsigned char recordPulseSample(unsigned char voice, unsigned char sample) {
+static uint8_t recordPulseSample(uint8_t voice, uint8_t sample) {
 	recordSample(sample);
 
 	// reset those SID regs before envelope generator does any damage
@@ -216,11 +219,16 @@ static unsigned char recordPulseSample(unsigned char voice, unsigned char sample
 	return 1;
 }
 
-static unsigned char handlePulseModulationDigi(unsigned char voice, unsigned char reg, unsigned char value) {
+static uint8_t handlePulseModulationDigi(uint8_t voice, uint8_t reg, uint8_t value) {
 	// approach: the following settings are performed on the waveform/pulsewidth register in short order:
 	// 1) desired output sample is played by setting the "pulse width" then	2) PULSE+TEST+GATE, 3) PULSE+GATE 
 	// (the whole sequence usually takes about 20-30 cycles.. - exaxt limits still to be verified) variant:
 	// pulse-width is set between 2 and 3.
+	
+	// problem: Galway songs like Yie_Ar_Kung_Fu (see voice 2) are actually using the same sequence within regular 
+	// song (reduce detection timeout to 7 cycles to avoid false positive).
+	
+	// e.g. used in "Wonderland XII - Digi (part4)"
 	
 	if (reg == 4) {	// waveform
 		value &= 0x49;	// mask all excess bits..
@@ -239,13 +247,12 @@ static unsigned char handlePulseModulationDigi(unsigned char voice, unsigned cha
 			case 0x41:	// PULSE/GATE
 				if (((sPulseDetectState[voice] == PulseConfirm) || (sPulseDetectState[voice] == PulseConfirm2)) 
 						&& isWithinPulseDetectTimeout(voice)) {
-					unsigned char sample= (sPulseDetectMode[voice] == 2) ? 
+					uint8_t sample= (sPulseDetectMode[voice] == 2) ? 
 									sPulseDetectDelayedSample[voice] : (sPulseDetectDelayedSample[voice] << 4) & 0xff;
 
 					setMute(voice);	// avoid wheezing base signals
 					
 					sPulseDetectState[voice] = PulseIdle;	// just to reduce future comparisons
-
 					return recordFreqSample(voice, sample);								
 				} else {
 					sPulseDetectState[voice] = PulseIdle;	// just to reduce future comparisons			
@@ -253,7 +260,7 @@ static unsigned char handlePulseModulationDigi(unsigned char voice, unsigned cha
 				break;
 		}
 	} else if ((reg == 2) || (reg == 3)) {	// PULSE width 
-		unsigned char followState;
+		uint8_t followState;
 		if ((sPulseDetectState[voice] == PulsePrep2) && isWithinPulseDetectTimeout(voice)) {
 			followState= PulseConfirm2;	// variant 2
 		} else {
@@ -273,12 +280,10 @@ static unsigned char handlePulseModulationDigi(unsigned char voice, unsigned cha
 // by selecting a corresponding waveform in d412.
 // -------------------------------------------------------------------------------------------
 
-static unsigned char handleIceGuysDigi(unsigned char voice, unsigned char reg, unsigned char value) {
+static uint8_t handleIceGuysDigi(uint8_t voice, uint8_t reg, uint8_t value) {
 	// would be nice to find a robost check for non Ice_Guys.sid scenarios (false positives) 
 	// unfortunately I have not spottet it yet... (maybe a file specific hack would be in order to avoid any sideeffects)
 	
-	unsigned ctrlReg= 0x0400 + voice*7 + 4;	// waveform control reg
-
 	if ((reg == 4) && (getProgramMode() == NMI_OFFSET_MASK)
 			&& !(sid.v[voice].wave&0x8) && (sid.v[voice].ad == 0x0f)){	
 		
@@ -308,9 +313,9 @@ static unsigned char handleIceGuysDigi(unsigned char voice, unsigned char reg, u
 // -------------------------------------------------------------------------------------------
 
 // based on Mahoney's amplitude_table_8580.txt
-const unsigned char sMahoneySample[256]= {164, 170, 176, 182, 188, 194, 199, 205, 212, 218, 224, 230, 236, 242, 248, 254, 164, 159, 153, 148, 142, 137, 132, 127, 120, 115, 110, 105, 99, 94, 89, 84, 164, 170, 176, 181, 187, 193, 199, 205, 212, 217, 223, 229, 235, 241, 246, 252, 164, 159, 153, 148, 142, 137, 132, 127, 120, 115, 110, 105, 100, 94, 90, 85, 164, 170, 176, 182, 188, 194, 200, 206, 213, 219, 225, 231, 237, 243, 249, 255, 164, 159, 154, 149, 143, 138, 133, 128, 122, 117, 112, 107, 102, 97, 92, 87, 164, 170, 176, 182, 188, 194, 199, 205, 212, 218, 224, 230, 236, 242, 248, 253, 164, 159, 154, 149, 143, 138, 133, 128, 122, 117, 112, 107, 102, 97, 92, 87, 164, 164, 164, 164, 164, 164, 164, 164, 163, 163, 163, 163, 163, 163, 163, 163, 164, 153, 142, 130, 119, 108, 97, 86, 73, 62, 52, 41, 30, 20, 10, 0, 164, 164, 164, 164, 164, 164, 163, 163, 163, 163, 163, 163, 163, 163, 162, 162, 164, 153, 142, 131, 119, 108, 97, 87, 73, 63, 52, 42, 31, 21, 11, 1, 164, 164, 164, 164, 164, 164, 164, 165, 165, 165, 165, 165, 165, 165, 165, 165, 164, 153, 142, 131, 120, 109, 98, 88, 75, 64, 54, 44, 33, 23, 13, 3, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 153, 142, 131, 120, 109, 99, 88, 75, 65, 55, 44, 34, 24, 14, 4} ;
+const uint8_t sMahoneySample[256]= {164, 170, 176, 182, 188, 194, 199, 205, 212, 218, 224, 230, 236, 242, 248, 254, 164, 159, 153, 148, 142, 137, 132, 127, 120, 115, 110, 105, 99, 94, 89, 84, 164, 170, 176, 181, 187, 193, 199, 205, 212, 217, 223, 229, 235, 241, 246, 252, 164, 159, 153, 148, 142, 137, 132, 127, 120, 115, 110, 105, 100, 94, 90, 85, 164, 170, 176, 182, 188, 194, 200, 206, 213, 219, 225, 231, 237, 243, 249, 255, 164, 159, 154, 149, 143, 138, 133, 128, 122, 117, 112, 107, 102, 97, 92, 87, 164, 170, 176, 182, 188, 194, 199, 205, 212, 218, 224, 230, 236, 242, 248, 253, 164, 159, 154, 149, 143, 138, 133, 128, 122, 117, 112, 107, 102, 97, 92, 87, 164, 164, 164, 164, 164, 164, 164, 164, 163, 163, 163, 163, 163, 163, 163, 163, 164, 153, 142, 130, 119, 108, 97, 86, 73, 62, 52, 41, 30, 20, 10, 0, 164, 164, 164, 164, 164, 164, 163, 163, 163, 163, 163, 163, 163, 163, 162, 162, 164, 153, 142, 131, 119, 108, 97, 87, 73, 63, 52, 42, 31, 21, 11, 1, 164, 164, 164, 164, 164, 164, 164, 165, 165, 165, 165, 165, 165, 165, 165, 165, 164, 153, 142, 131, 120, 109, 98, 88, 75, 64, 54, 44, 33, 23, 13, 3, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 164, 153, 142, 131, 120, 109, 99, 88, 75, 65, 55, 44, 34, 24, 14, 4} ;
 
-inline static unsigned char isMahoneyDigi() {
+inline static uint8_t isMahoneyDigi() {
 	// Mahoney's "8-bit" D418 sample-technique requires a specific SID setup
 	if (((getmem(0xd406) == 0xff) && (getmem(0xd40d) == 0xff) && (getmem(0xd414) == 0xff)) && // correct SR
 		((getmem(0xd404) == 0x49) && (getmem(0xd40b) == 0x49) && (getmem(0xd412) == 0x49)) && // correct waveform
@@ -331,16 +336,16 @@ inline static unsigned char isMahoneyDigi() {
 // from musicians like Swallow, Danko or Cyberbrain
 // -------------------------------------------------------------------------------------------
 
-static unsigned int sSwallowPWM[3];
+static uint16_t sSwallowPWM[3];
 
-static unsigned char setSwallowMode(unsigned char voice, unsigned char m) {
+static uint8_t setSwallowMode(uint8_t voice, uint8_t m) {
 	sSwallowPWM[voice]= m;
 	setMute(voice);	// avoid wheezing base signals
 	
 	return 1;
 }
 
-static unsigned char handleSwallowDigi(unsigned char voice, unsigned char reg, unsigned short addr, unsigned char value) {
+static uint8_t handleSwallowDigi(uint8_t voice, uint8_t reg, uint16_t addr, uint8_t value) {
 	if (reg == 4) {
 		if ((sid.v[voice].wave & 0x8) && !(value & 0x8) && (value & 0x40) && ((sid.v[voice].ad == 0) && (sid.v[voice].sr == 0xf0))) {
 			// the tricky part here is that the tests here do not trigger for songs which act similarily 
@@ -384,7 +389,7 @@ void resetPsidDigi() {
 	fracPos = 0;
 }
 
-static void handlePsidDigi(unsigned short addr, unsigned char value) {			
+static void handlePsidDigi(uint16_t addr, uint8_t value) {			
 	// Neue SID-Register
 	if ((addr > 0xd418) && (addr < 0xd500))
 	{		
@@ -439,9 +444,9 @@ static void handlePsidDigi(unsigned short addr, unsigned char value) {
 	}	
 }
 
-int generatePsidDigi(int sIn)
+int32_t generatePsidDigi(int32_t sIn)
 {
-    static int sample = 0;
+    static int32_t sample = 0;
 
     if (!sample_active) return(sIn);
 
@@ -488,7 +493,8 @@ int generatePsidDigi(int sIn)
             sample = memory[sample_position&0xffff];
             if (sample_nibble==1)   // Hi-Nibble holen?     
                 sample = (sample & 0xf0)>>4;
-            else sample = sample & 0x0f;
+            else 
+				sample = sample & 0x0f;
 			
 			sample = (sample << 11) - 0x4000; // transform unsigned 4 bit range into signed 16 bit (–32,768 to 32,767) range			
         }
@@ -496,7 +502,7 @@ int generatePsidDigi(int sIn)
     return (sIn);
 }
 
-unsigned int getDigiCount() {
+uint16_t getDigiCount() {
 	return sDigiCount;
 }
 
@@ -504,7 +510,7 @@ void clearDigiBuffer() {
 	sDigiCount= 0;
 }
 
-void markSampleOrigin(unsigned long mask, unsigned long offset, unsigned long originalDigiCount) {
+void markSampleOrigin(uint32_t mask, uint32_t offset, uint32_t originalDigiCount) {
 	/*
 	* Due to the current implementation which only considers timer start times but not delays through 
 	* interrupts - the enties in the digi-sample recording may be out of sequence (e.g. if IRQ starts first 
@@ -524,29 +530,28 @@ void markSampleOrigin(unsigned long mask, unsigned long offset, unsigned long or
 	* the same result.. alone it did not :( mb it's a C skills problem or just some Alchemy bug.. for now the hack works.
 	*/
 	
-	unsigned int len= sDigiCount - originalDigiCount;
+	uint16_t len= sDigiCount - originalDigiCount;
 	
-	int i;
 	if (len > 0) {
-		for (i= 0; i<len; i++) {
+		for (uint16_t i= 0; i<len; i++) {
 			sDigiTime[originalDigiCount+i] = (offset + sDigiTime[originalDigiCount+i]) | mask;
 		}
 	}
 }
 
-void resetDigi(unsigned char compatibility) {
+void resetDigi(uint8_t compatibility) {
 	sIsC64compatible= compatibility;
 
-	memSet( (unsigned char*)&sSwallowPWM, 0, sizeof(sSwallowPWM) ); 
+	memSet( (uint8_t*)&sSwallowPWM, 0, sizeof(sSwallowPWM) ); 
 	
 	sDigiCount= 0;
 
-    memSet( (unsigned char*)&sDigiTime, 0, sizeof(sDigiTime) ); 
-    memSet( (unsigned char*)&sDigiVolume, 0, sizeof(sDigiVolume) ); 
+    memSet( (uint8_t*)&sDigiTime, 0, sizeof(sDigiTime) ); 
+    memSet( (uint8_t*)&sDigiVolume, 0, sizeof(sDigiVolume) ); 
 
 	sOverflowDigiCount= 0;
-    memSet( (unsigned char*)&sOverflowDigiTime, 0, sizeof(sOverflowDigiTime) ); 
-    memSet( (unsigned char*)&sOverflowDigiVolume, 0, sizeof(sOverflowDigiVolume) ); 
+    memSet( (uint8_t*)&sOverflowDigiTime, 0, sizeof(sOverflowDigiTime) ); 
+    memSet( (uint8_t*)&sOverflowDigiVolume, 0, sizeof(sOverflowDigiVolume) ); 
 	
 	// PSID digi stuff
 	sample_active= sample_position= sample_start= sample_end= sample_repeat_start= fracPos= 
@@ -558,7 +563,7 @@ void resetDigi(unsigned char compatibility) {
 	sDigiCount=0;
 	
 	//	digi sample detection 
-	for (int i= 0; i<3; i++) {
+	for (uint8_t i= 0; i<3; i++) {
 		sFreqDetectState[i]= FreqIdle;
 		sFreqDetectTimestamp[i]= 0;
 		sFreqDetectDelayedSample[i]= 0;
@@ -572,11 +577,11 @@ void resetDigi(unsigned char compatibility) {
 	}
 }
 
-const int sDigiSampleDetectLimit= 10;	// samples per frame.. actually should be well more than this..
+const uint8_t sDigiSampleDetectLimit= 10;	// samples per frame.. actually should be well more than this..
 
-void handleSidWrite(unsigned short addr, unsigned char value) {
-	unsigned char reg= addr&0x1f;
-	unsigned char voice= 0;
+void handleSidWrite(uint16_t addr, uint8_t value) {
+	uint8_t reg= addr&0x1f;
+	uint8_t voice= 0;
     if ((reg >= 7) && (reg <=13)) {voice=1; reg-=7;}
     if ((reg >= 14) && (reg <=20)) {voice=2; reg-=14;}
 
@@ -613,32 +618,32 @@ void handleSidWrite(unsigned short addr, unsigned char value) {
 	}
 }
 
-int getDigiOverflowCount() {
+uint16_t getDigiOverflowCount() {
 	return sOverflowDigiCount;
 } 
  
  void moveDigiBuffer2NextFrame() {
 	if (sOverflowDigiCount > 0) {
-		unsigned int len= sizeof(long)*sOverflowDigiCount;
+		uint16_t len= sizeof(long)*sOverflowDigiCount;
 		memcpy(sDigiTime, sOverflowDigiTime, len);		
 		memcpy(sDigiVolume, sOverflowDigiVolume, len);		
 		
 		// clear just in case..
-		memSet(((unsigned char*)sDigiTime)+len, 0, DIGI_BUF_SIZE-len);
-		memSet(((unsigned char*)sDigiVolume)+len, 0, DIGI_BUF_SIZE-len);
+		memSet(((uint8_t*)sDigiTime)+len, 0, DIGI_BUF_SIZE-len);
+		memSet(((uint8_t*)sDigiVolume)+len, 0, DIGI_BUF_SIZE-len);
 	} else {
-		memSet((unsigned char*)sDigiTime, 0, DIGI_BUF_SIZE);
-		memSet((unsigned char*)sDigiVolume, 0, DIGI_BUF_SIZE);
+		memSet((uint8_t*)sDigiTime, 0, DIGI_BUF_SIZE);
+		memSet((uint8_t*)sDigiVolume, 0, DIGI_BUF_SIZE);
 	}
 	sDigiCount= sOverflowDigiCount;
 	sOverflowDigiCount= 0;	
 }
 
-static int isVal(unsigned long mask, unsigned long val) {
+static uint32_t isVal(uint32_t mask, uint32_t val) {
 	return val&mask;		// is this a value of the selected "mask" category?
 }
 
-static unsigned long getValue(unsigned long mask, unsigned int fromIdx) {
+static uint32_t getValue(uint32_t mask, uint16_t fromIdx) {
 	if (fromIdx == IDX_NOT_FOUND) {
 		return INVALID_TIME;			// only relevant while it is used for comparisons..
 	}
@@ -646,15 +651,15 @@ static unsigned long getValue(unsigned long mask, unsigned int fromIdx) {
 }
 
 // must only be used for valid "fromIdx"
-static void copy(unsigned long mask, unsigned int toIdx, unsigned int fromIdx) {
+static void copy(uint32_t mask, uint16_t toIdx, uint16_t fromIdx) {
 	sSortedDigiTime[toIdx]= getValue(mask, fromIdx);
 	sSortedDigiVolume[toIdx]= sDigiVolume[fromIdx];
 }
 
-static unsigned int next(unsigned long mask, unsigned int toIdx, unsigned int fromIdx) {
+static uint16_t next(uint32_t mask, uint16_t toIdx, uint16_t fromIdx) {
 	copy(mask, toIdx, fromIdx);
 
-	unsigned int i; 
+	uint16_t i; 
 	for (i= fromIdx+1; i<sDigiCount; i++) {
 		if(isVal(mask, sDigiTime[i])) {
 			return i;	// advance index to the next value of this category
@@ -669,17 +674,17 @@ static void sortDigiSamples() {
 		// manner. Samples may therefore be stored out of sequence and we need to sort them here first before we render
 				
 		// the three sample providers:
-		unsigned int irqIdx= IDX_NOT_FOUND;
-		unsigned int nmiIdx= IDX_NOT_FOUND;
-		unsigned int mainIdx= IDX_NOT_FOUND;
+		uint16_t irqIdx= IDX_NOT_FOUND;
+		uint16_t nmiIdx= IDX_NOT_FOUND;
+		uint16_t mainIdx= IDX_NOT_FOUND;
 
-		unsigned int i;
-		unsigned int noOfIrqSamples= 0;
-		unsigned int noOfMainSamples= 0;
+		uint16_t i;
+		uint16_t noOfIrqSamples= 0;
+		uint16_t noOfMainSamples= 0;
 		
 		// find respective start index for data generated by IRQ/NMI/main
 		for (i= 0; i<sDigiCount; i++) {
-			unsigned long val= sDigiTime[i];
+			uint32_t val= sDigiTime[i];
 			if (val & MAIN_OFFSET_MASK) {
 				noOfMainSamples+= 1;
 
@@ -705,8 +710,8 @@ static void sortDigiSamples() {
 		char ignoreMainValue= (noOfMainSamples < 10);	// not meant as digi		
 
 		// create new list with strictly ascending timestamps
-		unsigned int toIdx;
-		signed char offset= 0;
+		uint16_t toIdx;
+		int8_t offset= 0;
 		for (toIdx= 0; toIdx<sDigiCount; toIdx++) {
 			if (getValue(MAIN_OFFSET_MASK, mainIdx) < getValue(IRQ_OFFSET_MASK, irqIdx)) {
 				if (getValue(MAIN_OFFSET_MASK, mainIdx) < getValue(NMI_OFFSET_MASK, nmiIdx)) {		// "main" is next
@@ -736,13 +741,13 @@ static void sortDigiSamples() {
 	}	
 }
 
-static void fillDigi(unsigned char * digiBuffer, int startIdx, int endIdx, unsigned char digi) {
+static void fillDigi(uint8_t * digiBuffer, uint16_t startIdx, uint16_t endIdx, uint8_t digi) {
 	if (endIdx>=startIdx) {
 		memSet( &digiBuffer[startIdx], digi, (endIdx-startIdx)+1 );
 	}
 }
 
-int renderDigiSamples(unsigned char * digiBuffer, unsigned long cyclesPerScreen, unsigned int samplesPerCall) {	
+uint8_t renderDigiSamples(uint8_t * digiBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall) {	
 	/*
 	* if there are too few signals, then it's probably just the player setting filters or
 	* resetting the volume with no intention to play a digi-sample, e.g. Transformers.sid (Russel Lieblich)
@@ -751,11 +756,11 @@ int renderDigiSamples(unsigned char * digiBuffer, unsigned long cyclesPerScreen,
 		sortDigiSamples();
 
 		// render digi samples
-		unsigned int fromIdx=0;	
-		int j;
+		uint16_t fromIdx=0;	
+		uint16_t j;
 		for (j= 0; j<sDigiCount; j++) {
 			float scale= (float) (samplesPerCall-1) / cyclesPerScreen;
-			unsigned int toIdx= scale*((sSortedDigiTime[j] > cyclesPerScreen) ? cyclesPerScreen : sSortedDigiTime[j]);
+			uint16_t toIdx= scale*((sSortedDigiTime[j] > cyclesPerScreen) ? cyclesPerScreen : sSortedDigiTime[j]);
 
 			fillDigi(digiBuffer, fromIdx, toIdx, sCurrentDigi);				
 
@@ -779,24 +784,24 @@ int renderDigiSamples(unsigned char * digiBuffer, unsigned long cyclesPerScreen,
 /*
 * @param digi   is an unsigned 8-bit sample (i.e. origial $d418 4-bit samples have already been shifted
 */
-static inline short genDigi(short in, unsigned char digi) { 
+static inline int16_t genDigi(int16_t in, uint8_t digi) { 
     // transform unsigned 8 bit range into signed 16 bit (–32,768 to 32,767) range	(
 	// shift only 7 instead of 8 because digis are otherwise too loud)	
-	signed long value = in + (((digi & 0xff) << 7) - 0x4000); 
+	int32_t value = in + (((digi & 0xff) << 7) - 0x4000); 
 	
-	const int clipValue = 32767;
+	const int32_t clipValue = 32767;
 	if ( value < -clipValue ) {
 		value = -clipValue;
 	} else if ( value > clipValue ) {
 		value = clipValue;
 	}
-	short out= value;
+	int16_t out= value;
     return out;
 }
 
-void mergeDigi(int hasDigi, short *sound_buffer, unsigned char *digi_buffer, unsigned long len) {
+void mergeDigi(int8_t hasDigi, int16_t *sound_buffer, uint8_t *digi_buffer, uint32_t len) {
 	if (hasDigi) {
-		int i;
+		uint32_t i;
 		for (i= 0; i<len; i++) {
 			sound_buffer[i]= genDigi(sound_buffer[i], digi_buffer[i]);
 		}

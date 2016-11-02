@@ -21,52 +21,59 @@
 // SID register definition
 struct s6581 {
     struct sidvoice {
-        unsigned short freq;
-        unsigned short pulse;
-        unsigned char wave;
-        unsigned char ad;
-        unsigned char sr;
+        uint16_t freq;
+        uint16_t pulse;
+        uint8_t wave;
+        uint8_t ad;
+        uint8_t sr;
     } v[3];
-    unsigned char ffreqlo;
-    unsigned char ffreqhi;
-    unsigned char res_ftv;
-    unsigned char ftp_vol;
+    uint8_t ffreqlo;
+    uint8_t ffreqhi;
+    uint8_t res_ftv;
+    uint8_t ftp_vol;
 };
 
+extern uint8_t voiceEnableMask;
+
 extern struct s6581 sid;
+extern uint32_t  freqmul;
 
 // init/reset
-void synth_init(unsigned long mixfrq);
+void synth_init(uint32_t mixfrq);
 
 // used by CPU side to interact with SID
-void sidPoke(int reg, unsigned char val);
+void sidPoke(uint8_t reg, uint8_t val);
 
 // get playback rate (e.g. 44100 samples/sec)
-unsigned long getSampleFrequency();
+uint32_t getSampleFrequency();
 
 // may be used from hack.c
 void setCiaNmiVectorHack();
 
 // used for digis..
-void setMute(unsigned char voice);
+void setMute(uint8_t voice);
 
 // exposed rsidengine.c FIXME move all the CPU stuff into one place
 // ---------->
-extern unsigned long sCycles;
-extern unsigned short pc;
-extern unsigned char a,x,y,s,p;
-extern unsigned char sSynthDisabled;
+extern uint32_t sCycles;
+extern uint32_t sAbsCycles;
+extern uint32_t sLastFrameCycles;
+extern uint16_t pc;
+extern uint8_t a,x,y,s,p;
+extern uint8_t sSynthDisabled;
 void incFrameCount();
 void cpuParse(void);
 void cpuReset(void);
-void push(unsigned char val);
-unsigned char isIrqBlocked();
-unsigned char getmem(unsigned short addr);
-void synth_render (short *buffer, unsigned long len);
+void push(uint8_t val);
+uint8_t isIrqBlocked();
+uint8_t getmem(uint16_t addr);
+void synth_render (int16_t *buffer, uint32_t len);
+uint8_t isMainLoopPolling();
+
 // <-------------
 
 #ifdef DEBUG
-void trace(unsigned short addr, char *text);
+void trace(uint16_t addr, char *text);
 #endif
 
 #endif

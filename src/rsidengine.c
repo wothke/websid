@@ -87,75 +87,77 @@
 #include "sidengine.h"
 #include "rsidengine.h"
 #include "sidplayer.h"
-
-
+#include "hacks.h"
 
 enum timertype { RASTER_TIMER = 0, CIA1_TIMER = 1, NO_IRQ = 2};
 
 
-unsigned char memory[MEMORY_SIZE];
-unsigned char kernal_rom[KERNAL_SIZE];	// mapped to $e000-$ffff
-unsigned char io_area[IO_AREA_SIZE];	// mapped to $d000-$dfff
+uint8_t memory[MEMORY_SIZE];
+uint8_t kernal_rom[KERNAL_SIZE];	// mapped to $e000-$ffff
+uint8_t io_area[IO_AREA_SIZE];	// mapped to $d000-$dfff
 
 
-static unsigned int sProgramMode= MAIN_OFFSET_MASK;
-static unsigned char sMainLoopOnlyMode= 0;
+static uint32_t sProgramMode= MAIN_OFFSET_MASK;
+static uint8_t sMainLoopOnlyMode= 0;
 
 // poor man's TOD sim (only secs & 10th of sec), see Kawasaki_Synthesizer_Demo.sid
-unsigned long sTodInMillies= 0;
+uint32_t sTodInMillies= 0;
 
-unsigned char sMainProgStatus= 0; 				// 0: completed 1: interrupted by cycleLimit
+uint8_t sMainProgStatus= 0; 				// 0: completed 1: interrupted by cycleLimit
 
-unsigned char sIsPSID;
+uint8_t sIsPSID;
 
-unsigned long sIrqTimeout= 18000;	// will be reset anyway
+uint32_t sIrqTimeout= 18000;	// will be reset anyway
 
 // snapshot of current registers and stack (so we can ignore IRQ/NMI effects)
-static unsigned char sSnapshotAcc, sSnapshotX, sSnapshotY, sSnapshotPFlags, sSnapshotStackpointer;
-static unsigned short sSnapshotPC;
-static unsigned char sSnapshotStack[0xff];
+static uint8_t sSnapshotAcc, sSnapshotX, sSnapshotY, sSnapshotPFlags, sSnapshotStackpointer;
+static uint16_t sSnapshotPC;
+static uint8_t sSnapshotStack[0xff];
 
-void setIrqTimeout(unsigned long t) {
+void setIrqTimeout(uint32_t t) {
 	sIrqTimeout= t;		// in cpu cycles
 } 
 
 
-void setProgramStatus(unsigned char s) {
+void setProgramStatus(uint8_t s) {
 	sMainProgStatus= s;
 } 
 
-unsigned long getTimeOfDayMillis() {
+uint32_t getTimeOfDayMillis() {
 	return sTodInMillies;
 }
 
-void updateTimeOfDay10thOfSec(unsigned char value) {
-	sTodInMillies= ((unsigned long)(sTodInMillies/1000))*1000 + value*100;
+void updateTimeOfDay10thOfSec(uint8_t value) {
+	sTodInMillies= ((uint32_t)(sTodInMillies/1000))*1000 + value*100;
 }
-void updateTimeOfDaySec(unsigned char value) {
+void updateTimeOfDaySec(uint8_t value) {
 	sTodInMillies= value*1000 + (sTodInMillies%1000);	// ignore minutes, etc
 }
 
-void memSet(unsigned char *mem, char val, int len) {
+void memSet(uint8_t *mem, int8_t val, uint32_t len) {
 	// for some reason 'memset' does not seem to work in Alchemy...
-	int i;
-	for (i= 0; i<len; i++) {
+	for (uint32_t i= 0; i<len; i++) {
 		mem[i]= val;
 	}
 }
 
-unsigned char isMainLoopMode() {
+uint8_t isMainLoopMode() {
 	return sMainLoopOnlyMode;
 }
 
-unsigned int getProgramMode() {
+uint32_t getProgramMode() {
 	return sProgramMode;
 }
 
-static void setIO(unsigned int addr, unsigned char value) {
+uint8_t isMainLoopPolling() {
+	return getProgramMode() == MAIN_OFFSET_MASK;
+}
+
+static void setIO(uint16_t addr, uint8_t value) {
 	io_area[addr - 0xd000]= value;
 }
 
-static void resetIO(unsigned long cyclesPerScreen, unsigned char isRsid) {
+static void resetIO(uint32_t cyclesPerScreen, uint8_t isRsid) {
     memSet(&io_area[0], 0x0, IO_AREA_SIZE);
 
 	// Master_Blaster_intro.sid actually checks this:
@@ -196,28 +198,30 @@ void resetRSID() {
 	setIrqTimeout(getCyclesPerScreen()*4);
 	
 	// reset IO area
-    resetIO(getCyclesPerScreen(), isRsid());	
+    resetIO(getCyclesPerScreen(), isRsid());
+	
+	initHacks();
 }
 
-unsigned char isRsid() {
+uint8_t isRsid() {
 	return (sIsPSID == 0);
 }
 
-void setPsidMode(unsigned char m) {
+void setPsidMode(uint8_t m) {
 	sIsPSID= m;
 }
 
-unsigned char isPsid() {
+uint8_t isPsid() {
 	return sIsPSID;
 }
 
-unsigned int getNmiVector() {
+uint16_t getNmiVector() {
 	// 0318/19 vectors will always be called via the fffa/b-> fe43 indirection
-	unsigned int nmi_addr= (getmem(0xfffa)|(getmem(0xfffb)<<8));
+	uint16_t nmi_addr= (getmem(0xfffa)|(getmem(0xfffb)<<8));
 	return nmi_addr;
 }
 
-unsigned char isPsidDummyIrqVector() {
+uint8_t isPsidDummyIrqVector() {
 	// PSID use of 0314/0315 vector which is technically not setup correctly (e.g. Ode_to_Galway_Remix.sid):
 	// PSIDs may actually set the 0314/15 vector via INIT, turn off the kernal ROM and 
 	// not provide a useful fffe/f vector.. and we need to handle that crap..
@@ -230,14 +234,14 @@ unsigned char isPsidDummyIrqVector() {
 	return 0;
 }
 
-unsigned int getIrqVector() {
+uint16_t getIrqVector() {
 	if (getSidPlayAddr() != 0) {
 		// no point going through the standard interrupt routines with this PSID crap.. we
 		// cannot tell if it behaves like a 0314/15 or like a fffe/f routine anyway... (and the stack will likely be messed up)
 		return getSidPlayAddr();	
 	} 
 
-	unsigned int irq_addr= (getmem(0xfffe)|(getmem(0xffff)<<8));	
+	uint16_t irq_addr= (getmem(0xfffe)|(getmem(0xffff)<<8));	
 
 	if ((irq_addr == 0) && sIsPSID) {	// see isPsidDummyIrqVector()
 		irq_addr= (getmem(0x0314)|(getmem(0x0315)<<8));		
@@ -246,16 +250,16 @@ unsigned int getIrqVector() {
 
 }
 
-void initCycleCount(unsigned long relOffset, unsigned long basePos) {
+void initCycleCount(uint32_t relOffset, uint32_t basePos) {
 	sCycles= relOffset;
 	initRasterlineSim(basePos+ relOffset);
 }
 
-unsigned long processInterrupt(unsigned long intMask, unsigned short npc, unsigned long startTime, signed long cycleLimit) {
+uint32_t processInterrupt(uint32_t intMask, uint16_t npc, uint32_t startTime, int32_t cycleLimit) {
 	// known limitation: if the code uses ROM routines (e.g. register restore/return sequence) then we will 
 	// be missing those cpu cycles in our calculation..
 	
-	unsigned long originalDigiCount= getDigiCount();
+	uint32_t originalDigiCount= getDigiCount();
 	
 	if (isPsidDummyIrqVector()) {
 		// no point in trying to keep the stack consistent for a PSID
@@ -293,15 +297,15 @@ static void updateTOD() {
 	sTodInMillies+= (getCurrentSongSpeed() ? 17 : 20);	
 }
 
-int isTimerDrivenPsid() {
+int8_t isTimerDrivenPsid() {
 	return ((sIsPSID == 1) && (getCurrentSongSpeed() == 1));
 }
 
-int isRasterDrivenPsid() {
+int8_t isRasterDrivenPsid() {
 	return ((sIsPSID == 1) && (getCurrentSongSpeed() == 0));
 }
 
-int isCiaActive(struct timer *t) {
+int8_t isCiaActive(struct timer *t) {
 	return (!isIrqBlocked() && isTimerActive(t)) || isTimerDrivenPsid();
 }
 
@@ -326,15 +330,15 @@ enum timertype getIrqTimerMode(struct timer *t) {
 #ifdef DEBUG
 char hex [16]= {'0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'};
 char *debugBuf;
-void traceBuffer(char *label, unsigned char *buf, int bufLen) {
+void traceBuffer(char *label, uint8_t *buf, uint16_t bufLen) {
 	AS3_Trace(AS3_String(label));		
 
-	int len= 50; 		// chars per line
-	int o, offset=0; 
+	uint8_t len= 50; 		// chars per line
+	uint16_t o, offset=0; 
 	for (o= 0; o<bufLen/len; o++, offset+=len)	{		
 		debugBuf= malloc(sizeof(char)*(len*3)+1); 
 		
-		int t;
+		uint8_t t;
 		for (t= 0; t<len; t++) {
 			debugBuf[t*3]= hex[(buf[t+offset]>>4)];
 			debugBuf[(t*3)+1]= hex[(buf[t+offset]&0xf)];
@@ -347,7 +351,7 @@ void traceBuffer(char *label, unsigned char *buf, int bufLen) {
 	if (bufLen%len) {
 		debugBuf= malloc(sizeof(char)*(len*3)+1); 
 		
-		int t;
+		uint8_t t;
 		for (t= 0; t<bufLen%len; t++) {
 			debugBuf[t*3]= hex[(buf[t+offset]>>4)];
 			debugBuf[(t*3)+1]= hex[(buf[t+offset]&0xf)];
@@ -369,7 +373,7 @@ void traceBuffer(char *label, unsigned char *buf, int bufLen) {
 *
 * @return NO_INT: timeLimit was reached / [positive number] wait time in cycles until the interrupt occurs
 */
-unsigned long forwardToNextInterrupt(enum timertype timerType, struct timer *t, unsigned long timeLimit) {
+uint32_t forwardToNextInterrupt(enum timertype timerType, struct timer *t, uint32_t timeLimit) {
 	// timing based on CIA1 timer (e.g. Wizball) or timing based on raster timer (e.g. Arkanoid subsongs 3-8)
 
 	if (timerType == NO_IRQ) {
@@ -381,21 +385,21 @@ unsigned long forwardToNextInterrupt(enum timertype timerType, struct timer *t, 
 	}
 }
 
-void renderSynth(short *synthBuffer, unsigned long cyclesPerScreen, unsigned int samplesPerCall, unsigned long fromTime, unsigned long toTime){
+void renderSynth(int16_t *synthBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall, uint32_t fromTime, uint32_t toTime){
 	if (fromTime < cyclesPerScreen) {
 		if (toTime > cyclesPerScreen) toTime= cyclesPerScreen;
 		
 		float scale= (float)samplesPerCall/cyclesPerScreen;
-		unsigned int len= (toTime - fromTime)*scale;
+		uint16_t len= (toTime - fromTime)*scale;
 		if(len) {
-			unsigned int startIdx= fromTime*scale;
+			uint16_t startIdx= fromTime*scale;
 			synth_render(&synthBuffer[startIdx], len+1);
 		}
 	}
 }
 
-int isIrqNext(unsigned long currentIrqTimer, unsigned long currentNmiTimer, unsigned long tIrq, unsigned long tNmi) {
-	int irqIsNext;
+uint8_t isIrqNext(uint32_t currentIrqTimer, uint32_t currentNmiTimer, uint32_t tIrq, uint32_t tNmi) {
+	uint8_t irqIsNext;
 	if(currentNmiTimer == NO_INT) {
 		irqIsNext= 1;	// NMI no longer relevant
 	} else {
@@ -441,7 +445,7 @@ void restoreRegisters() {
  * @param cycleLimit	limit the number of available CPU cycles before the processing stops
  * @return 				0= run to completion; 1= interrupted by cyclelimit or due to number of produced digi samples
  */
-unsigned char callMain(unsigned short npc, unsigned char na, unsigned long startTime, signed long cycleLimit) {	
+uint8_t callMain(uint16_t npc, uint8_t na, uint32_t startTime, int32_t cycleLimit) {	
 	initCycleCount(0, startTime); // use new timestamps for potential digi-samples & cycleLimit check
 
 	if (npc == 0) {
@@ -457,60 +461,62 @@ unsigned char callMain(unsigned short npc, unsigned char na, unsigned long start
     while (pc > 1) {
 		// if a main progs is already producing samples then it is done with the "init" phase and
 		// we interrupt it when we have enough samples for one screen (see Suicide_Express.sid)
+
 		if (((cycleLimit >0) && (sCycles >=cycleLimit)) || (getDigiOverflowCount() >0)) {	
 			saveRegisters();			
 			return 1;
 		}		
         cpuParse();
 	}
+	
 	return 0;
 }
 
-void processMain(unsigned long cyclesPerScreen, unsigned long startTime, signed long timeout) {
+void processMain(uint32_t cyclesPerScreen, uint32_t startTime, int32_t timeout) {
 	// the current impl may cause the interrupt routines to burn more cycles than would be normally possible (e.g. if
 	// they use busy-wait for some condition which does not materialize in our emulator env. Consequently our 
 	// "timeout" may be completely off the target...
 
 	if ((sMainProgStatus >0) && (timeout >0)) {		// might be the rest of some "init" logic... or some loop playing samples		
-		unsigned long originalDigiCount= getDigiCount();
+		uint32_t originalDigiCount= getDigiCount();
 		sMainProgStatus= callMain(0, 0, startTime, timeout);	// continue where interrupted	
 		markSampleOrigin(MAIN_OFFSET_MASK, startTime, originalDigiCount);
 	}
 }
 
-static void runScreenSimulation(short *synthBuffer, unsigned long cyclesPerScreen, unsigned int samplesPerCall) {	
+static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall) {	
 	struct timer *cia1= &(cia[0]);		// the different CIA timers
 	struct timer *cia2= &(cia[1]);
 
 	// cpu cycles used during processing
-	signed long irqCycles= 0, nmiCycles= 0, mainProgCycles= 0;			
+	int32_t irqCycles= 0, nmiCycles= 0, mainProgCycles= 0;			
 
-	signed long availableIrqCycles= cyclesPerScreen;	// cpu cycles still available for processing (limitation: only the waiting time is currently considered..)
-	signed long availableNmiCycles= cyclesPerScreen;
+	int32_t availableIrqCycles= cyclesPerScreen;	// cpu cycles still available for processing (limitation: only the waiting time is currently considered..)
+	int32_t availableNmiCycles= cyclesPerScreen;
 
-	unsigned long synthPos= 0;	// start time for the samples synthesized from SID settings (measured in cycles)						
+	uint32_t synthPos= 0;	// start time for the samples synthesized from SID settings (measured in cycles)						
 
 	/*
 	* process NMI and IRQ interrupts in their order of appearance - and as long as they fit into this screen
 	*/	
-	unsigned long currentIrqTimer= forwardToNextInterrupt(getIrqTimerMode(cia1), cia1, availableIrqCycles);
-	unsigned long currentNmiTimer= isRsid() ? forwardToNextCiaInterrupt(cia2, availableNmiCycles) : NO_INT;
+	uint32_t currentIrqTimer= forwardToNextInterrupt(getIrqTimerMode(cia1), cia1, availableIrqCycles);
+	uint32_t currentNmiTimer= isRsid() ? forwardToNextCiaInterrupt(cia2, availableNmiCycles) : NO_INT;
 
 	// KNOWN LIMITATION: ideally all 4 timers should be kept in sync - not just A/B within the same unit! 
 	// however progs that actually rely on multiple timers (like Vicious_SID_2-Carmina_Burana.sid) probably 
 	// need timer info that is continuously updated - so that effort would only make sense in a full fledged 
 	// cycle-by-cycle emulator.
 	
-	unsigned char hack= isRasterIrqActive() && isCiaActive(cia1);
+	uint8_t hack= isRasterIrqActive() && isCiaActive(cia1);
 	
-	unsigned long tNmi= currentNmiTimer;
-	unsigned long tIrq= currentIrqTimer;
-	unsigned long tDone= 0;
+	uint32_t tNmi= currentNmiTimer;
+	uint32_t tIrq= currentIrqTimer;
+	uint32_t tDone= 0;
 	
-	unsigned int mainProgStep= 100;	// periodically give the main prog a chance to run.. 
-	unsigned int mainProgStart= mainProgStep;
+	uint16_t mainProgStep= 100;	// periodically give the main prog a chance to run.. 
+	uint16_t mainProgStart= mainProgStep;
 
-	if (isRsid() && (currentIrqTimer == NO_INT) && (currentNmiTimer == NO_INT)) {
+	if (0 || (isRsid() && (currentIrqTimer == NO_INT) && (currentNmiTimer == NO_INT))) {
 		sMainLoopOnlyMode= 1;
 		mainProgStart= 0; 	// this might be the better choice in any case.. but to avoid regression testing lets use it here for now..
 	} else {
@@ -527,7 +533,7 @@ static void runScreenSimulation(short *synthBuffer, unsigned long cyclesPerScree
 				// THCM's recent stuff they broke stuff like "Arkanoid", etc (so I rolled them back for now..) 
 				// -> now that the D012 handling has been improved I might give it another try..
 				
-				signed long availableMainCycles= tDone - (nmiCycles + irqCycles + mainProgCycles);
+				int32_t availableMainCycles= tDone - (nmiCycles + irqCycles + mainProgCycles);
 				
 				if (availableMainCycles > 0) {
 					processMain(cyclesPerScreen, mainProgStart, availableMainCycles);
@@ -559,7 +565,7 @@ static void runScreenSimulation(short *synthBuffer, unsigned long cyclesPerScree
 				}
 				
 				// FIXME: multi-frame IRQ handling would be necessary to deal with songs like: Musik_Run_Stop.sid				
-				unsigned long usedCycles= processInterrupt(IRQ_OFFSET_MASK, getIrqVector(), tIrq, sIrqTimeout);				
+				uint32_t usedCycles= processInterrupt(IRQ_OFFSET_MASK, getIrqVector(), tIrq, sIrqTimeout);				
 				// flaw: IRQ might have switched off NMI, e.g. Vicious_SID_2-Blood_Money.sid
 				
 				if (usedCycles >=sIrqTimeout) { // IRQ gets aborted due to a timeout
@@ -600,9 +606,10 @@ static void runScreenSimulation(short *synthBuffer, unsigned long cyclesPerScree
 /*
 * @return 		1: if digi data available   0: if not
 */
-int processOneScreen(short *synthBuffer, unsigned char *digiBuffer, unsigned long cyclesPerScreen, unsigned int samplesPerCall) {
+uint8_t processOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall) {
 	
 	moveDigiBuffer2NextFrame();
+		
 	initCycleCount(0, 0);
 
 	updateTOD();
@@ -613,7 +620,15 @@ int processOneScreen(short *synthBuffer, unsigned char *digiBuffer, unsigned lon
 	}
 
 	if (isTimerDrivenPsid() || isRasterIrqActive() || isRsid()) {
+		if (sLastFrameCycles > cyclesPerScreen) {
+			// try not to systematically use up too many cycles..
+			uint32_t overflow= sLastFrameCycles-cyclesPerScreen;
+			if(overflow < cyclesPerScreen)	// see Axel_F.sid
+				cyclesPerScreen-= (overflow);
+		}
+
 		runScreenSimulation(synthBuffer, cyclesPerScreen, samplesPerCall);
+		sLastFrameCycles= sCycles;
 		return renderDigiSamples(digiBuffer, cyclesPerScreen, samplesPerCall);
 	} else {
 		// legacy PSID mode: one "IRQ" call per screen refresh (a PSID may actually setup CIA 1 

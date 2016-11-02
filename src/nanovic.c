@@ -12,11 +12,11 @@
 #include "rsidengine.h"
 #include "sidplayer.h"
 
-static signed long sTimerCarryOverIrq= -1;	// irq pos calculated on previous screen
-static signed int sLastRasterInterrupt= -1;	
-static unsigned int sCurrentRasterPos= 0;		// 	simulated "read" raster position (see d012/d011)
-static unsigned long sLastRelativeCyclePos= 0;		// sim progression of rasterline during current code execution..
-static unsigned long sRemainingCyclesThisRaster= 0;
+static int32_t sTimerCarryOverIrq= -1;	// irq pos calculated on previous screen
+static int16_t sLastRasterInterrupt= -1;	
+static uint16_t sCurrentRasterPos= 0;		// 	simulated "read" raster position (see d012/d011)
+static uint32_t sLastRelativeCyclePos= 0;		// sim progression of rasterline during current code execution..
+static uint32_t sRemainingCyclesThisRaster= 0;
 
 void resetVic() {
 	sTimerCarryOverIrq= -1;
@@ -26,9 +26,9 @@ void resetVic() {
 	sRemainingCyclesThisRaster= 0;
 }
 
-void setCurrentRasterPos(unsigned long cycleTime) {
+void setCurrentRasterPos(uint32_t cycleTime) {
 // FIXME maybe badlines should be considered here?
-	sCurrentRasterPos= ((unsigned long)((float)cycleTime/getCyclesPerRaster()))%getLinesPerScreen();	
+	sCurrentRasterPos= ((uint32_t)((float)cycleTime/getCyclesPerRaster()))%getLinesPerScreen();	
 }
 
 void incCurrentRasterPos() {
@@ -38,7 +38,7 @@ void incCurrentRasterPos() {
 	}
 }
 
-void initRasterlineSim(unsigned long rasterPosInCycles) {
+void initRasterlineSim(uint32_t rasterPosInCycles) {
 	setCurrentRasterPos(rasterPosInCycles);
 	
 	sRemainingCyclesThisRaster=rasterPosInCycles-(sCurrentRasterPos*getCyclesPerRaster());
@@ -65,23 +65,23 @@ void simRasterline() {
 	
 	
 /*	
-	unsigned long progress= sCycles-sLastRelativeCyclePos;
+	uint32_t progress= sCycles-sLastRelativeCyclePos;
 	if (progress >= getCyclesPerRaster()) {
 		incCurrentRasterPos();					// sim progress of VIC raster line..
 
-		unsigned long overflow= progress - getCyclesPerRaster();
+		uint32_t overflow= progress - getCyclesPerRaster();
 		sLastRelativeCyclePos= sCycles - overflow;
 	}
 	
 */
 }
 
-void setD019(unsigned char value) {
+void setD019(uint8_t value) {
 	// ackn vic interrupt, i.e. a set bit actually clear that bit	
 	io_area[0x0019]&= (~value);
 }
 
-unsigned char getD019() {
+uint8_t getD019() {
 	return io_area[0x019];
 }
 
@@ -92,24 +92,24 @@ void signalVicIrq() {
 	io_area[0x0019] |= 0x81;
 }
 
-unsigned char getCurrentD012() {
+uint8_t getCurrentD012() {
 	return sCurrentRasterPos & 0xff;
 }
-unsigned char getCurrentD011() {
+uint8_t getCurrentD011() {
 	return (sCurrentRasterPos & 0x100) >> 1;
 }
 
-unsigned int getRasterlineTimer() {
-	unsigned int rasterline= io_area[0x0012] + (((unsigned int)io_area[0x0011]&0x80)<<1);	// io_area maps to $d000..
+uint16_t getRasterlineTimer() {
+	uint16_t rasterline= io_area[0x0012] + (((uint16_t)io_area[0x0011]&0x80)<<1);	// io_area maps to $d000..
 
 	return rasterline;
 }
 
-static unsigned int getCycleTime(unsigned int rasterTime) {
+static uint16_t getCycleTime(uint16_t rasterTime) {
 	return rasterTime * getCyclesPerRaster();
 }
 
-int isRasterIrqActive() {
+uint8_t isRasterIrqActive() {
 	return ((io_area[0x001a]&0x1) == 1);
 }
 
@@ -117,21 +117,21 @@ int isRasterIrqActive() {
 * Gets the next 'timer' based on next raster interrupt which will occur on the current screen.
 * @return NO_INT if no event on the  current screen
 */
-unsigned long forwardToNextRasterTimer() {
+uint32_t forwardToNextRasterTimer() {
 	if (!isRasterIrqActive()) {
 		return NO_INT;
 	}
-	signed long timer= 0;
+	int32_t timer= 0;
 	if (sTimerCarryOverIrq >=0) {
 		timer= sTimerCarryOverIrq;
 		sTimerCarryOverIrq= -1;
 	} else {
-		unsigned int nextRasterline= getRasterlineTimer(); 
+		uint16_t nextRasterline= getRasterlineTimer(); 
 		
 		if (sLastRasterInterrupt<0) {	// first run
 			timer= getCycleTime(nextRasterline); 
 		} else {
-			signed int lineDelta= nextRasterline - sLastRasterInterrupt;
+			int16_t lineDelta= nextRasterline - sLastRasterInterrupt;
 			if (lineDelta > 0){
 				timer= getCycleTime(lineDelta);								// next IRQ on same page refresh			
 			} else {

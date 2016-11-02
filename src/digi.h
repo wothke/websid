@@ -1,31 +1,33 @@
 #ifndef TINYRSID_DIGI_H
 #define TINYRSID_DIGI_H
 
+#include "defines.h"
+
 // setup
-void resetDigi(unsigned char compatibility);
+void resetDigi(uint8_t compatibility);
 
 // prepare buffers for handling of next frame
 void moveDigiBuffer2NextFrame();		// preserve  "overflow" samples
 void clearDigiBuffer();					// start from 0
 
 // check if there are samples for the next frame
-int getDigiOverflowCount();
+uint16_t getDigiOverflowCount();
 
 // main hook analyzes SID writes for digi-sample playback
-void handleSidWrite(unsigned short addr, unsigned char value);
+void handleSidWrite(uint16_t addr, uint8_t value);
 
 // number of digi-samples that have been detected in the current frame
-unsigned int getDigiCount();
+uint16_t getDigiCount();
 
 // used to tag origin (main-prog, IRQ, NMI) of captured digi-samples
-void markSampleOrigin(unsigned long mask, unsigned long offset, unsigned long originalDigiCount);
+void markSampleOrigin(uint32_t mask, uint32_t offset, uint32_t originalDigiCount);
 
 // utils used to render the camptured digi-samples
-int renderDigiSamples(unsigned char * digiBuffer, unsigned long cyclesPerScreen, unsigned int samplesPerCall);
-void mergeDigi(int hasDigi, short *sound_buffer, unsigned char *digi_buffer, unsigned long len);
+uint8_t renderDigiSamples(uint8_t * digiBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall);
+void mergeDigi(int8_t hasDigi, int16_t *sound_buffer, uint8_t *digi_buffer, uint32_t len);
 
 // utils for the handling of legacy PSID digis
-int generatePsidDigi(int sIn);
+int32_t generatePsidDigi(int32_t sIn);
 void resetPsidDigi();
 
 

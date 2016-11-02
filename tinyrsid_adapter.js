@@ -78,6 +78,22 @@ SIDBackendAdapter = (function(){ var $this = function () {
 					songReleased: String 
 					};
 		},
+		getExtAsciiString: function(heapPtr) {
+			// Pointer_stringify cannot be used here since UTF-8 parsing 
+			// messes up original extASCII content
+			var text="";
+			for (var j= 0; j<32; j++) {
+				var b= this.Module.HEAP8[heapPtr+j] & 0xff;
+				if(b ==0) break;
+				
+				if(b < 128){
+					text = text + String.fromCharCode(b);
+				} else {
+					text = text + "&#" + b + ";";
+				}
+			}
+			return text;
+		},
 		updateSongInfo: function(filename, result) {
 		// get song infos (so far only use some top level module infos)
 			var numAttr= 7;
@@ -88,9 +104,13 @@ SIDBackendAdapter = (function(){ var $this = function () {
 			result.playSpeed= this.Module.HEAP32[((array[1])>>2)]; // i32
 			result.maxSubsong= this.Module.HEAP8[(array[2])]; // i8
 			result.actualSubsong= this.Module.HEAP8[(array[3])]; // i8
-			result.songName= this.Module.Pointer_stringify(array[4]);
-			result.songAuthor= this.Module.Pointer_stringify(array[5]);
-			result.songReleased= this.Module.Pointer_stringify(array[6]);			
+			result.songName= this.getExtAsciiString(array[4]);			
+			result.songAuthor= this.getExtAsciiString(array[5]);
+			result.songReleased= this.getExtAsciiString(array[6]);			
+		},
+		// for debugging.. disable voices (0-2) by clearing respective bit
+		enableVoices: function(mask) {
+			this.Module.ccall('enableVoices', 'number', ['number'], [mask]);
 		}
 	});	return $this; })();
 	
