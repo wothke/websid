@@ -79,7 +79,7 @@ void envSetPsidMode(uint8_t m) {
 }
 
 uint8_t envIsPSID() {
-	return isPSID;
+	return !envIsRSID();
 }
 
 uint16_t envSidPlayAddr() {

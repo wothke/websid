@@ -22,7 +22,7 @@ void rsidLoadSongBinary(uint8_t *src, uint16_t destAddr, uint32_t len);
 
 // then the emulation can be initiated
 void rsidPlayTrack(uint32_t sampleRate, uint8_t compatibility, uint16_t *pInitAddr, 
-					uint16_t loadEndAddr, uint8_t playAddr, uint8_t actualSubsong);
+					uint16_t loadEndAddr, uint16_t playAddr, uint8_t actualSubsong);
 
 // runs the emulator for the duration of one C64 screen refresh and returns the 
 // respective audio output

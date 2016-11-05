@@ -445,7 +445,7 @@ void rsidLoadSongBinary(uint8_t *src, uint16_t destAddr, uint32_t len) {
 }
 
 void rsidPlayTrack(uint32_t sampleRate, uint8_t compatibility, uint16_t *pInitAddr, uint16_t loadEndAddr, 
-					uint8_t playAddr, uint8_t actualSubsong) {
+					uint16_t playAddr, uint8_t actualSubsong) {
 	
 	rsidReset(sampleRate, compatibility);
 	

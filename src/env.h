@@ -1,4 +1,4 @@
-/*
+﻿/*
  * This provides access to the *.sid file specific environment that 
  * the emulation runs in.
  * 
@@ -11,8 +11,8 @@
  * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
  */
  
-#ifndef TINYRSID_PLAYER_H
-#define TINYRSID_PLAYER_H
+#ifndef TINYRSID_ENV_H
+#define TINYRSID_ENV_H
 
 #include "base.h"
 
