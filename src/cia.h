@@ -1,45 +1,39 @@
-#ifndef TINYRSID_NANOCIA_H
-#define TINYRSID_NANOCIA_H
+/*
+* Poor man's emulation of the C64's CIA timers.
+*
+* <p>Tiny'R'Sid (c) 2012 J.Wothke
+* <p>version 0.81
+* 
+* <p>Only those features actually observed in RSID files have been implemented, i.e. simple 
+* cycle counting and timer B to timer A linking.
+*
+* Terms of Use: This software is licensed under a CC BY-NC-SA 
+* (http://creativecommons.org/licenses/by-nc-sa/4.0/).
+*/
 
-#define ADDR_CIA1 0xdc00
-#define ADDR_CIA2 0xdd00
+#ifndef TINYRSID_CIA_H
+#define TINYRSID_CIA_H
 
-#include "defines.h"
+#include "base.h"
 
+#define CIA1 0
+#define CIA2 1
+#define TIMER_A 0
+#define TIMER_B 1
 
-extern uint32_t STOPPED;	// value bigger than any 16-bit counter for easy comparison
-extern uint32_t NO_INT;		// next interrupt not on this screen; value bigger than any 16-bit counter for easy comparison
-
+void ciaReset(uint32_t failMarker);
 	
-struct timer {
-	/*
-	* implementation info: 
-	*	-D*0D (interrupt control and status): "io_area" contains the "write" version, i.e. the mask - the "read" version is managed below
-	*	-D*04 - D*07 (timers): latch values are managed below, "memory" contains "read version" (current counter)
-	* always use the access methods below
-	*/
-	uint16_t 	memoryAddress;
+// interface used to interact with CIA
+int ciaIsActive(uint8_t ciaIdx);
+uint32_t ciaForwardToNextInterrupt(uint8_t ciaIdx, uint32_t timeLimit);
+
+// hacks
+void ciaSetNmiVectorHack();
+void ciaUpdateTOD(uint8_t songSpeed);
+void ciaSignalUnderflow(uint8_t ciaIdx, uint8_t timerIdx);
 	
-    struct timerState {
-		uint16_t 	timer_latch;		// initially set wait-time (CPU cycles only for A, CPU cycles or TimerA underflows for CPU cycles or TimerA underflows B)
-		uint8_t	timer_suspended;	// supress repeated 0 timers..
-	} ts[2];	
-	
-	uint8_t	timer_interruptStatus;		// read version of the respective DX0D register
-};
-
-extern struct timer cia[2];
-
-extern uint8_t TIMER_A;
-extern uint8_t TIMER_B;
-
-void resetCiaTimer();
-void setInterruptMask(struct timer *t, uint8_t value);
-uint8_t getInterruptStatus(struct timer *t);
-int isTimerActive(struct timer *t);
-void signalTimerUnderflow(struct timer *t, uint8_t timerId);
-void setTimer(struct timer *t, uint16_t offset, uint8_t value);
-
-uint32_t forwardToNextCiaInterrupt(struct timer *t, uint32_t timeLimit);
+// memory access interface (for memory.c)
+uint8_t ciaReadMem(uint16_t addr);
+void ciaWriteMem(uint16_t addr, uint8_t value);
 
 #endif

@@ -1,40 +1,33 @@
+/*
+ * This is the external interface for using the emulatior.
+ * 
+ * <p>implicitly uses the enviroment provided by env.h
+ *
+ * <p>Tiny'R'Sid (c) 2015 Jürgen Wothke
+ * <p>version 0.81
+ * 
+ * Terms of Use: This software is licensed under a CC BY-NC-SA 
+ * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
+ */
 #ifndef TINYRSID_RSIDENGINE_H
 #define TINYRSID_RSIDENGINE_H
 
-#include "defines.h"
-
-
-#define MEMORY_SIZE 65536
-extern uint8_t memory[MEMORY_SIZE];
-
-#define KERNAL_SIZE 8192
-extern uint8_t kernal_rom[KERNAL_SIZE];	// mapped to $e000-$ffff
-
-#define IO_AREA_SIZE 4096
-extern uint8_t io_area[IO_AREA_SIZE];	// mapped to $d000-$dfff
+#include "base.h"
 
 // setup/restart
-void resetRSID();
+void rsidReset(uint32_t mixfrq, uint8_t compatibility);
 
-uint8_t isRsid();
-uint8_t isPsid();
+// load the C64 program data into the emulator (just the binary without the .sid file header)
+void rsidLoadSongBinary(uint8_t *src, uint16_t destAddr, uint32_t len);
 
-int8_t isRasterDrivenPsid();
-void setPsidMode(uint8_t m);
-uint32_t getProgramMode();
-uint8_t isMainLoopPolling();
+// then the emulation can be initiated
+void rsidPlayTrack(uint32_t sampleRate, uint8_t compatibility, uint16_t *pInitAddr, 
+					uint16_t loadEndAddr, uint8_t playAddr, uint8_t actualSubsong);
 
-uint8_t isMainLoopMode();
-uint8_t callMain(uint16_t npc, uint8_t na, uint32_t startTime, int32_t cycleLimit);
-uint8_t processOneScreen(int16_t * synthBuffer, uint8_t *digiBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall);
-void setProgramStatus(uint8_t s);
+// runs the emulator for the duration of one C64 screen refresh and returns the 
+// respective audio output
+uint8_t rsidProcessOneScreen(int16_t * synthBuffer, uint8_t *digiBuffer, uint32_t 
+					cyclesPerScreen, uint16_t samplesPerCall);
 
-// TOD simulation
-uint32_t getTimeOfDayMillis();
-void updateTimeOfDay10thOfSec(uint8_t value);
-void updateTimeOfDaySec(uint8_t value);
-
-// util
-void memSet(uint8_t *mem, int8_t val, uint32_t len);
-
+uint32_t rsidGetFrameCount(); // FIXME remove/cleanup sid
 #endif
