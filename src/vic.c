@@ -75,7 +75,6 @@ void vicSimRasterline() {
 
 static void setD019(uint8_t value) {
 	// ackn vic interrupt, i.e. a set bit actually clear that bit
-
 	memWriteIO(0xd019, memReadIO(0xd019)&(~value));
 }
 

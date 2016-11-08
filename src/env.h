@@ -22,8 +22,8 @@ uint8_t envIsPSID();
 void envSetPsidMode(uint8_t m);
 
 // PSID stuff
-int8_t envIsRasterDrivenPsid();
-int8_t envIsTimerDrivenPsid();
+int8_t envIsRasterDrivenPSID();
+int8_t envIsTimerDrivenPSID();
 
 // where it starts
 uint16_t envSidPlayAddr();

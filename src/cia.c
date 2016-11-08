@@ -547,12 +547,17 @@ static void simWriteTimer(uint16_t addr, uint8_t value) {
 /**************************************************************************************************/
 
 uint8_t useCiaPollingHack() {
-	return cpuGetProgramMode() == MAIN_OFFSET_MASK;	// only tested for main-loop yet
+	// this is tricky: when main program 'init' reads/writes CIA settings 
+	// it should rather not be using this hack.. but if it is a CIA
+	// polling mainloop this hack is needed.. 
+	return cpuGetProgramMode() == MAIN_OFFSET_MASK;
 }
 
 uint8_t ciaReadMem(uint16_t addr) {
 	switch (addr) {
 		// CIA	
+		
+		// FIXME should maybe add 0xdc00 for those using it as an exit condition (e.g. Alter_Digi_Piece.sid)
 		case 0xdc01:
 			// some songs use this as an exit criteria.. see Master_Blaster_intro.sid
 			return 0xff;

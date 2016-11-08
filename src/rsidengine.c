@@ -142,11 +142,11 @@ static uint32_t processInterrupt(uint32_t intMask, uint16_t npc, uint32_t startT
 }
 
 static int8_t isCiaActive(uint8_t ciaIdx) {
-	return ((cpuIrqFlag() == 0) && ciaIsActive(ciaIdx)) || envIsTimerDrivenPsid();
+	return ((cpuIrqFlag() == 0) && ciaIsActive(ciaIdx)) || envIsTimerDrivenPSID();
 }
 
 static enum timertype getIrqTimerMode(uint8_t ciaIdx) {	
-	if (envIsPSID() == 1) {
+	if (envIsPSID() == 1) {		
 		return vicIsIrqActive() ? RASTER_TIMER : CIA1_TIMER;
 	} else {	
 		// todo: the below impl neglects that both raster and cia1 interrupts may be active at the same
@@ -290,8 +290,7 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 		mainProgStart= 0; 	// this might be the better choice in any case.. but to avoid regression testing lets use it here for now..
 	} else {
 		mainLoopOnlyMode= 0;
-		for (;(currentIrqTimer != NO_INT) || (currentNmiTimer != NO_INT) ;) {				
-			
+		for (;(currentIrqTimer != NO_INT) || (currentNmiTimer != NO_INT) ;) {
 			// periodically give unused cycles to main program (needed, e.g. by THCM's stuff)	
 			
 			if (tDone > mainProgStart) {
@@ -396,7 +395,7 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 		envSetPsidMode(0);	
 	}
 
-	if (envIsTimerDrivenPsid() || vicIsIrqActive() || envIsRSID()) {
+	if (envIsTimerDrivenPSID() || vicIsIrqActive() || envIsRSID()) {
 		if (lastFrameCycles > cyclesPerScreen) {
 			// try not to systematically use up too many cycles..
 			uint32_t overflow= lastFrameCycles-cyclesPerScreen;
@@ -456,8 +455,48 @@ void rsidPlayTrack(uint32_t sampleRate, uint8_t compatibility, uint16_t *pInitAd
 	
 	memSetDefaultBanks(envIsRSID(), (*pInitAddr), loadEndAddr);	// PSID crap
 	
+	if (envIsTimerDrivenPSID()) {
+		// default timer settings
+		memSet(0xdc04, envCyclesPerScreen() & 0xff);
+		memSet(0xdc05, envCyclesPerScreen() >> 8);
+		memSet(0xdc0e, 0x1);	// make sure the timer is started (see MasterComposer crap like American_Pie.sid)
+	}
+		
 	// if initAddr call does not complete then it is likely in an endless loop / maybe digi player
 	mainProgStatus= callMain((*pInitAddr), actualSubsong, 0, CYCLELIMIT);		
 		
 	memResetPsidBanks(envIsPSID(), playAddr);	// PSID again
+}
+
+static uint16_t parseSYS(uint16_t start, uint16_t end) {
+	// parse a simple "123 SYS3000" BASIC command
+	uint16_t result= 0;
+	uint8_t c= 0;
+	for (uint16_t i= start; i<=end; i++) {
+		c= memReadRAM(i);
+		if (!c) break;
+
+		if ((c >= 0x30) && (c <= 0x39) ) { 
+			result = result*10 + (c-0x30); 
+		} else if (result > 0) {
+			break;
+		}
+	}
+	return result;
+}	
+
+void rsidStartFromBasic(uint16_t *initAddr) {
+	// don't have C64 BASIC ROM if BASIC program is just used to 
+	// jump to some address (SYS xxxxx) then try to do that for 
+	// simple one line programs..
+
+	if ((*initAddr) == 0x0801) {
+		uint16_t nextLine= memReadRAM(*initAddr) | ((memReadRAM((*initAddr)+1)) << 8);
+		if (!memReadRAM(nextLine)) {
+			// one line program	(bad luck if additional REM etc lines are used..)
+			if (memReadRAM(((*initAddr) + 4)) == 0x9e) {	// command is SYS
+				 (*initAddr) = parseSYS((*initAddr) + 5, nextLine);
+			}			
+		}
+	}
 }

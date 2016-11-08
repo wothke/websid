@@ -40,6 +40,7 @@ static uint16_t linesPerScreen;
 static uint8_t sidVersion;
 static uint8_t ntscMode= 0;
 static uint8_t compatibility;
+static uint8_t basicProg;
 
 static uint32_t sampleRate;
 
@@ -120,19 +121,19 @@ uint8_t envCurrentSongSpeed() {
 	return get_bit(playSpeed, actualSubsong > 31 ? 31 : actualSubsong); 
 }
 
-int8_t envIsTimerDrivenPsid() {
+int8_t envIsTimerDrivenPSID() {
 	return ((envIsPSID() == 1) && (envCurrentSongSpeed() == 1));
 }
 
 
-int8_t envIsRasterDrivenPsid() {
+int8_t envIsRasterDrivenPSID() {
 	return ((envIsPSID() == 1) && (envCurrentSongSpeed() == 0));
 }
 
 static void resetAudioBuffers() {
 	// song with original 60 hz playback.. adjust number of samples to play it faster.	
 
-	if(ntscMode && envIsRasterDrivenPsid()) { 
+	if(ntscMode && envIsRasterDrivenPSID()) { 
 		numberOfSamplesPerCall= 735; 		// NTSC: 735*60=44100
 	} else {
 		numberOfSamplesPerCall= 882; 		// PAL: 882*50=44100
@@ -311,6 +312,7 @@ static void* loadResult [7];
 
 static 	char song_name[32], song_author[32], song_copyright[32];
 
+
 static uint32_t loadSidFile(void * inBuffer, uint32_t inBufSize)  __attribute__((noinline));
 static uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(void * inBuffer, uint32_t inBufSize) {
 	uint8_t *inputFileBuffer= (uint8_t *)inBuffer;	
@@ -332,8 +334,16 @@ static uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(void * inBuffer, uint32_t inBuf
 	memResetRAM(envIsPSID());
 	
 	sidVersion= inputFileBuffer[0x05];
-	compatibility= ( (sidVersion & 0x2) &&  ((inputFileBuffer[0x77] & 0x2) == 0));	
-	ntscMode= (sidVersion == 2) && envIsPSID() && (inputFileBuffer[0x77] & 0x8); // NTSC bit
+	
+	// note: emu is not differenciating between SID chip versions (respective flags
+	// are therefore ignored - see bits 4/5)
+	
+	uint8_t flags= inputFileBuffer[0x77];
+	
+	basicProg= (envIsRSID() && (flags & 0x2));	// C64 BASIC program need to be started..
+	
+	compatibility= ( (sidVersion & 0x2) &&  ((flags & 0x2) == 0));	
+	ntscMode= (sidVersion == 2) && envIsPSID() && (flags & 0x8); // NTSC bit
 	
 	uint8_t i;
     for (i=0;i<32;i++) song_name[i] = inputFileBuffer[0x16+i];
@@ -346,6 +356,8 @@ static uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(void * inBuffer, uint32_t inBuf
 		return 1;	// could not load file
 	}
 
+	if (basicProg) rsidStartFromBasic(&initAddr);
+	
 	// global settings that depend on the loaded music file
 	resetTimings();
 	
@@ -359,7 +371,6 @@ static uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(void * inBuffer, uint32_t inBuf
 
 	return 0;
 }
-
 static char** getMusicInfo() __attribute__((noinline));
 static char** EMSCRIPTEN_KEEPALIVE getMusicInfo() {
 	return (char**)loadResult;

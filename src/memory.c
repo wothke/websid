@@ -75,7 +75,7 @@ void memResetPsidBanks(uint8_t isPsid, uint16_t playAddr) {
 		} else {
 			setMemBank(0x37);
 		}		
-	}	
+	}
 }
 
 /*
@@ -184,8 +184,9 @@ void memResetKernelROM() {
 	// which vector the sid-program is using) we provide dummy versions of the respective standard 
 	// IRQ/NMI routines..
 	
-    fillMem(&kernal_rom[0], 0x0, KERNAL_SIZE);
-
+	//(another song just used some useless kernal stuff: mountain march.sid) FIXME retest & remove special cases below 
+    fillMem(&kernal_rom[0], 0x60, KERNAL_SIZE);			// RTS by default 
+	
     memcpy(&kernal_rom[0x1f48], irqHandlerFF48, 19);	// $ff48 irq routine
     fillMem(&kernal_rom[0x0a31], 0xea, 0x4d);			// $ea31 fill some NOPs	
     memcpy(&kernal_rom[0x0a7e], irqHandlerEA7E, 9);	// $ea31 return sequence
