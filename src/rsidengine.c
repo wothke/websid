@@ -116,7 +116,6 @@ static void initCycleCount(uint32_t relOffset, uint32_t basePos) {
 static uint32_t processInterrupt(uint32_t intMask, uint16_t npc, uint32_t startTime, int32_t cycleLimit) {
 	// known limitation: if the code uses ROM routines (e.g. register restore/return sequence) then we will 
 	// be missing those cpu cycles in our calculation..
-	
 	uint32_t originalDigiCount= digiGetCount();
 	
 	if (isPsidDummyIrqVector()) {
@@ -237,8 +236,8 @@ static uint8_t callMain(uint16_t npc, uint8_t na, uint32_t startTime, int32_t cy
 			cpuRegSave();			
 			return 1;
 		}		
-	vicSimRasterline();
-       cpuParse();
+		vicSimRasterline();
+		cpuParse();
 	}
 	
 	return 0;
@@ -383,7 +382,6 @@ static void incFrameCount() {
 * @return 		1: if digi data available   0: if not
 */
 uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall) {
-	
 	digiMoveBuffer2NextFrame();
 		
 	initCycleCount(0, 0);
@@ -454,17 +452,11 @@ void rsidPlayTrack(uint32_t sampleRate, uint8_t compatibility, uint16_t *pInitAd
 	hackIfNeeded(pInitAddr);	
 	
 	memSetDefaultBanks(envIsRSID(), (*pInitAddr), loadEndAddr);	// PSID crap
-	
-	if (envIsTimerDrivenPSID()) {
-		// default timer settings
-		memSet(0xdc04, envCyclesPerScreen() & 0xff);
-		memSet(0xdc05, envCyclesPerScreen() >> 8);
-		memSet(0xdc0e, 0x1);	// make sure the timer is started (see MasterComposer crap like American_Pie.sid)
-	}
-		
+
 	// if initAddr call does not complete then it is likely in an endless loop / maybe digi player
+	// FIXME use CYCLELIMIT only for PSID..
 	mainProgStatus= callMain((*pInitAddr), actualSubsong, 0, CYCLELIMIT);		
-		
+
 	memResetPsidBanks(envIsPSID(), playAddr);	// PSID again
 }
 

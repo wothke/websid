@@ -21,7 +21,7 @@
 #define TIMER_A 0
 #define TIMER_B 1
 
-void ciaReset(uint32_t failMarker);
+void ciaReset(uint32_t cyclesPerScreen, uint8_t isRsid, uint32_t failMarker);
 	
 // interface used to interact with CIA
 int ciaIsActive(uint8_t ciaIdx);

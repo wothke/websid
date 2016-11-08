@@ -547,7 +547,7 @@ void cpuParse(void)
             setflags(FLAG_N,bval&0x80);
             setflags(FLAG_V,bval&0x40);	// bit 6
             break;
-        case brk:					            
+        case brk:
 			pc= 0; // code probably called non existent ROM routine.. 
 			
 			/* proper impl would look like this:
@@ -835,7 +835,7 @@ void cpuParse(void)
         case rts:
             wval=pop();
             wval|=pop()<<8;
-            pc=wval+1;
+			pc=wval+1;
             break;
         case sbc:    {
             bval=getaddr(opc, mode)^0xff;

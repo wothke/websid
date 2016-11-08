@@ -24,8 +24,15 @@ static uint32_t remainingCyclesThisRaster= 0;
 // next interrupt not on this screen; use value bigger than any 16-bit counter for easy comparison
 static uint32_t failMarker;
 
-void vicReset(uint32_t f) {
+void vicReset(uint8_t isRsid, uint32_t f) {
 	failMarker= f;
+
+	if (isRsid) {	
+		// by default C64 is configured with CIA1 timer / not raster irq
+		memWriteIO(0xd01a, 0x00); 	// raster irq not active
+		memWriteIO(0xd011, 0x1B);
+		memWriteIO(0xd012, 0x00); 	// raster at line x
+	}
 	
 	timerCarryOverIrq= -1;
 	lastRasterInterrupt= -1;
@@ -78,15 +85,27 @@ static void setD019(uint8_t value) {
 	memWriteIO(0xd019, memReadIO(0xd019)&(~value));
 }
 
-static uint8_t getD019() {
-	return  memReadIO(0xd019);
-}
-
 static void signalVicIrq() {	
 	// bit 7: IRQ triggered by VIC
 	// bit 0: source was rasterline
 
 	memWriteIO(0xd019, memReadIO(0xd019)|0x81);
+}
+
+uint32_t lastDummyInterrupt=0;
+static uint8_t getD019() {
+	if ((cpuGetProgramMode() == MAIN_OFFSET_MASK) && !(memReadIO(0xd01a) & 0x1)) {
+		// might be a main loop polling for interrupt (see Alter_Digi_Piece.sid) -
+		// hack: just create one dummy interrupt per screen
+		if ((cpuTotalCycles()- lastDummyInterrupt) > envCyclesPerScreen()) {
+			lastDummyInterrupt= cpuTotalCycles();	// try to sim a raster interrupt once a screen
+			memWriteIO(0xd019, memReadIO(0xd019)|0x1);
+			return 1;
+		} else {
+			return 0;			
+		}
+	}
+	return memReadIO(0xd019);
 }
 
 static uint8_t getCurrentD012() {

@@ -104,7 +104,7 @@ void memWriteIO(uint16_t addr, uint8_t value) {
 	io_area[addr - 0xd000]= value;
 }
 
-uint8_t memReadRAM(uint16_t addr) {	// FIXME used?
+uint8_t memReadRAM(uint16_t addr) {
 	return memory[addr];
 }
 void memWriteRAM(uint16_t addr, uint8_t value) {
@@ -184,7 +184,8 @@ void memResetKernelROM() {
 	// which vector the sid-program is using) we provide dummy versions of the respective standard 
 	// IRQ/NMI routines..
 	
-	//(another song just used some useless kernal stuff: mountain march.sid) FIXME retest & remove special cases below 
+	// use RTS as default ROM content: some songs actually try to call stuff, e.g. mountain march.sid, 
+	// Soundking_V1.sid(basic rom init routines: 0x1D50, 0x1D15, 0x1F5E), Voodoo_People_part_1.sid (0x1F81)
     fillMem(&kernal_rom[0], 0x60, KERNAL_SIZE);			// RTS by default 
 	
     memcpy(&kernal_rom[0x1f48], irqHandlerFF48, 19);	// $ff48 irq routine
@@ -197,14 +198,6 @@ void memResetKernelROM() {
 		
 	kernal_rom[0x1ffa]= 0x43;	// standard NMI vectors (this will point into the void at: 0318/19)
 	kernal_rom[0x1ffb]= 0xfe;	
-
-	// basic rom init routines (e.g. used by Soundking_V1.sid)
-	kernal_rom[0x1D50]= 0x60;	
-	kernal_rom[0x1D15]= 0x60;	
-	kernal_rom[0x1F5E]= 0x60;	
-		
-	// kernal vector: initalise screen and keyboard (e.g. used by Voodoo_People_part_1.sid)
-	kernal_rom[0x1F81]= 0x60;	
 }
 
 void memResetRAM(uint8_t isPsid) {
@@ -221,34 +214,13 @@ void memResetRAM(uint8_t isPsid) {
 		memcpy(&memory[0xe000], &kernal_rom[0], 0x2000);
 	}
 }
-
-void memResetIO(uint32_t cyclesPerScreen, uint8_t isRsid, uint32_t failMaker) {
+void memResetIO(uint32_t cyclesPerScreen, uint8_t isRsid, uint32_t f) {
     fillMem(&io_area[0], 0x0, IO_AREA_SIZE);
 
-	// Master_Blaster_intro.sid actually checks this:
-	io_area[0x0c01]= 0xff;	 	// Port B, keyboard matrix rows and joystick #1
+	ciaReset(cyclesPerScreen, isRsid, f);
+		
+	vicReset(isRsid, f);
 
-	// CIA 1 defaults	(by default C64 is configured with CIA1 timer / not raster irq)
-	memWriteIO(0xdc0d, 0x81);	// interrupt control	(interrupt through timer A)
-	memWriteIO(0xdc0e, 0x01); 	// control timer A: start - must already be started (e.g. Phobia, GianaSisters, etc expect it)
-	memWriteIO(0xdc0f, 0x08); 	// control timer B (start/stop) means auto-restart
-	memWriteIO(0xdc04, cyclesPerScreen&0xff); 	// timer A (1x pro screen refresh)
-	memWriteIO(0xdc05, cyclesPerScreen>>8);
-	
-	if (isRsid) {	
-		// by default C64 is configured with CIA1 timer / not raster irq
-		memWriteIO(0xd01a, 0x00); 	// raster irq not active
-		memWriteIO(0xd011, 0x1B);
-		memWriteIO(0xd012, 0x00); 	// raster at line x
-
-		// CIA 2 defaults
-		memWriteIO(0xdd0e, 0x08); 	// control timer 2A (start/stop)
-		memWriteIO(0xdd0f, 0x08); 	// control timer 2B (start/stop)		
-	}
-
-	ciaReset(failMaker);
-	vicReset(failMaker);
-
-	io_area[0x0418]= 0xf;					// turn on full volume	
-	sidPoke(0x18, 0xf);  
+	memWriteIO(0xd418, 0xf);		// turn on full volume	
+	sidPoke(0x18, 0xf);  	
 }

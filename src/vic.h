@@ -12,7 +12,7 @@
 
 #include "base.h"
 
-void vicReset();
+void vicReset(uint8_t isRsid, uint32_t failmarker);
 	
 // interface used to interact with VIC
 void vicStartRasterSim(uint32_t rasterPosInCycles);

@@ -556,12 +556,6 @@ uint8_t useCiaPollingHack() {
 uint8_t ciaReadMem(uint16_t addr) {
 	switch (addr) {
 		// CIA	
-		
-		// FIXME should maybe add 0xdc00 for those using it as an exit condition (e.g. Alter_Digi_Piece.sid)
-		case 0xdc01:
-			// some songs use this as an exit criteria.. see Master_Blaster_intro.sid
-			return 0xff;
-			
 		case 0xdc04:
 			if (envIsPSID()) {
 				/* 
@@ -627,6 +621,9 @@ void ciaWriteMem(uint16_t addr, uint8_t value) {
 	simWriteTimer(addr, value);
 	
 	switch (addr) {
+		case 0xdc00:
+		case 0xdc01:
+			break;		// keep default config (write/read here means other info anyway)
 		case 0xdc0d:
 			setInterruptMask(&(cia[0]), value);
 			break;
@@ -657,16 +654,44 @@ void ciaWriteMem(uint16_t addr, uint8_t value) {
 	}
 }
 
-void ciaReset(uint32_t f) {
+static void initMem(uint16_t addr, uint8_t value) {
+	if (envIsPSID()) {			// needed by MasterComposer crap
+		memWriteRAM(addr, value);
+	}
+	ciaWriteMem(addr, value);	// also write RO defaults, e.g. dc01
+	
+	memWriteIO(addr, value);
+}
+
+void ciaReset(uint32_t cyclesPerScreen, uint8_t isRsid, uint32_t f) {
 	failMarker= f;
+
+	fillMem((uint8_t*)&dcia,0,sizeof(dcia));
+
+	initMem(0xdc00, 0x10);	 	// fire botton NOT pressed (see Alter_Digi_Piece.sid)
+	initMem(0xdc01, 0xff);	 	// Master_Blaster_intro.sid/instantfunk.sid actually check this
+	
+	// CIA 1 defaults	(by default C64 is configured with CIA1 timer / not raster irq)
+	initMem(0xdc0d, 0x81);	// interrupt control	(interrupt through timer A)
+	initMem(0xdc0e, 0x01); 	// control timer A: start - must already be started (e.g. Phobia, GianaSisters, etc expect it)
+	initMem(0xdc0f, 0x08); 	// control timer B (start/stop) means auto-restart
+	initMem(0xdc04, cyclesPerScreen&0xff); 	// timer A (1x pro screen refresh)
+	initMem(0xdc05, cyclesPerScreen>>8);
+	
+	if (isRsid) {	
+		// CIA 2 defaults
+		initMem(0xdd0e, 0x08); 	// control timer 2A (start/stop)
+		initMem(0xdd0f, 0x08); 	// control timer 2B (start/stop)		
+	} 
 
 	initTimerData(ADDR_CIA1, &(cia[0]));
 	initTimerData(ADDR_CIA2, &(cia[1]));
-	
+
 	// reset hacks
 	nmiVectorHack= 0;
 	dummyDC04= 0;
-	fillMem((uint8_t*)&dcia,0,sizeof(dcia));
 
 	todInMillies= 0;
+	
+
 }

@@ -171,7 +171,7 @@ static void resetTimings() {
 	*/
 	
 	// increased to 4 for the benefit of Kapla_Caves.sid (problem: 
-	// due to this hack main loop players will be getting to many cycles)
+	// due to this hack main loop players will be getting too many cycles)
 	uint32_t badlineCycles= cyclesPerRaster*4;	
 	
 	// NTSC: 17095	/ PAL: 19656		

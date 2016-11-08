@@ -655,10 +655,9 @@ uint8_t digiDetectSample(uint16_t addr, uint8_t value) {
 		if (!envIsPSID() && (addr == 0xd418)) {
 			recordSample(isMahoneyDigi() ? mahoneySample[value] : value << 4);	// this may lead to false positives..
 		}					
-
-		if (!isC64compatible)			// FIXME moved up.. before was after sidPoke. test
+		if (!isC64compatible) {
 			handlePsidDigi(addr, value);
-		
+		}
 		// info: Fanta_in_Space.sid, digital_music.sid need regular volume settings produced here from Main..
 		return 0;	
 	}
