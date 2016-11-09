@@ -30,8 +30,8 @@ void cpuReset(uint16_t npc, uint8_t na);
 void cpuResetToIrq(uint16_t npc);
 
 // state manipulation
-void cpuRegRestore();
-void cpuRegSave();
+void cpuRegRestore(uint8_t i, uint8_t light);
+void cpuRegSave(uint8_t i, uint8_t light);
 void cpuRegReset();
 void cpuResetCycles(uint32_t c);
 

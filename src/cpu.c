@@ -41,9 +41,14 @@ static uint8_t a,x,y,s,p;	// p= status register
 
 
 // snapshot of current registers and stack (so we can ignore IRQ/NMI effects)
-static uint8_t snapshotAcc, snapshotX, snapshotY, snapshotPFlags, snapshotStackpointer;
-static uint16_t snapshotPC;
-static uint8_t snapshotStack[0xff];
+
+struct snapshot {
+	uint8_t a, x, y, p, stackPtr;
+	uint16_t pc;
+	uint8_t stack[0xff];
+};
+
+static struct snapshot snapshots[2];
 
 static uint32_t programMode= MAIN_OFFSET_MASK;
 
@@ -79,30 +84,34 @@ uint8_t cpuIrqFlag() {
 	return p & FLAG_I;
 }
 
-
-
-
-void cpuRegSave() {
-    snapshotAcc = a;
-    snapshotX = x;
-    snapshotY = y;
-    snapshotPFlags = p;
-    snapshotPC = pc;
+void cpuRegSave(uint8_t i, uint8_t light) {
+	struct snapshot *ss= &(snapshots[i]);
 	
-	// songs like: ParanoiaComplex, Another_Feekzoid_Digi_Tune or Demi-Demo_4 currently need this..
-	// todo: check what goes wrong and fix the cause... 
-    snapshotStackpointer = s;	
-	memCopyFromRAM(snapshotStack, 0x0100, 0xff);
+    ss->a = a;
+    ss->x = x;
+    ss->y = y;
+	if (!light)  {
+		ss->p = p;
+		ss->pc = pc;
+		
+		// songs like: ParanoiaComplex, Another_Feekzoid_Digi_Tune or Demi-Demo_4 currently need this..
+		// todo: check what goes wrong and fix the cause... 
+		ss->stackPtr = s;	
+		memCopyFromRAM(ss->stack, 0x0100, 0xff);	
+	}
 }
 
-void cpuRegRestore() {
-    a = snapshotAcc;
-    x = snapshotX;
-    y = snapshotY;
-    p = snapshotPFlags;
-    pc = snapshotPC;
-    s = snapshotStackpointer;	
-	memCopyToRAM(snapshotStack, 0x0100, 0xff);
+void cpuRegRestore(uint8_t i, uint8_t light) {
+	struct snapshot *ss= &(snapshots[i]);
+    a = ss->a;
+    x = ss->x;
+    y = ss->y;
+	if (!light)  {
+		p = ss->p;
+		pc = ss->pc;
+		s = ss->stackPtr;	
+		memCopyToRAM(ss->stack, 0x0100, 0xff);
+	}
 }
 
 // c64 instruction modes

@@ -61,7 +61,6 @@ static uint8_t mainProgStatus= 0; 		// 0: completed 1: interrupted by cycleLimit
 static uint32_t irqTimeout= 18000;		// will be reset anyway
 
 static int32_t frameCount= 0;			// keeps track of current frame
-static uint32_t lastFrameCycles= 0;	// cycles used on the last screen 
 
 /*
 * snapshot of c64 memory right after loading.. 
@@ -220,26 +219,49 @@ static uint8_t isIrqNext(uint32_t currentIrqTimer, uint32_t currentNmiTimer, uin
  * @param cycleLimit	limit the number of available CPU cycles before the processing stops
  * @return 				0= run to completion; 1= interrupted by cyclelimit or due to number of produced digi samples
  */
-static uint8_t callMain(uint16_t npc, uint8_t na, uint32_t startTime, int32_t cycleLimit) {	
+static uint8_t callMain(uint16_t npc, uint8_t na, uint32_t startTime, int32_t cycleLimit) {
+
+	/*
+		the way how the sequence of main and INT calls is scheduled is obviously incorrect, and
+		the logic below tries to at least workaround (which does not always work) some the flaws.
+		the problems arise when:
+				
+		scenario 1: main program is interrupted by some INT and when it later resumes it expects to
+                    continue with the register content it had at the time of the interrupt (why
+					is special handling needed here: any well behaved INT would perform that cleanup
+					anyway.. but various songs do seem to benefit from a respective hack.. see 
+					comment in cpuRegSave)	
+
+		scenario 2: supposing a chain of INTs does not expect any interference from MAIN and registers
+					are just passed on from one INT call to the next (see Jevers_Bannys_and_the_Master_Mixers.sid):
+					a main call should then under no circumstances mess with the registers... (caution: doing
+					too much here will harm songs like: Storebror.sid, Wonderland XII part1.sid, Comalight 13 tune4.sid)
+	*/
+	
 	initCycleCount(0, startTime); // use new timestamps for potential digi-samples & cycleLimit check
 
+	if (npc == 0) cpuRegSave(1, 1);
+
 	if (npc == 0) {
-		cpuRegRestore();
+		cpuRegRestore(0,0);
 	} else {
-		cpuReset(npc, na);
+		cpuReset(npc, na);	// sid init call: with 'start addr' and 'seleced track' in acc
 	}
     while (cpuPcIsValid()) {
 		// if a main progs is already producing samples then it is done with the "init" phase and
 		// we interrupt it when we have enough samples for one screen (see Suicide_Express.sid)
 
 		if (((cycleLimit >0) && (cpuCycles() >=cycleLimit)) || (digiGetOverflowCount() >0)) {	
-			cpuRegSave();			
+			cpuRegSave(0,0);
+			
+			if (npc == 0) cpuRegRestore(1, 1);
 			return 1;
 		}		
 		vicSimRasterline();
 		cpuParse();
 	}
 	
+	if (npc == 0) cpuRegRestore(1, 1);
 	return 0;
 }
 
@@ -359,8 +381,8 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 	}
 	
 	mainProgCycles= cyclesPerScreen - (nmiCycles + irqCycles + mainProgCycles);
-	
-	if (mainProgCycles >0) {		
+
+	if (mainProgCycles >0) {
 		processMain(cyclesPerScreen, mainProgStart, mainProgCycles);
 		
 		if (mainLoopOnlyMode && envIsRSID()) {
@@ -394,15 +416,15 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 	}
 
 	if (envIsTimerDrivenPSID() || vicIsIrqActive() || envIsRSID()) {
-		if (lastFrameCycles > cyclesPerScreen) {
-			// try not to systematically use up too many cycles..
-			uint32_t overflow= lastFrameCycles-cyclesPerScreen;
-			if(overflow < cyclesPerScreen)	// see Axel_F.sid
-				cyclesPerScreen-= (overflow);
-		}
+
+		// info failed idea: the cycleLimit used below has the effect that
+		// a screen uses AT LEAST that many cycles (e.g. Axel_F.sid) and it 
+		// might be "more realistic" if a respective overflow would be 
+		// substracted on the following screen. however a test with a 
+		// respective feature showed that some songs (e.g. Cycles.sid, 
+		// Wonderland XII part1.sid) fail miserably when it is used..
 
 		runScreenSimulation(synthBuffer, cyclesPerScreen, samplesPerCall);
-		lastFrameCycles= cpuCycles();
 		return digiRenderSamples(digiBuffer, cyclesPerScreen, samplesPerCall);
 	} else {
 		// legacy PSID mode: one "IRQ" call per screen refresh (a PSID may actually setup CIA 1 
