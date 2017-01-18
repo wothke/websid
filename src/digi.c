@@ -34,6 +34,7 @@ static uint8_t currentDigi=  0x80;		// last digi sample / default: neutral value
 /*
 * work buffers used to record digi samples produced by NMI/IRQ/main
 */ 
+static int8_t digiSource= -1;	// which voice - if any (voice specific samples should go through filter)
 static uint16_t digiCount= 0;
 static uint32_t digiTime[DIGI_BUF_SIZE];	// time in cycles counted from the beginning of the current screen
 static uint8_t digiVolume[DIGI_BUF_SIZE];	// 8-bit sample
@@ -118,6 +119,8 @@ inline uint8_t isWithinFreqDetectTimeout(uint8_t voice) {
 }
 
 static uint8_t recordFreqSample(uint8_t voice, uint8_t sample) {
+	digiSource= voice;	// assumtion: only one digi voice..
+	
 	recordSample(sample);
 
 	// reset those SID regs before envelope generator does any damage
@@ -211,6 +214,8 @@ inline uint8_t isWithinPulseDetectTimeout(uint8_t voice) {
 }
 
 static uint8_t recordPulseSample(uint8_t voice, uint8_t sample) {
+	digiSource= voice;	// assumtion: only one digi voice..
+
 	recordSample(sample);
 
 	// reset those SID regs before envelope generator does any damage
@@ -260,7 +265,7 @@ static uint8_t handlePulseModulationDigi(uint8_t voice, uint8_t reg, uint8_t val
 					sidSetMute(voice, 1);	// avoid wheezing base signals
 					
 					pulseDetectState[voice] = PulseIdle;	// just to reduce future comparisons
-					return recordFreqSample(voice, sample);								
+					return recordPulseSample(voice, sample);								
 				} else {
 					pulseDetectState[voice] = PulseIdle;	// just to reduce future comparisons			
 				}
@@ -321,7 +326,7 @@ static uint8_t handleIceGuysDigi(uint8_t voice, uint8_t reg, uint8_t value) {
 // Mahoney's D418 "8-bit" digi sample technique..
 // -------------------------------------------------------------------------------------------
 
-// based on Mahoney's amplitude_table_8580.txt
+// based on Mahoney's amplitude_table_8580.txt (FIXME: use .sid file's version preference and support both tables?)
 static const uint8_t mahoneySample[256]= {
 	164, 170, 176, 182, 188, 194, 199, 205, 212, 218, 224, 230, 236, 242, 248, 254, 
 	164, 159, 153, 148, 142, 137, 132, 127, 120, 115, 110, 105, 99, 94, 89, 84, 
@@ -782,7 +787,21 @@ static void sortDigiSamples() {
 				nmiIdx= next(NMI_OFFSET_MASK, toIdx+offset, nmiIdx);	// only "nmi" left		
 			}			
 		}
-		digiCount+= offset;		
+		digiCount+= offset;
+		
+		// experiment: attempt to improve playback quality by patching the timing to a constant playback rate
+		// (to compensate for missing badline handling etc)
+		/* does not seem to make much of a difference...
+		if (digiSource > -1) {
+			//  only use for "modern" digis bcause old stuff like Arkanoid seems to depend on a lousy timing..
+
+			uint32_t step= (sortedDigiTime[digiCount-1]-sortedDigiTime[1])/(digiCount-1);
+			uint32_t t= sortedDigiTime[1];
+			for(uint16_t i= 1; i<digiCount; i++, t+= step) {
+				sortedDigiTime[i]= t;
+			}
+		}
+		*/
 	}	
 }
 
@@ -846,9 +865,14 @@ static inline int16_t genDigi(int16_t in, uint8_t digi) {
 
 void digiMergeSampleData(int8_t hasDigi, int16_t *soundBuffer, uint8_t *digiBuffer, uint32_t len) {
 	if (hasDigi) {
+		if (digiSource > -1) { 
+			// frequency- and pulsewidth-modulation based digis are affected by the sid filters...
+			sidFilterSamples(digiBuffer, len, digiSource);
+		}
 		uint32_t i;
 		for (i= 0; i<len; i++) {
 			soundBuffer[i]= genDigi(soundBuffer[i], digiBuffer[i]);
 		}
+		digiSource= -1;	// reset
 	} 
 }

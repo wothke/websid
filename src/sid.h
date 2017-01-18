@@ -21,6 +21,7 @@ void sidSetMute(uint8_t voice, uint8_t value);
 
 // use current SID state to generate audio samples
 void sidSynthRender (int16_t *buffer, uint32_t len);
+void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t v);
 
 
 // special direct access to SID state (for digi.c)

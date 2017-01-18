@@ -51,7 +51,7 @@
 #include "memory.h"
 #include "cpu.h"		// cpuGetProgramMode(), etc
 #include "env.h"		// envNumberOfSamplesPerCall(), etc
-#include "rsidengine.h" // rsidGetFrameCount() FIXME remove dependency 
+#include "rsidengine.h" // rsidGetFrameCount() 
 
 
 //#define DEBUG 
@@ -61,10 +61,11 @@ static uint8_t traceOn= 0;	// only used in DEBUG mode
 
 // switch between 'cycle' or 'sample' based envelope-generator counter 
 // (performance wise it does not seem to make much difference)
+// FIXME XXX Clique_Baby.sid does not work in cycle mode- why?
 #define USE_SAMPLE_ENV_COUNTER
 
 static uint32_t  mixingFrequency;
-static uint32_t  freqmul;
+static uint32_t  freqmul;		// FIXME 16 bit should be enough
 
 
 // SID register definition
@@ -173,17 +174,17 @@ struct sidosc {
     uint32_t pulse;
     uint8_t wave;
     uint8_t filter;
-    uint32_t attack;
-    uint32_t decay;
+    uint32_t attack;	// for 255 steps
+    uint32_t decay;		// for 255 steps
     uint32_t sustain;
     uint32_t release;
     uint32_t counter;
 
 	// updated envelope generation based on reSID
 	uint8_t envelopeOutput;
-	int16_t currentLFSR;	// sim counter	
+	int16_t currentLFSR;	// sim counter	(continuously counting / only reset by AD(S)R match)
 	uint8_t zeroLock;  
-	uint8_t exponentialCounter;
+	uint8_t exponentialCounter;    
 	
     uint8_t envphase;
     uint32_t noisepos;
@@ -200,6 +201,13 @@ struct sidflt {
     uint8_t  v3ena;
     int32_t vol;
     int32_t rez;
+    int32_t h;
+    int32_t b;
+    int32_t l;
+};
+
+/* hack: keep separate state for sample channel so as not to disturb regular results in any way */
+struct sampleflt {
     int32_t h;
     int32_t b;
     int32_t l;
@@ -233,8 +241,13 @@ static int32_t limitLFSR= 0;
 static int32_t envelopeCounterPeriod[16];
 static int32_t envelopeCounterPeriodClck[16];
 
-
-// note: decay/release times are 3x longer (implemented via exponentialCounter)
+// The ATTACK rate determines how rapidly the output of a voice rises from zero to peak amplitude when 
+// the envelope generator is gated (time/cycle in ms). The respective gradient is used whether the attack is 
+// actually started from 0 or from some higher level. The terms "attack time", "decay time" and 
+// "release time" are actually very misleading here, since all they translate into are actually 
+// some fixed gradients, and the actual decay or release may complete much sooner, e.g. depending
+// on the selected "sustain" level.
+// note: decay/release times are 3x longer (implemented via exponential_counter)
 static const int32_t attackTimes[16]  =	{
 	2, 8, 16, 24, 38, 56, 68, 80, 100, 240, 500, 800, 1000, 3000, 5000, 8000
 };
@@ -242,6 +255,7 @@ static const int32_t attackTimes[16]  =	{
 static int32_t  filtmul;
 static struct sidosc osc[3];
 static struct sidflt filter;
+static struct sampleflt samplefilter;
 
 /* Get the bit from an uint32_t at a specified position */
 static inline uint8_t get_bit(uint32_t val, uint8_t b)
@@ -379,6 +393,8 @@ static void simOneEnvelopeCycle(uint8_t v) {
 			break;
 		}
 		case Sustain: {                        // Phase 2 : Sustain
+			triggerLFSR_Threshold(osc[v].decay, &osc[v].currentLFSR);	// keeps using the decay threshold!
+		
 			if (osc[v].envelopeOutput != osc[v].sustain) {
 				osc[v].envphase = Decay;
 			}
@@ -400,6 +416,48 @@ static void simOneEnvelopeCycle(uint8_t v) {
 		osc[v].zeroLock = 1;	// new "attack" phase must be started to unlock
 	}			
 }	  
+
+// re-run filter on digi-sample digiBuffer (flaw: to do it correctly 
+// the sample would need to be merged into the SID output *before* applying the
+// filter to the result of all three voices in sidSynthRender()! unfortunately this emu does not
+// have the sample info at that point and by the time this code here is reached
+// the regular filtering has already been applied to the SID output - so it MUST NOT
+// be repeated here.. hopefully it still improves the resulting output)
+void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t v)
+{
+	// note: 'filter' was setup by last sidSynthRender() - potential issue: if a "multi-speed" song
+	// were to change filter settings between frames respective updates would be missed here..
+    uint32_t bp;
+	for (bp=0;bp<len;bp++) {		
+		int32_t out=0;
+
+		// same filter impl as in sidSynthRender
+		if ((v<2) || filter.v3ena) {
+			if (osc[v].filter) {
+				out=( ((int32_t)(digiBuffer[bp]-0x80)) * (int32_t)((0xff))) >>5;
+				
+				int32_t ff = filter.freq;
+				
+				samplefilter.h = pfloatConvertFromInt(out) - (samplefilter.b>>8)*filter.rez - samplefilter.l;
+				samplefilter.b += pfloatMultiply(ff, samplefilter.h);
+				samplefilter.l += pfloatMultiply(ff, samplefilter.b);
+
+				if (filter.lowEna || filter.bandEna || filter.hiEna) {	
+					out = 0;
+					
+					if (filter.lowEna) out+=pfloatConvertToInt(samplefilter.l);
+					if (filter.bandEna) out+=pfloatConvertToInt(samplefilter.b);
+					if (filter.hiEna) out+=pfloatConvertToInt(samplefilter.h);
+				}		
+			} else {
+				out= (((int32_t)(digiBuffer[bp]-0x80)) * (int32_t)((0xff))) >>5;
+			}
+		}
+
+		int16_t filteredSample = (filter.vol*(out)) >> 8;	// should be 8 bit signed here
+		digiBuffer[bp]= (uint8_t)((filteredSample + 0x7f) & 0xff);
+    }
+}
 
 // render a buffer of n samples using the current SID register contents
 void sidSynthRender (int16_t *buffer, uint32_t len)
@@ -469,7 +527,7 @@ void sidSynthRender (int16_t *buffer, uint32_t len)
 				osc[v].noisepos = 0;
 				osc[v].noiseval = 0xffffff;
 			}
-			uint8_t refosc = v?v-1:2;  // reference oscillator for sync/ring
+			uint8_t refosc = v?v-1:2;  // reference oscillator for sync/ring (always the "previous")
 			// sync oscillator to refosc if sync bit set 
 			if (osc[v].wave & 0x02)
 				if (osc[refosc].counter < osc[refosc].freq)
@@ -646,10 +704,10 @@ static char *pokeInfo;
 static void traceSidPoke(uint8_t reg, uint8_t val) {
 	pokeInfo= malloc(sizeof(char)*13);
 
-	pokeInfo[0]= hex1[(sFrameCount>>12)&0xf];
-	pokeInfo[1]= hex1[(sFrameCount>>8)&0xf];
-	pokeInfo[2]= hex1[(sFrameCount>>4)&0xf];
-	pokeInfo[3]= hex1[(sFrameCount&0xf)];
+	pokeInfo[0]= hex1[(rsidGetFrameCount()>>12)&0xf];
+	pokeInfo[1]= hex1[(rsidGetFrameCount()>>8)&0xf];
+	pokeInfo[2]= hex1[(rsidGetFrameCount()>>4)&0xf];
+	pokeInfo[3]= hex1[(rsidGetFrameCount()&0xf)];
 	pokeInfo[4]= ' ';
 	pokeInfo[5]= 'D';
 	pokeInfo[6]= '4';
@@ -663,6 +721,122 @@ static void traceSidPoke(uint8_t reg, uint8_t val) {
 	free(pokeInfo);
 }
 #endif
+
+
+/*
+* Notes regarding ADSR-bug:
+*
+* Information about how *exactly* the original envolope generator works is still somewhat 
+* sketchy (e.g. see links here: https://sourceforge.net/p/sidplay-residfp/wiki/Links/)
+* The way it is implemented in resid (and here as well) is NOT necessarily "100% correct" but 
+* it seems to be an adequate approximation. The infamous ADSR-bug seems to be good illustration
+* of an area that is still not 100% understood - eventhough there are fairly good theories 
+* what is causing the bug and when it is likely to strike (see link above).
+*
+* The basic setup is this: There is a 15-bit LFSR that "increments" with each cycle and 
+* eventually overflows. The user specified "attack", "decay" and "release" settings translate into 
+* respective reference thresholds. The threshold of the active phase (e.g. attack) is compared 
+* against the current LFSR and in case there is an *exact* match, then the envelope counter is 
+* updated (i.e. increased or decreased once) and the LFSR is reset to 0 (other than the 
+* automatic overflow, this is the *only* way the LFSR can ever be reset to 0).
+* 
+* One important aspect is that "counting and comparing" *never* stops - i.e. even when some 
+* goal has been achieved (e.g. "sustain" level for "decay" phase or 0 for "release" phase). There
+* is no such thing as an idle mode and either the "attack", "decay" or "release" counter is 
+* always active (e.g. the "release" threshold stays active until the phase is manually switched
+* to a new "attack" by setting the GATE bit).
+*
+* The ADSR-bug may be encountered whenever the currently active threshold is manually changed
+* to a *lower* value (e.g. by setting the AD or SR registers for an active phase or by changing 
+* the GATE and thereby replacing the currently used threshold): Whenever the new threshold is 
+* already lower than the current LFSR content then the bug occurs: In order to reach the threshold 
+* the LFSR has to first overflow and go "full cicle". In the worst case that amounts to 32k clock ticks,  
+* i.e. 32ms by which the selected phase is delayed.
+*
+* Within a cycle-correct CPU/SID emulation respective situations can be easily identified (i.e. it is 
+* just a matter of properly updating the LSFR counter for each cycle and generating the resulting
+* SID output). But the challenge within this emulator is that the CPU is simulated on a cycle exact basis 
+* for a certain time slot (e.g. 5ms) but the SID output synthesis then is done afterwards (not in 
+* sync with the CPU emulation. This means that that eventhough the SID emulation is using a 
+* cycle exact handling for its stuff (The implementation used here mimicks the approach taken by resid.)
+* it can not differenciate the CPU interactions that have just been performed within the current time
+* slot. This means that the SID side emulation alone will NOT detect ADSR-bug situations that are 
+* directly triggered if there where multiple interactions. (e.g. when short thresholds are involved 
+* the runtime of the CPU interactions within the time slot may be larger than the used threshold values, 
+* e.g. the time it takes to update the SR and then switch to AD may be much longer than the new A 
+* threshold and if the set R was larger, this will directly result in a triggered bug.)
+*
+* The below add-on hack in handleAdsrBug() tries to mitigate that blind-spot - at least for some of the
+* most relevant scenarios.
+*/
+
+uint16_t getCurrentThreshold(uint8_t voice) {
+	uint16_t threshold;
+	switch (osc[voice].envphase) {
+		case Attack: 
+			{ threshold = envelopeCounterPeriod[sid.v[voice].ad >> 4]; break; }
+		case Decay: 
+		case Sustain:	// keeps using the decay limit
+			{ threshold = envelopeCounterPeriod[sid.v[voice].ad & 0xf]; break; }
+		case Release: 
+			{ threshold = envelopeCounterPeriod[sid.v[voice].sr & 0xf]; break; }
+	}
+	return threshold;
+}
+
+void simGateAdsrBug(uint8_t voice, uint16_t newRate) {
+	if (adsrBugFrameCount == rsidGetFrameCount()) {
+		uint16_t oldThreshold= getCurrentThreshold(voice);
+		uint16_t newThreshold= envelopeCounterPeriod[newRate];
+		
+		if (oldThreshold > newThreshold ) {
+			// only reduction may lead to overflow
+			
+			uint32_t elapsed = clocksToSamples(cpuCycles() - adsrBugTriggerTime);
+			uint16_t lsfr = elapsed % oldThreshold;	// not correct (ignores lsfr start state)
+			
+			if (lsfr > newThreshold ) {	
+				// ADSR BUG activated
+				osc[voice].currentLFSR= newThreshold;	// force overflow
+			}		
+		}
+	}	
+	adsrBugTriggerTime= cpuCycles();
+	adsrBugFrameCount= rsidGetFrameCount();				
+}
+
+void handleAdsrBug(uint8_t voice, uint8_t reg, uint8_t val) {
+	// example LMan - Confusion 2015 Remix.sid: updates threshold then switches to lower threshold via GATE
+	
+	switch (reg) {		
+	case 4: { // wave
+		// scenario 1
+		uint8_t oldGate= sid.v[voice].wave & 0x1;
+		uint8_t newGate= val & 0x01;
+		if (!oldGate && newGate) {
+			simGateAdsrBug(voice, sid.v[voice].ad >> 4);	// switch to 'attack'
+		}
+		else if (oldGate && !newGate) {
+			simGateAdsrBug(voice, sid.v[voice].sr & 0xf);	// switch to release
+		}
+		break;
+	}
+	case 5: { // new AD
+		// scenario 1
+		if (osc[voice].envphase != Release) {
+			simGateAdsrBug(voice, val >> 4);
+		}
+		break;
+	}
+	case 6: { // new SR
+		// scenario 1
+		if (osc[voice].envphase == Release) {
+			simGateAdsrBug(voice, val & 0xf);
+		}
+		break;
+	}
+	}
+}
 
 void sidPoke(uint8_t reg, uint8_t val)
 {
@@ -692,6 +866,8 @@ void sidPoke(uint8_t reg, uint8_t val)
             break;
         }
         case 4: {
+			handleAdsrBug(voice, reg, val);
+			
 			simStartOscillatorVoice3(voice, val);
 			
 			uint8_t oldGate= sid.v[voice].wave&0x1;
@@ -700,13 +876,6 @@ void sidPoke(uint8_t reg, uint8_t val)
 
 			sid.v[voice].wave = val;
 			
-			// poor man's ADSR-bug detection: this is the kind of logic a player would 
-			// most likely be using to deliberately trigger the the counter overflow..
-			if (oldTest && (val&0x8) && !oldGate && newGate) {
-				adsrBugTriggerTime= cpuCycles();	// FIXME replace using cpuTotalCycles()
-				adsrBugFrameCount= rsidGetFrameCount();
-			}
-						
 			if (!oldGate && newGate) {
 				/* 
 				If the envelope is then gated again (before the RELEASE cycle has reached 
@@ -726,25 +895,16 @@ void sidPoke(uint8_t reg, uint8_t val)
 			}
             break;
         }
-        case 5: { 
-			sid.v[voice].ad = val;
-			
-			/* 
-			ADSR-bug: if somebody goes through the above TEST/GATE drill and shortly thereafter 
-			sets up an A/D that is bound to already have run over then we can be pretty sure 
-			what he is after..			
-			*/
-			if (adsrBugFrameCount == rsidGetFrameCount()) {	// limitation: same frame only
-				int32_t delay= envelopeCounterPeriodClck[val >> 4];
-				if ((cpuCycles()-adsrBugTriggerTime) > delay ) {
-					// force ARSR-bug by setting counter higher than the threshold
-					osc[voice].currentLFSR= clocksToSamples(delay);	
-				}
-				adsrBugTriggerTime= 0;			
-			}
+        case 5: {
+			handleAdsrBug(voice, reg, val);
+			sid.v[voice].ad = val;			
 			break;
 		}
-        case 6: { sid.v[voice].sr = val; break;	}
+        case 6: { 
+			handleAdsrBug(voice, reg, val);			
+			sid.v[voice].sr = val; 
+			break;	
+		}
         case 21: { sid.ffreqlo = val; break; }
         case 22: { sid.ffreqhi = val; break; }
         case 23: { sid.resFtv = val; break; }
@@ -752,10 +912,6 @@ void sidPoke(uint8_t reg, uint8_t val)
     }
     return;
 }
-
-
-
-
 
 static void resetEngine(uint32_t mixfrq) 
 {
@@ -769,6 +925,7 @@ static void resetEngine(uint32_t mixfrq)
 	fillMem((uint8_t*)&sid,0,sizeof(sid));
 	fillMem((uint8_t*)&osc,0,sizeof(osc));
 	fillMem((uint8_t*)&filter,0,sizeof(filter));
+	fillMem((uint8_t*)&samplefilter,0,sizeof(samplefilter));
 	
 	for (uint8_t i=0;i<3;i++) {
 		// note: by default the rest of sid, osc & filter 
@@ -785,9 +942,8 @@ static void resetEngine(uint32_t mixfrq)
 	
 	// hack
 	fillMem((uint8_t*)&osc3,0,sizeof(osc3));
-
-		
 }
+
 static void resetEnvelopeGenerator(uint32_t mixfrq) {
 	// envelope-generator stuff
 	uint32_t cyclesPerSec= envCyclesPerSec();
@@ -807,19 +963,19 @@ static void resetEnvelopeGenerator(uint32_t mixfrq) {
 	limitLFSR= round(((float)0x8000)/cyclesPerSample);	// original counter was 15-bit
 	for (i=0; i<16; i++) {
 		// counter must reach respective threshold before envelope value is incremented/decremented
-		envelopeCounterPeriod[i]= (int32_t)round((float)(
-									attackTimes[i]*cyclesPerSec)/1000/256/cyclesPerSample)+1;	// in samples
-		envelopeCounterPeriodClck[i]= (int32_t)round((float)(
-									attackTimes[i]*cyclesPerSec)/1000/256)+1;				// in clocks
+								
+		envelopeCounterPeriod[i]= (int32_t)floor(((double)cyclesPerSec)/(255*1000) * attackTimes[i] / cyclesPerSample)+1;	// in samples	
+		envelopeCounterPeriodClck[i]= (int32_t)floor(((double)cyclesPerSec)/(255*1000) * attackTimes[i])+1;		// in clocks									
 	}
 #else
 	limitLFSR= 0x8000;	// counter 15-bit
 	for (i=0;i<16;i++) {
-		// counter must reach respective threshold before envelope value is incremented/decremented
-		envelopeCounterPeriod[i]= (int32_t)floor((float)(
-									attackTimes[i]*cyclesPerSec)/1000/256)+1;	// in samples
-		envelopeCounterPeriodClck[i]= (int32_t)floor((float)(
-										attackTimes[i]*cyclesPerSec)/1000/256)+1;	// in clocks
+		// LFSR-counter (which is incremented each cycle) must reach respective envelopeCounterPeriod before envelope
+		// value is incremented (it takes 255 increments of the env-value, i.e. envelopeCounterPeriod must be reached 
+		// 255 times to go from 0 to 255), i.e. a complete attack is divided into 255 steps..
+		
+		envelopeCounterPeriod[i]= (int32_t)floor(((double)cyclesPerSec)/(255*1000) * attackTimes[i])+1;		
+		envelopeCounterPeriodClck[i]= envelopeCounterPeriod[i];
 	}
 #endif	
 	// lookup table for decay rates
