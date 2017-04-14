@@ -2,8 +2,9 @@
 * WebSid (Web version of Tiny'R'Sid - see live demo: http://www.wothke.ch/websid/)
 * ======
 *
-* original TinySid PSID emulator code (fragments may still remain in cpu.cpp and sid.cpp)
-*	Copyright (C) 1999-2012 T. Hinrichs, R. Sinsch (original licensing applies)
+* original TinySid PSID emulator code (fragments may still remain in cpu.cpp and 
+* sid.cpp)
+*	Copyright (C) 1999-2012 T. Hinrichs, R. Sinsch
 *
 * Tiny'R'Sid PSID & RSID emulator extensions
 *   Copyright (C) 2017 Juergen Wothke 
