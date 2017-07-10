@@ -30,7 +30,7 @@
 <meta http-equiv="X-UA-Compatible" content="chrome=1" />
 <title>TinyJSid - the first HTML5/JavaScript C64 music player</title>
 
-<meta name="description" content="Latest JavaScript/WebAudio version of Tiny'R'Sid">
+<meta name="description" content="Experimental JavaScript version of Tiny'R'Sid">
 <meta name="author" content="Juergen Wothke">
 <meta name="keywords" content="Web Audio API, HTML5, JavaScript, C64, SID, music, Tiny'R'Sid, TinyJSid">
 
@@ -39,7 +39,7 @@
 <link href="add_on.css" rel="stylesheet" type="text/css">
 
 <link rel="image_src" href="screenshot.gif" />
-<meta property="og:image" content="http://www.wothke.ch/websid/screenshot_2.gif" />
+<meta property="og:image" content="http://www.wothke.ch/websid/screenshot.gif" />
 
 <link rel="icon" href="favicon.ico" type="image/x-icon">
 <link rel="shortcut icon" type="image/x-icon" href="favicon.ico" />
@@ -90,14 +90,9 @@ function init() {
 		
 	// --------------------------- UI - basic player controls --------------
 	var songs = [
-		'/MUSICIANS/M/Mahoney/Kapla_Caves.sid;0;153',
-		'/MUSICIANS/S/Swallow/Wonderland_XII-Digi_part_4.sid;0;54',
-		'/MUSICIANS/L/LMan/Vortex.sid;0;192',
-		'/MUSICIANS/G/Griff/Clique_Baby.sid;0;292',
 		'/MUSICIANS/G/Galway_Martin/Arkanoid.sid;0;142',
 		'/MUSICIANS/G/Galway_Martin/Neverending_Story.sid;0;227',
 		'/MUSICIANS/G/Galway_Martin/Street_Hawk.sid;0;355',
-		'/MUSICIANS/G/Galway_Martin/Yie_Ar_Kung_Fu.sid;18;540',		
 		'/MUSICIANS/0-9/20CC/Paul_Falco/Spijkerhoek_3.sid;0;126',
 		'/MUSICIANS/C/Crowther_Antony/R1D1.sid;0;141',
 		'/MUSICIANS/M/Mahoney/Monophono.sid;0;266',
@@ -118,6 +113,7 @@ function init() {
 		'/MUSICIANS/M/Mad_Donne_Marcel/Personal_Lady_intro.sid;0;79',
 		'/MUSICIANS/R/Red_Kimmel_Jeroen/Red_Hubbard.sid;0;35',
 		'/MUSICIANS/T/Tel_Jeroen/S-Express.sid;0;108',
+		'/MUSICIANS/T/Tel_Jeroen/Noisy_Pillars.sid;2;77',
 		'/MUSICIANS/T/THCM/Vicious_SID_part_2.sid;0;237',
 		'/MUSICIANS/T/THCM/Vicious_SID_2-Blood_Money.sid;0;253',
 		'/MUSICIANS/H/Hubbard_Rob/Delta.sid;11;77',
@@ -165,13 +161,13 @@ function init() {
 <details>
   <summary>What's this?</summary>
   <div>
-  <p>Latest JavaScript/HTML5 version of <a href="http://www.wothke.ch/tinyrsid/" target="_blank">Tiny'R'Sid</a>.</p>
+  <p>  Experimental JavaScript/HTML5 version of <a href="http://www.wothke.ch/tinyrsid/" target="_blank">Tiny'R'Sid</a>.</p>
  
-  <p>2015 by Juergen Wothke  (The source code can be found <a target="_blank" href="https://github.com/wothke/">here</a>.)</p>
+  <p>2013 by Juergen Wothke  (The source code can be found <a target="_blank" href="https://github.com/wothke/">here</a>.)</p>
  
-  <p>This page does not use any plugins but is based exclusively on the draft version WebAudio API. You'll need Chrome or Firefox to make it play the music.</p>
+  <p>This page does not use any plugins but is based exclusively on the draft version WebAudio API. You'll need Chrome or Firefox to make it play the music. The visual effects work best in Chrome. (If Firefox passes out - press 'reload'... it's experimental.)</p>
   
-  <p>Please note: The played music samples are completely calculated within JavaScript by running the Tiny'R'Sid C64 emulator logic (using original C64 program files from the <a href="http://www.hvsc.de/" target="_blank">HVSC</a>).</p>  
+  <p>Contrarry to most other HTML5 based pages out there, the music here is NOT based on OscillatorNode based waveforms or the playback of some sampledata file. Instead the samples here are completely calculated within JavaScript by running the Tiny'R'Sid emulator logic.</p>  
  
   <p>Please use the below controls to navigate between the songs that you have dropped on the player:
   <span id="controls"></span>
@@ -183,7 +179,7 @@ function init() {
 	<div id="moz-reflect-logo"><canvas  id="logoCanvas"  width="600" height="270"></canvas></div>
   </div>
   <div id="spectrum" class="spectrum">
-  	<div id="moz-reflect-spectrum"><canvas id="spectrumCanvas" width="800" height="200"></canvas></div>
+  	<div id="moz-reflect-spectrum"><canvas id="spectrumCanvas" width="512" height="200"></canvas></div>
   </div>
   <div id="drop" class="drop"><img src="floppy_blinking2.gif" /></div><!--see BasicPlayerControls-->
 </section>

@@ -14,11 +14,9 @@
 
    -webkit-box-reflect: below 10px -webkit-linear-gradient(top, transparent 10%, transparent 40%,  rgba(255,255,255,0.9));
 }
-/* unusable Chome shit: webkit-transform changes the visible area of the used context: unbelievable what kind of 
-  clueless idiots must be working on Chrome */
 #logo {
-  -webkit-transform: scale(0.7) translateX(-310px) translateY(0px) translateZ(0px) rotateX(-22deg) rotateY(-50deg) rotateZ(-6deg);
-  -moz-transform: translateX(-110px) translateY(-70px) translateZ(-440px) rotateX(-28deg) rotateY(-50deg) rotateZ(-6deg);
+  -webkit-transform: translateX(-310px) translateY(-10px) translateZ(-440px) rotateX(-10deg) rotateY(-60deg) rotateZ(1deg);
+  -moz-transform: translateX(-310px) translateY(-70px) translateZ(-440px) rotateX(-28deg) rotateY(-60deg) rotateZ(-6deg);
 }
 #moz-reflect-logo:after {
     content: "";
@@ -38,15 +36,15 @@
 }
 .spectrum {
 	position: relative;
-	top: -180px;
-	left: 165px;
+	top: -20px;
+	left: 265px;
 	z-index:1;
-
+ 
 	-webkit-box-reflect: below 5px -webkit-linear-gradient(top, transparent, transparent 50%, rgba(255,255,255,0.4));
 }
 #spectrum {
-  -webkit-transform: rotateX(-40deg)  translateY(150px) rotateY(35deg) rotateZ(0deg) translateZ(-220px);
-  -moz-transform: translateX(-150px) translateY(-250px) translateZ(-440px) rotateX(-40deg) rotateY(45deg);  
+  -webkit-transform: translateX(-150px) translateY(-250px) translateZ(-500px) rotateX(-30deg) rotateY(45deg);
+  -moz-transform: translateX(-150px) translateY(-510px) translateZ(-440px) rotateX(-40deg) rotateY(45deg);  
 }
 
 #moz-reflect-spectrum:after {
