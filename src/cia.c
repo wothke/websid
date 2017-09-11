@@ -394,6 +394,9 @@ static uint32_t intForwardToNextCiaInterrupt(struct timer *t, uint32_t timeLimit
 }
 
 uint32_t ciaForwardToNextInterrupt(uint8_t ciaIdx, uint32_t timeLimit) {
+	// XXX needs to be tested
+	if (cpuIrqFlag() && (ciaIdx == 0)) return failMarker; // no IRQ while I-flag is set (NMI cannot be masked)
+	
 	struct timer *t= &(cia[ciaIdx]);
 	return  intForwardToNextCiaInterrupt(t, timeLimit);
 }
@@ -553,6 +556,10 @@ uint8_t useCiaPollingHack() {
 	return cpuGetProgramMode() == MAIN_OFFSET_MASK;
 }
 
+uint8_t isInNMI() {
+	return cpuGetProgramMode() == NMI_OFFSET_MASK;
+}
+
 uint8_t ciaReadMem(uint16_t addr) {
 	switch (addr) {
 		// CIA	
@@ -579,7 +586,18 @@ uint8_t ciaReadMem(uint16_t addr) {
 			// songs like LMan - Vortex.sid actually place a JMP at this location.. so
 			// the above hack MUST NOT be always enabled
 			 return memReadIO(addr);
+		case 0xdc05:
+			if (isInNMI() && (memReadIO(addr) == 0x2)) {
+				// hack: THMC's player in "File deleted" expects dc05/dc06 to point to 0002, 0102, etc
+				return 0x2;
+			}
+			break;
 		case 0xdc06:
+			if (isInNMI() && (memReadIO(0xdc05) == 0x2)) {
+				// hack: THMC's player in "File deleted" expects dc05/dc06 to point to 0002, 0102, etc
+				return 0x0;	// always use the ZP version
+			}		
+		
 			/*
 			hack originally used for Storebror.sid.. but apparently other songs also 
 			"benefit" from it (e.g. Uwe Anfang's stuff)...  always use 0x08xx NMI vector 

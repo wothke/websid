@@ -828,7 +828,7 @@ void cpuParse(void)
 			// acknowledging the interrupt without having to explicitly read the register.
 			switch(pc) {
 				case 0xdc0d:
-				case 0xdd0d:		
+				case 0xdd0d:
 					memGet(pc);
 					break;
 			}

@@ -125,7 +125,8 @@ static uint16_t getCycleTime(uint16_t rasterTime) {
 }
 
 uint8_t vicIsIrqActive() {
-	return ((memReadIO(0xd01a)&0x1) == 1);
+//	return ((memReadIO(0xd01a)&0x1) == 1);  // old imp
+	return !cpuIrqFlag() && ((memReadIO(0xd01a)&0x1) == 1);	// XXX needs to be tested
 }
 
 /*

@@ -53,7 +53,7 @@ enum timertype { RASTER_TIMER = 0, CIA1_TIMER = 1, NO_IRQ = 2};
 const uint32_t NO_INT=0x1ffffff;		
 
 // if 'init' takes longer than 2 secs then something is wrong (mb in endless loop)
-#define CYCLELIMIT 2000000		
+#define CYCLELIMIT 2000000
 
 static uint8_t mainLoopOnlyMode= 0;
 static uint8_t mainProgStatus= 0; 		// 0: completed 1: interrupted by cycleLimit
@@ -272,7 +272,7 @@ static void processMain(uint32_t cyclesPerScreen, uint32_t startTime, int32_t ti
 
 	if ((mainProgStatus >0) && (timeout >0)) {		// might be the rest of some "init" logic... or some loop playing samples		
 		uint32_t originalDigiCount= digiGetCount();
-		mainProgStatus= callMain(0, 0, startTime, timeout);	// continue where interrupted	
+		mainProgStatus= callMain(0, 0, startTime, timeout);	// continue where interrupted
 		digiTagOrigin(MAIN_OFFSET_MASK, startTime, originalDigiCount);
 	}
 }
@@ -328,7 +328,7 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 					processMain(cyclesPerScreen, mainProgStart, availableMainCycles);
 					mainProgCycles+= availableMainCycles;				
 				}			
-				mainProgStart= tDone + mainProgStep;	
+				mainProgStart= tDone + mainProgStep;
 			}
 			
 			// FIXME: we should better allow NMI to interrupt IRQ, i.e. set respectice cycle-limit
