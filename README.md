@@ -6,6 +6,9 @@
 * sid.cpp)
 *	Copyright (C) 1999-2012 T. Hinrichs, R. Sinsch
 *
+* "combined waveform" generation, waveform "anti aliasing" and filter implementation 
+*   by Hermit (see http://hermit.sidrip.com)
+*
 * Tiny'R'Sid PSID & RSID emulator extensions
 *   Copyright (C) 2017 Juergen Wothke 
 *
@@ -38,6 +41,7 @@ Study the example in "htdocs" for how the player is used.
 /*
  * Change log (earlier versions were designed for use of Alchemy/Flash - with the rise of HTML5 I switched to WebAudio):
  *
+ * version 0.82    merged some of Hermit's work into the sid emulation
  * version 0.81    refactored building blocks / various cleanups (dependencies, visibility, naming conventions)
  * version 0.8     replaced original envelope generator with new impl that also handles ADSR-bug, fixed bugs in 
  *                 6502 emu (additional ILLIGAL ops, wrong V-flag calculation), refactored digi-sample handling, 
