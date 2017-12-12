@@ -15,7 +15,7 @@
 #include "base.h"
 
 // setup/restart
-void rsidReset(uint32_t mixfrq, uint8_t compatibility);
+void rsidReset(uint32_t sampleRate, uint8_t compatibility);
 
 // extracts the SYSxxxx address from trivial BASIC program amd patches (*initAddr) accordingly
 void rsidStartFromBasic(uint16_t *initAddr);

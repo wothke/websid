@@ -38,6 +38,8 @@ static uint8_t cyclesPerRaster;
 static uint16_t linesPerScreen;
 
 static uint8_t sidVersion;
+static uint8_t sidModel6581;	// default
+
 static uint8_t ntscMode= 0;
 static uint8_t compatibility;
 static uint8_t basicProg;
@@ -67,12 +69,15 @@ static uint16_t numberOfSamplesPerCall;
 
 static uint8_t isPSID;
 
-
 static uint32_t numberOfSamplesRendered = 0;
 static uint32_t numberOfSamplesToRender = 0;
 
 uint8_t envIsRSID() {
 	return (isPSID == 0);
+}
+
+uint8_t envIsSidModel6581() {
+	return sidModel6581;
 }
 
 void envSetPsidMode(uint8_t m) {
@@ -338,8 +343,10 @@ static uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(void * inBuffer, uint32_t inBuf
 	// note: emu is not differenciating between SID chip versions (respective flags
 	// are therefore ignored - see bits 4/5)
 	
-	uint8_t flags= inputFileBuffer[0x77];
+	uint8_t flags= (sidVersion > 1) ? inputFileBuffer[0x77] : 0x0;
 	
+	sidModel6581= !((flags>>5) & 0x1); // only use 8580 when bit is explicitly set
+
 	basicProg= (envIsRSID() && (flags & 0x2));	// C64 BASIC program need to be started..
 	
 	compatibility= ( (sidVersion & 0x2) &&  ((flags & 0x2) == 0));	
@@ -390,4 +397,5 @@ static uint32_t getSampleRate() __attribute__((noinline));
 static uint32_t EMSCRIPTEN_KEEPALIVE getSampleRate() {
 	return sampleRate;
 }
+
 

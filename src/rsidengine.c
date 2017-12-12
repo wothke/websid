@@ -436,13 +436,13 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 	}
 }
 
-void rsidReset(uint32_t mixfrq, uint8_t compatibility)
+void rsidReset(uint32_t sampleRate, uint8_t compatibility)
 {	
 	frameCount= 0;
 	
 	cpuInit();
 
-	sidReset(mixfrq);
+	sidReset(sampleRate, envIsSidModel6581());
 	digiReset(compatibility);
 	
 	cpuSetProgramMode(MAIN_OFFSET_MASK);
