@@ -46,6 +46,7 @@
 #include "rsidengine.h" // rsidGetFrameCount() 
 
 #define USE_FILTER
+#define ANTIALIAS_WAVE
 
 // integer based filter implementation originally used in the old "tinysid": supposedly this
 // was a performance optimization meant to avoid "expensive" floating point calculations.
@@ -428,10 +429,11 @@ inline uint8_t createTriangleOutput(uint8_t voice, uint32_t ringMSB) {
 	return triout;
 }			
 inline uint8_t createSawOutput(uint8_t voice) {	// test with Alien or Kawasaki_Synthesizer_Demo
-	/* old impl
+#ifndef ANTIALIAS_WAVE
+	// old impl
 	uint8_t sawout = (uint8_t) (osc[voice].counter >> 20);	// just use top 8-bits of our 28bit counter 
 	return sawout;
-	*/
+#else
 	// Hermit's "anti-aliasing" (note: this impl is based on 28-bit counter where Hermit uses 24-bit)
 	uint32_t wfout = osc[voice].counter >> 12;	// top 16-bits
 	double step = ((double)(osc[voice].freq>>4)) / 0x1200000;
@@ -439,12 +441,14 @@ inline uint8_t createSawOutput(uint8_t voice) {	// test with Alien or Kawasaki_S
 	if (wfout > 0xFFFF) wfout = 0xFFFF - round (((double)(wfout - 0x10000)) / step);
 
 	return (wfout >> 8) & 0xff;
+#endif
 }	
 inline uint8_t createPulseOutput(uint8_t voice) {
-	/* old impl
+#ifndef ANTIALIAS_WAVE
+	// old impl
 	uint8_t plsout = isTestBit(voice) ? sid.level_DC : (uint8_t) ((osc[voice].counter > osc[voice].pulse)-1) ^ 0xff;
 	return plsout;
-	*/
+#else
 	// Hermit's "anti-aliasing" (note: this impl is based on 28-bit counter where Hermit uses 24-bit)
 	if (isTestBit(voice)) return 0xFF;	// pulse start position
 	
@@ -471,6 +475,7 @@ inline uint8_t createPulseOutput(uint8_t voice) {
 		wfout &= 0xFFFF;
 	} //falling edge	
 	return (wfout >> 8) & 0xff;		// todo: might optimize Hermit's above impl to directly produce 8-bit
+#endif
 }	
 inline uint8_t createNoiseOutput(uint8_t voice) {
 	// generate noise waveform exactly as the SID does. 			
@@ -493,6 +498,14 @@ inline uint8_t createNoiseOutput(uint8_t voice) {
 	}
 	return osc[voice].noiseout;
 }
+
+#ifdef OLD_TINYSID_FILTER	
+/* Routines for quick & dirty float calculation */
+static inline int32_t pfloatConvertFromInt(int32_t i) 		{ return (i<<16); }
+static inline int32_t pfloatConvertFromFloat(float f) 		{ return (int32_t)(f*(1<<16)); }
+static inline int32_t pfloatMultiply(int32_t a, int32_t b)	{ return (a>>8)*(b>>8); }
+static inline int32_t pfloatConvertToInt(int32_t i) 		{ return (i>>16); }
+#endif
 
 /*
 * While "sid" data structure is automatically kept in sync by the emulator's memory access 
@@ -566,14 +579,6 @@ inline void updateOscillator(uint8_t refosc, uint8_t voice) {
 	}	
 }
 
-#ifdef OLD_TINYSID_FILTER	
-/* Routines for quick & dirty float calculation */
-static inline int32_t pfloatConvertFromInt(int32_t i) 		{ return (i<<16); }
-static inline int32_t pfloatConvertFromFloat(float f) 		{ return (int32_t)(f*(1<<16)); }
-static inline int32_t pfloatMultiply(int32_t a, int32_t b)	{ return (a>>8)*(b>>8); }
-static inline int32_t pfloatConvertToInt(int32_t i) 		{ return (i>>16); }
-#endif
-
 /* 
 * Render a buffer of n samples using the current SID register contents.
 *
@@ -641,7 +646,7 @@ void sidSynthRender (int16_t *buffer, uint32_t len) {
 					} else if ((ctrl & SAW_BITMASK) && ++combined)  {	// PULSE & SAW - XXX test case?
 						uint32_t tmp = osc[voice].counter >> 16;	// top 12-bits
 						outv &= plsout ? combinedWF(voice, sid.PulseSaw_8580, tmp, 1) : 0;
-					}					
+					}
 				} else if ((ctrl & TRI_BITMASK) && (ctrl & SAW_BITMASK) && ++combined) {		// TRIANGLE & SAW - XXX test case?
 					uint32_t tmp = osc[voice].counter >> 16;	// top 12-bits
 					outv &= combinedWF(voice, sid.TriSaw_8580, tmp, 1);
