@@ -7,7 +7,7 @@ It allows to play RSID and PSID format *.sid music files. (Respective music file
 
 There also is a WordPress plugin that allows to easily integrate the player: https://wordpress.org/plugins/tinyrsid-adapter/
 
-![alt text](https://github.com/wothke/websid/raw/master/tinyrid.jpg "Tiny'R'Sid HVSC Explorer")
+![alt text](https://github.com/wothke/websid/raw/master/tinyrsid.jpg "Tiny'R'Sid HVSC Explorer")
 
 An online demo of the emulator can be accessed using: http://www.wothke.ch/tinyrsid/index.php/explorer?playlistId=103 or http://www.wothke.ch/websid/
 
