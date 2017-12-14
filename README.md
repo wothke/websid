@@ -42,7 +42,7 @@ version 0.82  - merged some of Hermit's work into the sid emulation
 version 0.81  - refactored building blocks / various cleanups (dependencies, visibility, naming conventions)
 
 version 0.8   - replaced original envelope generator with new impl that also handles ADSR-bug, fixed bugs in 
-                6502 emu (additional ILLIGAL ops, wrong V-flag calculation), refactored digi-sample handling, 
+                6502 emu (additional ILLEGAL ops, wrong V-flag calculation), refactored digi-sample handling, 
                 various cleanups, removed Storebror.sid hack (no longer needed)
 
 version 0.77: - refactored & improved nanocia.c to fix issues with some of the songs of Kris Hatlelid; added hack  
