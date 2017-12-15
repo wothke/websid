@@ -57,16 +57,15 @@ static void patchStorebrorIfNeeded(uint16_t *initAddr) {
 * Knatter's song: Microsleep_tune_10.sid is based on an IRQ which should be interrupted by the next IRQ...
 * Because the current emu impl does not allow for interrupts to be interrupted, the below cheat patches the 
 * song to directly invoke the code of the 2nd IRQ  as a subroutine from the 1st IRQ.. 
-* This makes the song play - eventhough somewhat distorted.
+* This makes the song play - eventhough somewhat distorted - but IRQ digi quality is shitty in any case - so what..
 */
 static void patchKnatterIfNeeded(uint16_t *initAddr) {
 	if (((*initAddr) == 0xc000) && (memReadRAM(0xC056)==0x71)) {
-		memWriteRAM(0xa7c4, 0x60);	// replace IRQ2 RTI with RTS	
-		memWriteRAM(0xa7ce, 0x60);		
-		memWriteRAM(0xa7d6, 0x60);		
-		memWriteRAM(0xa547, 0x20);	// use JSR into IRQ2 from IRQ1
-		memWriteRAM(0xa548, 0x89);	// IRQ2 entry with skipped register saving
-		memWriteRAM(0xa549, 0xe1);	
+		memWriteRAM(0xa7b4, 0x60);	// end "IRQ2" with RTS (instead of RTI)
+
+		memWriteRAM(0xa548, 0x20);	// directly use JSR into IRQ2 from IRQ1
+		memWriteRAM(0xa549, 0x89);	// IRQ2 entry with skipped register saving
+		memWriteRAM(0xa54a, 0xe1);	
 	}
 }
 

@@ -26,11 +26,13 @@
  * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
  */
 
+ // FIXME: might be a good idea to migrate everything to C++ so further cleanup the original C code mess..
+ 
 // useful links:
 // http://www.waitingforfriday.com/index.php/Commodore_SID_6581_Datasheet
 // http://www.sidmusic.org/sid/sidtech2.html
  
- // note: only the "sid" prefixed functions are exported outside of this file..
+// note: only the "sid" prefixed functions are exported outside of this file..
  
 #include <string.h>
 #include <stdio.h>
@@ -45,14 +47,20 @@
 #include "env.h"		// envNumberOfSamplesPerCall(), etc
 #include "rsidengine.h" // rsidGetFrameCount() 
 
-#define USE_FILTER
-#define ANTIALIAS_WAVE
 
-// integer based filter implementation originally used in the old "tinysid": supposedly this
+// switch to completely disable use of the filter
+#define USE_FILTER
+
+// switch to use integer based 8-bit waveform / filter implementation originally used in the old "tinysid": supposedly this
 // was a performance optimization meant to avoid "expensive" floating point calculations.
-// It seems there is no point in using this optimization for the JavaScript version and as compared to 
-// the non-optimized version it actually seems to be flawed as well:
-//#define OLD_TINYSID_FILTER				
+// It seems there is no point in using this optimization for the JavaScript version:
+//#define OLD_TINYSID_IMPL				
+
+#ifdef OLD_TINYSID_IMPL
+	#define WAVE_DATA_TYPE uint8_t
+#else
+	#define WAVE_DATA_TYPE uint16_t
+#endif
 
 // FIXME: broken.. Clique_Baby.sid does not work in "cycle mode" .. why?
 // switch between 'cycle' or 'sample' based envelope-generator counter 
@@ -78,7 +86,7 @@ struct mosSid {
 		
 		// add-ons snatched from Hermit's implementation
 		double prevwavdata;
-		uint8_t prevwfout;
+		WAVE_DATA_TYPE prevwfout;
     } voices[3];
     uint8_t ffreqlo;
     uint8_t ffreqhi;
@@ -167,7 +175,6 @@ static uint8_t simReadD41B() {
 	return simReadSawtoothD41B();
 }
 
-
 /**************************************************************************************************/
 
 typedef enum {
@@ -213,7 +220,7 @@ struct sidFilter {
     uint8_t  v3ena;
     int32_t vol;
 		
-#ifdef OLD_TINYSID_FILTER
+#ifdef OLD_TINYSID_IMPL
 	// old tinysid filter implementation based on integer arithmetic
 	int32_t  multiplicator;	// since multi-cycle steps are simulated
 
@@ -387,18 +394,22 @@ static void simOneEnvelopeCycle(uint8_t voice) {
 
 // Hermit's impl to calculate combined waveforms (check his jsSID-0.9.1-tech_comments in commented jsSID.js for background info): 
 // I did not thoroughly check how well this really works (it works well enough for Kentilla and Clique_Baby apparently has to sound as shitty as it does)
-static uint8_t combinedWF(uint8_t channel, double *wfarray, uint16_t index, uint8_t differ6581) { //on 6581 most combined waveforms are essentially halved 8580-like waves
+
+static WAVE_DATA_TYPE combinedWF(uint8_t channel, double *wfarray, uint16_t index, uint8_t differ6581) { //on 6581 most combined waveforms are essentially halved 8580-like waves
 	if (differ6581 && sid.isModel6581) index &= 0x7FF;
 	double combiwf = (wfarray[index] + sid.voices[channel].prevwavdata) / 2;
 	sid.voices[channel].prevwavdata = wfarray[index];
 	
-//	return combiwf; // original impl uses 16-bit 
+#ifndef OLD_TINYSID_IMPL
+	return (uint16_t)round(combiwf);
+#else
 	return ((uint32_t)round(combiwf)) >> 8;
+#endif
 }
 
 static void createCombinedWF(double *wfarray, double bitmul, double bitstrength, double treshold) { //I found out how the combined waveform works (neighboring bits affect each other recursively)
 	for (uint16_t i = 0; i < 4096; i++) {
-		wfarray[i] = 0; //neighbour-bit strength and DAC MOSFET treshold is approximately set by ears'n'trials
+		wfarray[i] = 0; //neighbour-bit strength and DAC MOSFET threshold is approximately set by ears'n'trials
 		for (uint8_t j = 0; j < 12; j++) {
 			double bitlevel = 0;
 			for (uint8_t k = 0; k < 12; k++) {
@@ -410,8 +421,7 @@ static void createCombinedWF(double *wfarray, double bitmul, double bitstrength,
 	}
 }
 
-inline void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t voice)
-{
+inline void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 	// notice: depending on the used sample playback implementation, respectieve digi samples 
 	// might normally be processed by the filter (e.g. for PWM - but not for D418).. to deal 
 	// with this correctly the emulation would need to track how a sample was created (and by which 
@@ -422,14 +432,21 @@ inline void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t voice)
 
 #define isTestBit(voice) osc[voice].wave&TEST_BITMASK
 
-inline uint8_t createTriangleOutput(uint8_t voice, uint32_t ringMSB) {
-	uint8_t tripos = (uint8_t) (osc[voice].counter>>19);		// use top 9 bits of oscillator
+inline WAVE_DATA_TYPE createTriangleOutput(uint8_t voice, uint32_t ringMSB) {
+	// ringMSB is for 28-bit!
+#ifdef OLD_TINYSID_IMPL
+	uint8_t tripos = (uint8_t) (osc[voice].counter>>19);		// use top 9 bits of oscillator (drop top bit)
 	uint8_t triout= (osc[voice].counter>>27) ? tripos^0xff : tripos;
-	if (ringMSB) { triout^= 0xff; }	// modulate triangle wave if ringmod bit set 
+	if (ringMSB) { triout^= 0xff; }	// modulate triangle wave if ringmod bit set
 	return triout;
+#else
+	uint32_t tmp = osc[voice].counter ^ ringMSB;	// 28-bit
+    uint32_t wfout = (tmp ^ (tmp & 0x8000000 ? 0xFFFFFFF : 0)) >> 11;
+	return wfout;
+#endif
 }			
-inline uint8_t createSawOutput(uint8_t voice) {	// test with Alien or Kawasaki_Synthesizer_Demo
-#ifndef ANTIALIAS_WAVE
+inline WAVE_DATA_TYPE createSawOutput(uint8_t voice) {	// test with Alien or Kawasaki_Synthesizer_Demo
+#ifdef OLD_TINYSID_IMPL
 	// old impl
 	uint8_t sawout = (uint8_t) (osc[voice].counter >> 20);	// just use top 8-bits of our 28bit counter 
 	return sawout;
@@ -439,12 +456,11 @@ inline uint8_t createSawOutput(uint8_t voice) {	// test with Alien or Kawasaki_S
 	double step = ((double)(osc[voice].freq>>4)) / 0x1200000;
 	wfout += round(wfout * step);
 	if (wfout > 0xFFFF) wfout = 0xFFFF - round (((double)(wfout - 0x10000)) / step);
-
-	return (wfout >> 8) & 0xff;
+	return wfout;
 #endif
 }	
-inline uint8_t createPulseOutput(uint8_t voice) {
-#ifndef ANTIALIAS_WAVE
+inline WAVE_DATA_TYPE createPulseOutput(uint8_t voice) {
+#ifdef OLD_TINYSID_IMPL
 	// old impl
 	uint8_t plsout = isTestBit(voice) ? sid.level_DC : (uint8_t) ((osc[voice].counter > osc[voice].pulse)-1) ^ 0xff;
 	return plsout;
@@ -473,21 +489,25 @@ inline uint8_t createPulseOutput(uint8_t voice) {
 		wfout = round((0xFFFF - tmp) * step) - wfout;
 		if (wfout >= 0) wfout = 0xFFFF;
 		wfout &= 0xFFFF;
-	} //falling edge	
-	return (wfout >> 8) & 0xff;		// todo: might optimize Hermit's above impl to directly produce 8-bit
+	} //falling edge
+	return wfout;
 #endif
 }	
-inline uint8_t createNoiseOutput(uint8_t voice) {
-	// generate noise waveform exactly as the SID does. 			
-	if (osc[voice].noisepos!=(osc[voice].counter>>23))	
-	{
-		osc[voice].noisepos = osc[voice].counter >> 23;	
-		osc[voice].noiseval = (osc[voice].noiseval << 1) |
-				(getBit(osc[voice].noiseval,22) ^ getBit(osc[voice].noiseval,17));
-				
+inline WAVE_DATA_TYPE createNoiseOutput(uint8_t voice) {
+	// generate noise waveform exactly as the SID does.
+	
+	// "random values are output through the waveform generator according to the 
+	// frequency setting" (http://www.ffd2.com/fridge/blahtune/SID.primer)
+	
+	// testcase for calibration: see Hermit's noisewfsweep.sid
+	uint32_t p= osc[voice].counter>>24;		//  top 4-bit seem to be about right.. (didn't find specific specs unfortunately..)
+	if (osc[voice].noisepos != p) {
+		osc[voice].noisepos = p;
+		
 		// impl consistent with: http://www.sidmusic.org/sid/sidtech5.html
 		// doc here is probably wrong: http://www.oxyron.de/html/registers_sid.html
-		osc[voice].noiseout = (getBit(osc[voice].noiseval,22) << 7) |
+		osc[voice].noiseout = 
+				(getBit(osc[voice].noiseval,22) << 7) |
 				(getBit(osc[voice].noiseval,20) << 6) |
 				(getBit(osc[voice].noiseval,16) << 5) |
 				(getBit(osc[voice].noiseval,13) << 4) |
@@ -495,11 +515,19 @@ inline uint8_t createNoiseOutput(uint8_t voice) {
 				(getBit(osc[voice].noiseval, 7) << 2) |
 				(getBit(osc[voice].noiseval, 4) << 1) |
 				(getBit(osc[voice].noiseval, 2) << 0);
+				
+		osc[voice].noiseval = (osc[voice].noiseval << 1) |
+				(getBit(osc[voice].noiseval,22) ^ getBit(osc[voice].noiseval,17));
+				
 	}
+#ifdef OLD_TINYSID_IMPL	
 	return osc[voice].noiseout;
+#else
+	return ((uint16_t)osc[voice].noiseout) << 8;
+#endif	
 }
 
-#ifdef OLD_TINYSID_FILTER	
+#ifdef OLD_TINYSID_IMPL	
 /* Routines for quick & dirty float calculation */
 static inline int32_t pfloatConvertFromInt(int32_t i) 		{ return (i<<16); }
 static inline int32_t pfloatConvertFromFloat(float f) 		{ return (int32_t)(f*(1<<16)); }
@@ -540,7 +568,7 @@ inline void syncRegisterCache() {
 	filter.v3ena = !getBit(sid.ftpVol,7);	// chan3 off
 	filter.vol   = (sid.ftpVol & 0xf);
 
-	#ifdef OLD_TINYSID_FILTER			
+	#ifdef OLD_TINYSID_IMPL			
 		/* 
 		"[this implementation] isnt correct at all - the problem is that the filter
 		works only up to rmxfreq/4 - this is sufficient for 44KHz but isnt
@@ -568,7 +596,7 @@ inline void updateOscillator(uint8_t refosc, uint8_t voice) {
 		// note: test bit has no influence on the envelope generator whatsoever
 		osc[voice].counter  = 0;
 		osc[voice].noisepos = 0;
-		osc[voice].noiseval = 0xffffff;
+		osc[voice].noiseval = 0x7ffff8;
 	} else {
 		// update wave counter
 		osc[voice].counter = (osc[voice].counter + osc[voice].freq) & 0xFFFFFFF;				
@@ -624,30 +652,34 @@ void sidSynthRender (int16_t *buffer, uint32_t len) {
 			// generate waveforms with really simple algorithms (note: correctly "Saw/Triangle should start from 0, 
 			// Pulse should start from FF" )
 
+	#ifdef OLD_TINYSID_IMPL			
 			uint8_t outv=0xFF;
+	#else
+			uint16_t outv=0xFFFF;
+	#endif
 			uint8_t voiceMute= !((0x1 << voice) & sid.voiceEnableMask);
 			
 			if (!voiceMute) {
 				int8_t combined= 0;
 
 				// use special handling for certain combined waveforms
-				uint8_t plsout;
+				WAVE_DATA_TYPE plsout;
 				if ((ctrl & PULSE_BITMASK)) {
 					plsout= createPulseOutput(voice);
 
 					if ((ctrl & TRI_BITMASK) && ++combined)  {
-						if (ctrl & SAW_BITMASK) {	// PULSE & TRIANGLE & SAW - XXX test case?
+						if (ctrl & SAW_BITMASK) {	// PULSE & TRIANGLE & SAW	- like in Lenore.sid
 							uint32_t tmp = osc[voice].counter >> 16;	// top 12-bits
 							outv &= plsout ? combinedWF(voice, sid.PulseTriSaw_8580, tmp, 1) : 0;
-						} else { // PULSE & TRIANGLE - songs like Kentilla, Convincing, Clique_Baby, etc
+						} else { // PULSE & TRIANGLE - like in Kentilla, Convincing, Clique_Baby, etc
 							uint32_t tmp = osc[voice].counter ^ (ctrl & RING_BITMASK ? ringMSB : 0);
 							outv &= plsout ? combinedWF(voice, sid.PulseSaw_8580, (tmp ^ (tmp & 0x8000000 ? 0xFFFFFFF : 0)) >> 15, 0) : 0;	// either on or off						
 						}				
-					} else if ((ctrl & SAW_BITMASK) && ++combined)  {	// PULSE & SAW - XXX test case?
+					} else if ((ctrl & SAW_BITMASK) && ++combined)  {	// PULSE & SAW - like in Defiler.sid
 						uint32_t tmp = osc[voice].counter >> 16;	// top 12-bits
 						outv &= plsout ? combinedWF(voice, sid.PulseSaw_8580, tmp, 1) : 0;
 					}
-				} else if ((ctrl & TRI_BITMASK) && (ctrl & SAW_BITMASK) && ++combined) {		// TRIANGLE & SAW - XXX test case?
+				} else if ((ctrl & TRI_BITMASK) && (ctrl & SAW_BITMASK) && ++combined) {		// TRIANGLE & SAW - like in Garden_Party.sid
 					uint32_t tmp = osc[voice].counter >> 16;	// top 12-bits
 					outv &= combinedWF(voice, sid.TriSaw_8580, tmp, 1);
 				} 
@@ -668,7 +700,11 @@ void sidSynthRender (int16_t *buffer, uint32_t len) {
 					}	
 				}
 			} else {
+	#ifdef OLD_TINYSID_IMPL			
 				outv= sid.level_DC;
+	#else
+				outv= ((uint16_t)sid.level_DC) << 8;
+	#endif
 			}
 			
 #ifdef USE_SAMPLE_ENV_COUNTER
@@ -686,33 +722,39 @@ void sidSynthRender (int16_t *buffer, uint32_t len) {
 			// now route the voice output to either the non-filtered or the
 			// filtered channel and dont forget to blank out osc3 if desired	
 
-
-// envelopeOutput and outv have 8-bit.. but after >>6 the result here is 10-bit.. WHY?
-// finally outf and outo here end of with the sum of 3 voices..
-#ifdef OLD_TINYSID_FILTER
-	// old impl based on 8-bit wave output
+			// outf and outo here end up with the sum of 3 voices..
+			// envelopeOutput has 8-bit and and outv (8 or 16 depending on the used impl)
+#ifdef OLD_TINYSID_IMPL
+	// old impl based on 8-bit wave output (after >>6 the result here is 10-bit.. WHY?)
 	#define RESCALE >>6
+	#define RESCALE_NO_FILTER >>2
+	#define BASELINE 0x80
 #else
 	// Hermit's impl based on 16-bit wave output
-	#define RESCALE
+	#define RESCALE	>>8				// rescale by envelopeOutput to get 16-bit output
+	#define RESCALE_NO_FILTER >>8		
+	#define BASELINE 0x8000	
 #endif
 			
 #ifdef USE_FILTER
-			if (((voice<2) || filter.v3ena) && !voiceMute) {							
+			if (((voice<2) || filter.v3ena) && !voiceMute) {
+				// old 8-bit wave * 8 bit envelope	-> 16bit >>6 = 10bit
+				// new 16-bit wave * 8 bit envelope	-> 24bit >>8 = 16bit
 				if (osc[voice].filter) {
-					outf+=( ((int32_t)(outv-0x80)) * (int32_t)((osc[voice].envelopeOutput)) ) RESCALE;
+					outf+=( (((int32_t)outv)-BASELINE) * osc[voice].envelopeOutput ) RESCALE;
 				} else {
-					outo+=( ((int32_t)(outv-0x80)) * (int32_t)((osc[voice].envelopeOutput)) ) RESCALE;
+					outo+=( (((int32_t)outv)-BASELINE) * osc[voice].envelopeOutput ) RESCALE;
 				}
 			}
 #else
-			// Don't use filters, just mix all voices together
-			if (!voiceMute) outf+= (int32_t)(((int16_t)(outv-0x80)) * (osc[voice].envelopeOutput)); 
+			// Don't use filters, just mix all voices together (XXX FIXE.. needs fixing)
+			if (!voiceMute) outf+= ( (((int32_t)outv)-BASELINE) * osc[voice].envelopeOutput) RESCALE_NO_FILTER; 
 #endif
 		}
 
 #ifdef USE_FILTER
-	#ifndef OLD_TINYSID_FILTER	
+	#ifndef OLD_TINYSID_IMPL
+		double output= outo;
 	
 		// variant of "resid" implementation used by Hermit:
         //"FILTER: two integrator loop bi-quadratic filter, workings learned from resid code, but I kindof simplified the equations
@@ -729,21 +771,23 @@ void sidSynthRender (int16_t *buffer, uint32_t len) {
             else cutoff = (double)1 - 1.263 * exp(cutoff * filter.cutoff_ratio_6581);
             resonance = (sid.resFtv > 0x5F) ? (double)8 / (sid.resFtv >> 4) : 1.41;
         }
-        double tmp = (double)(outf<<8) + filter.prevbandpass * resonance + filter.prevlowpass;	// outf: use 16-bit as in Hermit's player
+        double tmp = (double)outf + filter.prevbandpass * resonance + filter.prevlowpass;
 				
         if (filter.hiEna) 
-			outo -= ((int32_t)round(tmp)) >>8;
+			output -= tmp;
         tmp = filter.prevbandpass - tmp * cutoff;
         filter.prevbandpass = tmp;
         if (filter.bandEna) 
-			outo -= ((int32_t)round(tmp)) >>8;
+			output -= tmp;
         tmp = filter.prevlowpass + tmp * cutoff;
         filter.prevlowpass = tmp;
         if (filter.lowEna) 
-			outo += ((int32_t)round(tmp)) >>8;
+			output += tmp;
 
         int32_t OUTPUT_SCALEDOWN = 3 * 16;	// need signed 16-bit here (unlike -1..1 range in resid)
-        int32_t finalSample= outo* filter.vol / OUTPUT_SCALEDOWN ; // SID output
+		
+		// filter volume is 4 bits/ outo is 16bits		
+        int32_t finalSample= round(output * filter.vol / OUTPUT_SCALEDOWN); // SID output
 	#else
 		// old tinysid implementation:
 		/*
@@ -776,7 +820,7 @@ void sidSynthRender (int16_t *buffer, uint32_t len) {
 		int32_t finalSample = (filter.vol*(outo+outf));
 	#endif
 #else
-		int32_t finalSample = outf>>2;
+		int32_t finalSample = outf;
 #endif
 
 		finalSample= digiGenPsidSample(finalSample);	// PSID stuff
@@ -793,7 +837,6 @@ void sidSynthRender (int16_t *buffer, uint32_t len) {
 		*(buffer+bp)= out;
     }
 }
-
 
 /*
 * Notes regarding ADSR-bug:
@@ -841,7 +884,6 @@ void sidSynthRender (int16_t *buffer, uint32_t len) {
 * The below add-on hack in handleAdsrBug() tries to mitigate that blind-spot - at least for some of the
 * most relevant scenarios.
 */
-
 uint16_t getCurrentThreshold(uint8_t voice) {
 	uint16_t threshold;
 	switch (osc[voice].envphase) {
@@ -982,8 +1024,7 @@ void sidPoke(uint8_t reg, uint8_t val)
     return;
 }
 
-static void resetEngine(uint32_t sampleRate, uint8_t isModel6581) 
-{
+static void resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 	// init "sid" structures
 	fillMem((uint8_t*)&sid,0,sizeof(sid));
 
@@ -1002,7 +1043,7 @@ static void resetEngine(uint32_t sampleRate, uint8_t isModel6581)
 	// init "filter" structures
 	fillMem((uint8_t*)&filter,0,sizeof(filter));
 
-#ifndef OLD_TINYSID_FILTER
+#ifndef OLD_TINYSID_IMPL
     filter.cutoff_ratio_8580 = ((double)-2) * 3.14 * (12500 / 256) / sid.sampleRate,
     filter.cutoff_ratio_6581 = ((double)-2) * 3.14 * (20000 / 256) / sid.sampleRate;
 //	filter.prevbandpass = 0;	// redundant
@@ -1010,7 +1051,6 @@ static void resetEngine(uint32_t sampleRate, uint8_t isModel6581)
 #else
 	filter.multiplicator = pfloatConvertFromFloat(21.5332031f)/sampleRate;
 #endif
-	
 	
 	// init "oscillator" structures
 	fillMem((uint8_t*)&osc,0,sizeof(osc));
@@ -1026,7 +1066,6 @@ static void resetEngine(uint32_t sampleRate, uint8_t isModel6581)
 //		osc[i].adsrBugFrameCount= 0;
 	}
 }
-
 
 static void resetEnvelopeGenerator(uint32_t sampleRate) {
 	struct envGenerator *env= &(sid.env);
@@ -1084,8 +1123,7 @@ static void resetEnvelopeGenerator(uint32_t sampleRate) {
 	}	
 }
 
-void sidReset(uint32_t sampleRate, uint8_t isModel6581)
-{
+void sidReset(uint32_t sampleRate, uint8_t isModel6581) {
 	resetEngine(sampleRate, isModel6581);
 	digiPsidSampleReset();	
 	resetEnvelopeGenerator(sampleRate);
