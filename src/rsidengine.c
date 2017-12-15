@@ -443,7 +443,7 @@ void rsidReset(uint32_t sampleRate, uint8_t compatibility)
 	cpuInit();
 
 	sidReset(sampleRate, envIsSidModel6581());
-	digiReset(compatibility);
+	digiReset(compatibility, envIsSidModel6581());
 	
 	cpuSetProgramMode(MAIN_OFFSET_MASK);
 	mainLoopOnlyMode= 0;

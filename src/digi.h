@@ -16,7 +16,7 @@
 #include "base.h"
 
 // setup
-void digiReset(uint8_t compatibility);
+void digiReset(uint8_t compatibility, uint8_t isModel6581);
 
 // handling of collected data
 void digiMoveBuffer2NextFrame();	// preserve  "overflow" samples
@@ -35,7 +35,4 @@ void digiMergeSampleData(int8_t hasDigi, int16_t *sound_buffer, uint8_t *digi_bu
 
 // utils for the handling of legacy PSID digis
 int32_t digiGenPsidSample(int32_t sIn);
-void digiPsidSampleReset();
-
-
 #endif

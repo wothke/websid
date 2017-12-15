@@ -233,6 +233,10 @@ struct sidFilter {
 	// "resid" based implementation derived from Hermit's version: see http://hermit.sidrip.com/jsSID.html
 	double prevlowpass;
     double prevbandpass;
+	
+	double prevlowpassDigi;
+    double prevbandpassDigi;
+	
 	double cutoff_ratio_8580;
     double cutoff_ratio_6581;
 #endif
@@ -421,13 +425,65 @@ static void createCombinedWF(double *wfarray, double bitmul, double bitstrength,
 	}
 }
 
+inline double runFilter(double in, double output, double *prevbandpass, double *prevlowpass) {
+	// variant of "resid" implementation used by Hermit:
+	//"FILTER: two integrator loop bi-quadratic filter, workings learned from resid code, but I kindof simplified the equations
+	//The phases of lowpass and highpass outputs are inverted compared to the input, but bandpass IS in phase with the input signal.
+	//The 8580 cutoff frequency control-curve is ideal, while the 6581 has a threshold, and below it outputs a constant lowpass frequency."
+	
+	double cutoff = ((double)(sid.ffreqlo & 7)) / 8 +  sid.ffreqhi + 0.2;	// why the +0.2 ?
+	double resonance;
+	
+	if (!sid.isModel6581) {
+		cutoff = 1 - exp(cutoff * filter.cutoff_ratio_8580);
+		resonance = pow(2, ((double)(4 - (sid.resFtv >> 4)) / 8));
+	} else {
+		if (cutoff < 24) cutoff = 0.035;
+		else cutoff = (double)1 - 1.263 * exp(cutoff * filter.cutoff_ratio_6581);
+		resonance = (sid.resFtv > 0x5F) ? (double)8 / (sid.resFtv >> 4) : 1.41;
+	}
+	double tmp = in + (*prevbandpass) * resonance + (*prevlowpass);
+			
+	if (filter.hiEna) 
+		output -= tmp;
+	tmp = (*prevbandpass) - tmp * cutoff;
+	(*prevbandpass) = tmp;
+	if (filter.bandEna) 
+		output -= tmp;
+	tmp = (*prevlowpass) + tmp * cutoff;
+	(*prevlowpass) = tmp;
+	if (filter.lowEna) 
+		output += tmp;
+	
+	return output;
+}
+
 inline void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t voice) {
-	// notice: depending on the used sample playback implementation, respectieve digi samples 
-	// might normally be processed by the filter (e.g. for PWM - but not for D418).. to deal 
-	// with this correctly the emulation would need to track how a sample was created (and by which 
-	// voice) and the sample data would need to be merged into the regular SID output before 
-	// the filter is applied... this emulator does NOT support this yet - and therefore there
-	// is no point in trying anything fancy here.
+	// depending on the used sample playback implementation, respective digi samples 
+	// should be processed by the filter  (e.g. for PWM - but not for D418)
+	// respective sample data would need to be merged into the regular SID output before 
+	// the filter is applied... this emulator does NOT support this yet - the below 
+	// workaround separately runs the imaginary "digi channel" through the filter 
+
+	// overall the effect seems to be positive - see LMAN's songs.. however it doesn't
+	// seem to always work well, e.g. clicking in Fantasmolytic_tune_4.sid
+	
+#if !defined(OLD_TINYSID_IMPL) && defined(USE_FILTER)
+	if (((voice<2) || filter.v3ena) && osc[voice].filter) {
+		for (uint32_t i= 0; i<len; i++) {
+			double in= (((int32_t)digiBuffer[i]) << 8) - 0x8000;		// filter logic designed for 16-bit signed			
+			double output= runFilter(in, (double)0x8000, &(filter.prevbandpassDigi), &(filter.prevlowpassDigi));
+			
+			// "output" is a signed 16-bit sample - but "digiBuffer" expects unsigned 8-bit 
+			output/= 3;		// seems to be a scaling factor specific to the above filter impl
+			output+= 0x8000;	// convert to unsigned			
+			output*= ((double)filter.vol)/16; // apply filter volume
+						
+			uint32_t unsignedOut= round(output);			
+			digiBuffer[i]= unsignedOut >> 8; // SID output
+		}
+	}
+#endif
 }
 
 #define isTestBit(voice) osc[voice].wave&TEST_BITMASK
@@ -747,42 +803,14 @@ void sidSynthRender (int16_t *buffer, uint32_t len) {
 				}
 			}
 #else
-			// Don't use filters, just mix all voices together (XXX FIXE.. needs fixing)
+			// Don't use filters, just mix all voices together
 			if (!voiceMute) outf+= ( (((int32_t)outv)-BASELINE) * osc[voice].envelopeOutput) RESCALE_NO_FILTER; 
 #endif
 		}
 
 #ifdef USE_FILTER
 	#ifndef OLD_TINYSID_IMPL
-		double output= outo;
-	
-		// variant of "resid" implementation used by Hermit:
-        //"FILTER: two integrator loop bi-quadratic filter, workings learned from resid code, but I kindof simplified the equations
-        //The phases of lowpass and highpass outputs are inverted compared to the input, but bandpass IS in phase with the input signal.
-        //The 8580 cutoff frequency control-curve is ideal, while the 6581 has a threshold, and below it outputs a constant lowpass frequency."
-        double cutoff = ((double)(sid.ffreqlo & 7)) / 8 +  sid.ffreqhi + 0.2;	// why the +0.2 ?
-		double resonance;
-		
-        if (!sid.isModel6581) {
-            cutoff = 1 - exp(cutoff * filter.cutoff_ratio_8580);
-            resonance = pow(2, ((double)(4 - (sid.resFtv >> 4)) / 8));
-        } else {
-            if (cutoff < 24) cutoff = 0.035;
-            else cutoff = (double)1 - 1.263 * exp(cutoff * filter.cutoff_ratio_6581);
-            resonance = (sid.resFtv > 0x5F) ? (double)8 / (sid.resFtv >> 4) : 1.41;
-        }
-        double tmp = (double)outf + filter.prevbandpass * resonance + filter.prevlowpass;
-				
-        if (filter.hiEna) 
-			output -= tmp;
-        tmp = filter.prevbandpass - tmp * cutoff;
-        filter.prevbandpass = tmp;
-        if (filter.bandEna) 
-			output -= tmp;
-        tmp = filter.prevlowpass + tmp * cutoff;
-        filter.prevlowpass = tmp;
-        if (filter.lowEna) 
-			output += tmp;
+		double output= runFilter((double)outf, (double)outo, &(filter.prevbandpass), &(filter.prevlowpass));
 
         int32_t OUTPUT_SCALEDOWN = 3 * 16;	// need signed 16-bit here (unlike -1..1 range in resid)
 		
@@ -1125,7 +1153,6 @@ static void resetEnvelopeGenerator(uint32_t sampleRate) {
 
 void sidReset(uint32_t sampleRate, uint8_t isModel6581) {
 	resetEngine(sampleRate, isModel6581);
-	digiPsidSampleReset();	
 	resetEnvelopeGenerator(sampleRate);
 }
 

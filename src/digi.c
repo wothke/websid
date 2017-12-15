@@ -29,7 +29,7 @@
 static uint32_t INVALID_TIME= (0x1 << 27);	// large enough so that any regular timestamp will get preference
 static uint16_t IDX_NOT_FOUND= 0x1fff;			// we'll never have that many samples for one screen..
 
-static uint8_t currentDigi=  0x80;		// last digi sample / default: neutral value 
+static uint8_t currentDigi;		// last digi sample / default: neutral value 
 
 /*
 * work buffers used to record digi samples produced by NMI/IRQ/main
@@ -422,10 +422,6 @@ static uint8_t handleSwallowDigi(uint8_t voice, uint8_t reg, uint16_t addr, uint
 
 // ------------------------------ legacy PSID digi stuff ----------------------------------
 
-void digiPsidSampleReset() {
-	fracPos = 0;
-}
-
 static void handlePsidDigi(uint16_t addr, uint8_t value) {			
 	// Neue SID-Register
 	if ((addr > 0xd418) && (addr < 0xd500))
@@ -582,8 +578,11 @@ void digiTagOrigin(uint32_t mask, uint32_t offset, uint32_t originalDigiCount) {
 	}
 }
 
-void digiReset(uint8_t compatibility) {
+void digiReset(uint8_t compatibility, uint8_t isModel6581) {
+	
 	isC64compatible= compatibility;
+
+	currentDigi= isModel6581 ? 0x38 : 0x80;	// supposedly the DC level for respective chip model
 
 	fillMem( (uint8_t*)&swallowPWM, 0, sizeof(swallowPWM) ); 	
     fillMem( (uint8_t*)&digiTime, 0, sizeof(digiTime) ); 
@@ -594,6 +593,8 @@ void digiReset(uint8_t compatibility) {
     fillMem( (uint8_t*)&overflowDigiVolume, 0, sizeof(overflowDigiVolume) ); 
 	
 	// PSID digi stuff
+	fracPos = 0;
+	
 	sampleActive= samplePosition= sampleStart= sampleEnd= sampleRepeatStart= fracPos= 
 		samplePeriod= sampleRepeats= sampleOrder= sampleNibble= 0;
 	internalPeriod= internalOrder= internalStart= internalEnd=
