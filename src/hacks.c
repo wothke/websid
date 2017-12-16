@@ -106,7 +106,7 @@ static void patchMahoneyLatestIfNeeded(uint16_t *initAddr) {
 	// that will hang the emu and to avoid an annoying user experience these songs are 
 	// better disabled..
 
-	// Musik_Run_Stop (Stereophonik_8580_2SID, Stereophonik_6581_2SID use version 3 RSID which is not supported)
+	// Musik_Run_Stop
 	uint8_t startPattern[]= {0x85,0x01,0x4c,0x00,0xd0};
 	if (memMatch((*initAddr)+3, startPattern, 5)) {
 		
@@ -117,6 +117,14 @@ static void patchMahoneyLatestIfNeeded(uint16_t *initAddr) {
 		}
 	}
 
+	// Stereophonik_8580_2SID, Stereophonik_6581_2SID
+	if ((*initAddr) == 0xce00) {
+		uint8_t playerPattern[]= {0xe6,0x01,0x4c,0x58,0x02};
+		if (memMatch(0xce25, playerPattern, 5)) {
+			memWriteRAM((*initAddr), 0x60); // RTS
+		}
+	}
+	
 	// We_Are_Demo
 	if ((*initAddr) == 0xc60) {
 		uint8_t playerPattern[]= {0x8e,0x18,0xd4,0x79,0x00};

@@ -240,7 +240,7 @@ static uint32_t EMSCRIPTEN_KEEPALIVE enableVoices(uint32_t mask) {
 
 static uint32_t playTune(uint32_t selectedTrack)  __attribute__((noinline));
 static uint32_t EMSCRIPTEN_KEEPALIVE playTune(uint32_t selectedTrack) {	
-	if (sidVersion <= 2) {
+	if (1 || (sidVersion <= 2)) {
 		actualSubsong= selectedTrack & 0xff;
 		digiEnabled = 1;
 
@@ -248,7 +248,9 @@ static uint32_t EMSCRIPTEN_KEEPALIVE playTune(uint32_t selectedTrack) {
 
 		resetAudioBuffers();
 	} else {
-		// there seems to be new version 3 for dual-SID stuff (see Mahoney)
+		// there seems to be new version 3 for dual-SID stuff.. and actually there is not
+		// really much use in playing only half the voices - eventhough a standard C64
+		// would bahave in the very same way..
 	}
 	return 0;
 }

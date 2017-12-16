@@ -478,7 +478,11 @@ inline void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 			output+= 0x8000;	// convert to unsigned			
 			output*= ((double)filter.vol)/0xf; // apply filter volume
 						
+			output*= 0.66;	// adjust for "perceved loudness"	- digis are too loud
+			
+			// filter may drive output outside the available range..
 			uint32_t unsignedOut= output<0 ? 0 : (output>0xffff ? 0xffff : round(output));			
+			
 			digiBuffer[i]= unsignedOut >> 8; // SID output
 		}
 	}
