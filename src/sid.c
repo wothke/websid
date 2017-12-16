@@ -472,14 +472,13 @@ inline void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 	if (((voice<2) || filter.v3ena) && osc[voice].filter) {
 		for (uint32_t i= 0; i<len; i++) {
 			double in= (((int32_t)digiBuffer[i]) << 8) - 0x8000;		// filter logic designed for 16-bit signed			
-			double output= runFilter(in, (double)0x8000, &(filter.prevbandpassDigi), &(filter.prevlowpassDigi));
+			double output= runFilter(in, (double)0x0, &(filter.prevbandpassDigi), &(filter.prevlowpassDigi));
 			
 			// "output" is a signed 16-bit sample - but "digiBuffer" expects unsigned 8-bit 
-			output/= 3;		// seems to be a scaling factor specific to the above filter impl
 			output+= 0x8000;	// convert to unsigned			
-			output*= ((double)filter.vol)/16; // apply filter volume
+			output*= ((double)filter.vol)/0xf; // apply filter volume
 						
-			uint32_t unsignedOut= round(output);			
+			uint32_t unsignedOut= output<0 ? 0 : (output>0xffff ? 0xffff : round(output));			
 			digiBuffer[i]= unsignedOut >> 8; // SID output
 		}
 	}
