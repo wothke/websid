@@ -395,7 +395,9 @@ static uint32_t intForwardToNextCiaInterrupt(struct timer *t, uint32_t timeLimit
 
 uint32_t ciaForwardToNextInterrupt(uint8_t ciaIdx, uint32_t timeLimit) {
 	// XXX needs to be tested
-	if (cpuIrqFlag() && (ciaIdx == 0)) return failMarker; // no IRQ while I-flag is set (NMI cannot be masked)
+	
+	// must not be used for PSID (see Synth_Sample_III.sid tracks >3)
+	if (!envIsPSID() && cpuIrqFlag() && (ciaIdx == 0)) return failMarker; // no IRQ while I-flag is set (NMI cannot be masked)
 	
 	struct timer *t= &(cia[ciaIdx]);
 	return  intForwardToNextCiaInterrupt(t, timeLimit);

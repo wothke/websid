@@ -424,7 +424,7 @@ static void createCombinedWF(double *wfarray, double bitmul, double bitstrength,
 		wfarray[i] *= 12;
 	}
 }
-
+#ifndef OLD_TINYSID_IMPL
 inline double runFilter(double in, double output, double *prevbandpass, double *prevlowpass) {
 	// variant of "resid" implementation used by Hermit:
 	//"FILTER: two integrator loop bi-quadratic filter, workings learned from resid code, but I kindof simplified the equations
@@ -457,6 +457,7 @@ inline double runFilter(double in, double output, double *prevbandpass, double *
 	
 	return output;
 }
+#endif
 
 inline void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 	// depending on the used sample playback implementation, respective digi samples 
