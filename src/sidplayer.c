@@ -68,12 +68,17 @@ static uint32_t chunkSize;
 static uint16_t numberOfSamplesPerCall;  
 
 static uint8_t isPSID;
+static uint8_t isFilePSID;
 
 static uint32_t numberOfSamplesRendered = 0;
 static uint32_t numberOfSamplesToRender = 0;
 
 uint8_t envIsRSID() {
 	return (isPSID == 0);
+}
+
+uint8_t envIsFilePSID(){
+	return (isFilePSID == 1);
 }
 
 uint8_t envIsSidModel6581() {
@@ -337,7 +342,9 @@ static uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(void * inBuffer, uint32_t inBuf
 	playSpeed= 0;		
 	ntscMode= 0;
 	
-	envSetPsidMode(inputFileBuffer[0x00]==0x50?1:0);
+	isFilePSID= (inputFileBuffer[0x00] == 0x50) ? 1 : 0;
+	envSetPsidMode(isFilePSID);
+	
 	memResetRAM(envIsPSID());
 	
 	sidVersion= inputFileBuffer[0x05];

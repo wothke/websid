@@ -529,7 +529,7 @@ static uint8_t simReadCRAB(uint8_t ciaIdx, uint8_t timerIdx) {
 
 static void simWriteTimer(uint16_t addr, uint8_t value) {
 	switch (addr) {
-		case 0xdc04:	// targetted song are only setting LO byte
+		case 0xdc04:	// targetted songs are only setting LO byte
 		case 0xdc06:
 			simWriteTABLO(0, ((addr-0xdc04) >>1), value);
 			break;

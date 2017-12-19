@@ -17,9 +17,13 @@
 #include "base.h"
 
 // *.sid file version
+	// mode in which song is emulated (PSID/RSID) - may differ from file's base setting
 uint8_t envIsRSID();
 uint8_t envIsPSID();
 void envSetPsidMode(uint8_t m);
+
+uint8_t envIsFilePSID();	// original file setting
+
 uint8_t envIsSidModel6581();
 
 // PSID stuff

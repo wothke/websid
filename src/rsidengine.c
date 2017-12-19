@@ -290,6 +290,12 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 	* process NMI and IRQ interrupts in their order of appearance - and as long as they fit into this screen
 	*/	
 	uint32_t currentIrqTimer= forwardToNextInterrupt(getIrqTimerMode(CIA1), CIA1, availableIrqCycles);
+	
+	// FIXME: the assumption that only RSID uses NMI meanwhile proved to be wrong (see MicroProse_Soccer_V1.sid 
+	// tracks >4) .. also an IRQ run may also update the NMI schedule! flawed: ciaForwardToNextInterrupt 
+	// calculation does NOT consider the time when the timer is actually started but only the time that some 
+	// interrupt returns (which will lead to distortions)
+	
 	uint32_t currentNmiTimer= envIsRSID() ? ciaForwardToNextInterrupt(CIA2, availableNmiCycles) : NO_INT;
 
 	// KNOWN LIMITATION: ideally all 4 timers should be kept in sync - not just A/B within the same unit! 

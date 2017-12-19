@@ -622,6 +622,8 @@ void digiReset(uint8_t compatibility, uint8_t isModel6581) {
 const uint8_t digiSampleDetectLimit= 10;	
 
 uint8_t digiDetectSample(uint16_t addr, uint8_t value) {
+	if (envIsFilePSID()) return 0;	// for songs like MicroProse_Soccer_V1.sid tracks >5
+	
 	uint8_t reg= addr&0x1f;
 	uint8_t voice= 0;
     if ((reg >= 7) && (reg <=13)) {voice=1; reg-=7;}
