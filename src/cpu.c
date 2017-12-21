@@ -501,7 +501,7 @@ void cpuParse(void)
 			setflags(FLAG_V, (~(in1 ^ in2))&(in1 ^ a)&0x80);
 			}
             break;
-        case anc:	// used by Axelf.sid (Crowther)
+        case anc:	// used by Axelf.sid (Crowther), Whats_Your_Lame_Excuse.sid
             bval=getaddr(opc, mode);
 			a= a&bval;
 			
@@ -517,6 +517,29 @@ void cpuParse(void)
             a&=bval;
             setflags(FLAG_Z, !a);
             setflags(FLAG_N, a&0x80);
+            break;
+        case arr: {		// Whats_Your_Lame_Excurse.sid uses this. sigh "the crappier the song...."
+			// AND
+            bval=getaddr(opc, mode);
+            a&=bval;
+			
+			// set C+V based on this intermediate state of bits 6+7 (before ROR)
+			uint8_t bit7= !!(a&0x80);
+			uint8_t bit6= !!(a&0x40);
+
+            c=!!(p&FLAG_C);
+			
+			setflags(FLAG_V,bit7^bit6);
+            setflags(FLAG_C,bit7);
+			
+			a ^= (-c ^ a) & (1UL << 7);	// "exchange" bit 7 with carry
+			
+			// ROR - C+V not affected here
+            a>>=1;
+    		
+            setflags(FLAG_N,a&0x80);
+            setflags(FLAG_Z,!a);
+			}			
             break;
         case asl:
             wval=getaddr(opc, mode);
@@ -720,6 +743,15 @@ void cpuParse(void)
             setflags(FLAG_Z,!a);
             setflags(FLAG_N,a&0x80);
             break;
+		case lxa: 	// Whats_Your_Lame_Excuse.sid - LOL only real dumbshit player uses this op..
+            bval=getaddr(opc, mode);
+			a|= 0xff;	// roulette what the specific CPU uses here
+			a&= bval;
+			
+			x= a;
+            setflags(FLAG_Z,!a);
+            setflags(FLAG_N,a&0x80);
+            break;				
         case lda:
             a=getaddr(opc, mode);
             setflags(FLAG_Z,!a);
@@ -866,9 +898,16 @@ void cpuParse(void)
             bval=a&x;
 			setaddr(opc,mode,bval);
             break;
-		case sbx:	// used in Artefacts.sid	
+		case sbx:	// used in Artefacts.sid, Whats_Your_Lame_Excuse.sid	
+			// affects N Z and C (like CMP)
 			bval=getaddr(opc, mode);
+			
+            setflags(FLAG_C,(x&a)>=bval);
+
 			x=(x&a)-bval;
+
+            setflags(FLAG_Z,!x);		// a == bval
+            setflags(FLAG_N,x&0x80);	// a < bval		
 			break;
         case sec:
             setflags(FLAG_C,1);
