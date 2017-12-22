@@ -466,8 +466,7 @@ inline void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 	// the filter is applied... this emulator does NOT support this yet - the below 
 	// workaround separately runs the imaginary "digi channel" through the filter 
 
-	// overall the effect seems to be positive - see LMAN's songs.. however it doesn't
-	// seem to always work well, e.g. clicking in Fantasmolytic_tune_4.sid
+	// overall the effect seems to be positive - see LMAN's songs.. 
 	
 #if !defined(OLD_TINYSID_IMPL) && defined(USE_FILTER)
 	if (((voice<2) || filter.v3ena) && osc[voice].filter) {
@@ -1155,9 +1154,11 @@ static void resetEnvelopeGenerator(uint32_t sampleRate) {
 	}	
 }
 
-void sidReset(uint32_t sampleRate, uint8_t isModel6581) {
+void sidReset(uint32_t sampleRate, uint8_t isModel6581, uint8_t compatibility) {
 	resetEngine(sampleRate, isModel6581);
 	resetEnvelopeGenerator(sampleRate);
+
+	digiReset(compatibility, isModel6581);
 }
 
 // -----------------------------  SID I/O -------------------------------------------

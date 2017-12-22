@@ -13,7 +13,7 @@
 #include "base.h"
 
 // init/reset
-void sidReset(uint32_t sampleRate, uint8_t isModel6581);
+void sidReset(uint32_t sampleRate, uint8_t isModel6581, uint8_t compatibility);
 
 // direct manipulation of SID state
 void sidPoke(uint8_t reg, uint8_t val);		// update SID registers 

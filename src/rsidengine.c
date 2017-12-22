@@ -448,8 +448,7 @@ void rsidReset(uint32_t sampleRate, uint8_t compatibility)
 	
 	cpuInit();
 
-	sidReset(sampleRate, envIsSidModel6581());
-	digiReset(compatibility, envIsSidModel6581());
+	sidReset(sampleRate, envIsSidModel6581(), compatibility);
 	
 	cpuSetProgramMode(MAIN_OFFSET_MASK);
 	mainLoopOnlyMode= 0;
@@ -482,8 +481,9 @@ void rsidPlayTrack(uint32_t sampleRate, uint8_t compatibility, uint16_t *pInitAd
 	memSetDefaultBanks(envIsRSID(), (*pInitAddr), loadEndAddr);	// PSID crap
 
 	// if initAddr call does not complete then it is likely in an endless loop / maybe digi player
-	// FIXME use CYCLELIMIT only for PSID..
-	mainProgStatus= callMain((*pInitAddr), actualSubsong, 0, CYCLELIMIT);		
+	// FIXME use CYCLELIMIT only for PSID: unfortunately RSIDs like Wonderland_XII-Digi_part_1.sid still 
+	// need some kind of startup phase
+	mainProgStatus= callMain((*pInitAddr), actualSubsong, 0, !envIsRSID()? CYCLELIMIT : 200000);		
 
 	memResetPsidBanks(envIsPSID(), playAddr);	// PSID again
 }

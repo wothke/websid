@@ -43,6 +43,7 @@ static uint8_t sidModel6581;	// default
 static uint8_t ntscMode= 0;
 static uint8_t compatibility;
 static uint8_t basicProg;
+static uint32_t clockRate;
 
 static uint32_t sampleRate;
 
@@ -131,6 +132,9 @@ uint8_t envCurrentSongSpeed() {
 	return get_bit(playSpeed, actualSubsong > 31 ? 31 : actualSubsong); 
 }
 
+uint32_t envClockRate() {
+	return clockRate;
+}
 int8_t envIsTimerDrivenPSID() {
 	return ((envIsPSID() == 1) && (envCurrentSongSpeed() == 1));
 }
@@ -166,10 +170,12 @@ static void resetTimings() {
 		fps= 60;
 		cyclesPerRaster= 65;			// NTSC
 		linesPerScreen = 263;
+		clockRate= 1022727;
 	} else {
 		fps= 50;
 		cyclesPerRaster= 63;			// PAL	
 		linesPerScreen = 312;
+		clockRate= 985248;
 	}
 	/*
 	hack: correct cycle handling would consider badlines, usage of sprites, 
@@ -186,7 +192,7 @@ static void resetTimings() {
 	
 	// NTSC: 17095	/ PAL: 19656		
 	totalCyclesPerScreen= cyclesPerRaster*linesPerScreen- badlineCycles;			
-	// NTSC: 1025700 (clock would be: 1022727);		/ PAL: 982800 (clock would be; 985248);			
+	// NTSC: 1025700 (clock would be: 1022727);		/ PAL: 982800 (clock would be: 985248);			
 	totalCyclesPerSec= totalCyclesPerScreen*fps; 
 }
 
