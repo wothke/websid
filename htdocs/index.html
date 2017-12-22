@@ -90,6 +90,7 @@ function init() {
 		
 	// --------------------------- UI - basic player controls --------------
 	var songs = [
+		'/MUSICIANS/G/Gray_Fred/Implosion.sid;1;84',
 		'/MUSICIANS/M/Mahoney/Kapla_Caves.sid;0;153',
 		'/MUSICIANS/S/Swallow/Wonderland_XII-Digi_part_4.sid;0;54',
 		'/MUSICIANS/L/LMan/Vortex.sid;0;192',
@@ -167,9 +168,9 @@ function init() {
   <div>
   <p>Latest JavaScript/HTML5 version of <a href="http://www.wothke.ch/tinyrsid/" target="_blank">Tiny'R'Sid</a>.</p>
  
-  <p>2015 by Juergen Wothke  (The source code can be found <a target="_blank" href="https://github.com/wothke/">here</a>.)</p>
+  <p>2017 by Juergen Wothke  (The source code can be found <a target="_blank" href="https://github.com/wothke/">here</a>.)</p>
  
-  <p>This page does not use any plugins but is based exclusively on the draft version WebAudio API. You'll need Chrome or Firefox to make it play the music.</p>
+  <p>This page does not use any plugins but is based exclusively on the WebAudio API. You'll need something like Chrome or Firefox to make it play the music.</p>
   
   <p>Please note: The played music samples are completely calculated within JavaScript by running the Tiny'R'Sid C64 emulator logic (using original C64 program files from the <a href="http://www.hvsc.de/" target="_blank">HVSC</a>).</p>  
  
@@ -179,11 +180,14 @@ function init() {
 </details>
 <aside></aside>
 <section>
-  <div id="logo" class="logo">
-	<div id="moz-reflect-logo"><canvas  id="logoCanvas"  width="600" height="270"></canvas></div>
+  <div id="logo">
+		<!-- in new Chrome the SHIT reflections disapear dependig on the canvas height.. what a fucking joke -->
+		<div id="moz-reflect-logo"><canvas  id="logoCanvas"  width="220" height="100"></canvas></div>	
   </div>
-  <div id="spectrum" class="spectrum">
-  	<div id="moz-reflect-spectrum"><canvas id="spectrumCanvas" width="800" height="200"></canvas></div>
+  
+  <div id="spectrum" >
+		<!-- use "hight" greater than 80 and the fucking reflection is gone.. FUCK YOU IDIOTS -->
+		<div id="moz-reflect-spectrum"><canvas id="spectrumCanvas" width="800" height="80"></canvas></div>
   </div>
   <div id="drop" class="drop"><img src="floppy_blinking2.gif" /></div><!--see BasicPlayerControls-->
 </section>
