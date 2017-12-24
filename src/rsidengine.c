@@ -421,6 +421,8 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 		envSetPsidMode(0);	
 	}
 
+	if (envIsPSID()) memResetPsidBanks(1, getIrqVector());	// must be reset before every "play" - see crap like 8-Bit_Keys_Theme.sid
+	
 	if (envIsTimerDrivenPSID() || vicIsIrqActive() || envIsRSID()) {
 
 		// info failed idea: the cycleLimit used below has the effect that
