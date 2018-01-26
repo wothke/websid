@@ -425,7 +425,7 @@ static void createCombinedWF(double *wfarray, double bitmul, double bitstrength,
 	}
 }
 #ifndef OLD_TINYSID_IMPL
-inline double runFilter(double in, double output, double *prevbandpass, double *prevlowpass) {
+static double runFilter(double in, double output, double *prevbandpass, double *prevlowpass) {
 	// variant of "resid" implementation used by Hermit:
 	//"FILTER: two integrator loop bi-quadratic filter, workings learned from resid code, but I kindof simplified the equations
 	//The phases of lowpass and highpass outputs are inverted compared to the input, but bandpass IS in phase with the input signal.
@@ -491,7 +491,7 @@ inline void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 
 #define isTestBit(voice) osc[voice].wave&TEST_BITMASK
 
-inline WAVE_DATA_TYPE createTriangleOutput(uint8_t voice, uint32_t ringMSB) {
+static WAVE_DATA_TYPE createTriangleOutput(uint8_t voice, uint32_t ringMSB) {
 	// ringMSB is for 28-bit!
 #ifdef OLD_TINYSID_IMPL
 	uint8_t tripos = (uint8_t) (osc[voice].counter>>19);		// use top 9 bits of oscillator (drop top bit)
@@ -504,7 +504,7 @@ inline WAVE_DATA_TYPE createTriangleOutput(uint8_t voice, uint32_t ringMSB) {
 	return wfout;
 #endif
 }			
-inline WAVE_DATA_TYPE createSawOutput(uint8_t voice) {	// test with Alien or Kawasaki_Synthesizer_Demo
+static WAVE_DATA_TYPE createSawOutput(uint8_t voice) {	// test with Alien or Kawasaki_Synthesizer_Demo
 #ifdef OLD_TINYSID_IMPL
 	// old impl
 	uint8_t sawout = (uint8_t) (osc[voice].counter >> 20);	// just use top 8-bits of our 28bit counter 
@@ -518,7 +518,7 @@ inline WAVE_DATA_TYPE createSawOutput(uint8_t voice) {	// test with Alien or Kaw
 	return wfout;
 #endif
 }	
-inline WAVE_DATA_TYPE createPulseOutput(uint8_t voice) {
+static WAVE_DATA_TYPE createPulseOutput(uint8_t voice) {
 #ifdef OLD_TINYSID_IMPL
 	// old impl
 	uint8_t plsout = isTestBit(voice) ? sid.level_DC : (uint8_t) ((osc[voice].counter > osc[voice].pulse)-1) ^ 0xff;
@@ -552,7 +552,7 @@ inline WAVE_DATA_TYPE createPulseOutput(uint8_t voice) {
 	return wfout;
 #endif
 }	
-inline WAVE_DATA_TYPE createNoiseOutput(uint8_t voice) {
+static WAVE_DATA_TYPE createNoiseOutput(uint8_t voice) {
 	// generate noise waveform exactly as the SID does.
 	
 	// "random values are output through the waveform generator according to the 
@@ -599,7 +599,7 @@ static inline int32_t pfloatConvertToInt(int32_t i) 		{ return (i>>16); }
 * implementation, the "osc" and "filter" helper structures are NOT - i.e. they need to 
 * be explicitly synced before calculating SID output.
 */
-inline void syncRegisterCache() {
+static void syncRegisterCache() {
     /* 
 	"step 1: convert the not easily processable sid registers into some
             more convenient and fast values (makes the thing much faster
@@ -647,7 +647,7 @@ inline void syncRegisterCache() {
 #endif  
 }
 
-inline void updateOscillator(uint8_t refosc, uint8_t voice) {
+static void updateOscillator(uint8_t refosc, uint8_t voice) {
 	uint8_t ctrl= osc[voice].wave;
 
 	// reset counter / noise generator if TEST bit set (blocked at 0 as long as set)

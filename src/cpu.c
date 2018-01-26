@@ -501,6 +501,18 @@ void cpuParse(void)
 			setflags(FLAG_V, (~(in1 ^ in2))&(in1 ^ a)&0x80);
 			}
             break;
+/*	causes more problems in that song than it solves.. 
+		case alr: 		// used in Raveloop14_xm.sid
+			//	ALR #{imm} = AND #{imm} + LSR
+            bval=getaddr(opc, mode);
+			a= a&bval;
+
+            setflags(FLAG_C,a&1);
+            a>>=1;
+			
+            setflags(FLAG_Z, !a);
+            setflags(FLAG_N, a&0x80);
+*/
         case anc:	// used by Axelf.sid (Crowther), Whats_Your_Lame_Excuse.sid
             bval=getaddr(opc, mode);
 			a= a&bval;

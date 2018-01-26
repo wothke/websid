@@ -117,7 +117,7 @@ static FreqDetectState freqDetectState[3];
 static uint32_t freqDetectTimestamp[3];
 static uint8_t freqDetectDelayedSample[3];
 
-inline uint8_t isWithinFreqDetectTimeout(uint8_t voice) {
+static uint8_t isWithinFreqDetectTimeout(uint8_t voice) {
 	return (cpuCycles()-freqDetectTimestamp[voice]) < TB_TIMEOUT;
 }
 #define SAMPLE_TRESHOLD 4
@@ -248,7 +248,7 @@ static uint32_t pulseDetectTimestamp[3];
 static uint8_t pulseDetectDelayedSample[3];
 static uint8_t pulseDetectMode[3];	// 2= Pulse width LO/ 3= Pulse width HI
 
-inline uint8_t isWithinPulseDetectTimeout(uint8_t voice) {
+static uint8_t isWithinPulseDetectTimeout(uint8_t voice) {
 	return (cpuCycles()-pulseDetectTimestamp[voice]) < TB_PULSE_TIMEOUT;
 }
 

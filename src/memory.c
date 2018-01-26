@@ -30,7 +30,7 @@ uint8_t memMatch(uint16_t addr, uint8_t *pattern, uint8_t len) {
 	return !memcmp(&(memory[addr]), pattern, len);
 }
 
-inline void setMemBank(uint8_t b) {
+static void setMemBank(uint8_t b) {
 	memory[0x0001]= b;
 }
 
@@ -208,6 +208,9 @@ void memResetRAM(uint8_t isPsid) {
 
 	// Master_Blaster_intro.sid actually checks this:
 	memory[0x00cb]= 0x40;		// no key pressed 
+
+	// Dill_Pickles.sid depends on this
+	memWriteRAM(0x0000, 0x2f);	//default: processor port data direction register		
 	
 	// for our PSID friends who don't know how to properly use memory banks lets mirror the kernal ROM into RAM
 	if (isPsid) {

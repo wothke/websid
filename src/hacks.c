@@ -184,7 +184,7 @@ static void patchFileDeletedIfNeeded(uint16_t *initAddr) {
 	uint8_t thcmPattern[]= {0x24, 0x00, 0x4C, 0x03, 0x00};
 	if (((*initAddr) == 0x080d) && memMatch(0x08c3, thcmPattern, 5)) {
 		// NMI interrupting MAIN during init not supported
-		// (THMC uses it here to detect old/new CIA chips and make
+		// (THCM uses it here to detect old/new CIA chips and make
 		// a +1 cycle timing correction..)
 		memWriteRAM(0x0B50, 0xea);	// disable NMI stack manipulation
 		memWriteRAM(0x0B51, 0xea);
