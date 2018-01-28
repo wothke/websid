@@ -23,14 +23,18 @@ Terms of Use: This software is licensed under a CC BY-NC-SA (http://creativecomm
 
 ## Howto build:
 
-You'll need Emscripten; see http://kripken.github.io/emscripten-site/docs/getting_started/downloads.html (I did not 
-need to perform ANY additions or manual changes on the installation). The below instructions assume a command prompt has been 
-opened within the "websid" folder, and that the Emscripten environment vars have been set (run emsdk_env.bat).
+You'll need Emscripten; see http://kripken.github.io/emscripten-site/docs/getting_started/downloads.html . In case you want to 
+compile to WebAssembly (see respective "WASM" switch in the make-scripts) then you'll need at least emscripten 1.37.29 (for
+use of WASM you'll then also need a recent version of my respective "WebAudio ScriptProcessor music player").
+
+The below instructions assume a command prompt has been opened within the "websid" folder, and that the Emscripten environment 
+vars have been set (run emsdk_env.bat).
 
 Running the makeEmscripten.bat will generate a JavaScript 'Tiny'R'Sid' library (backend_tinyrsid.js) including 
 necessary interface APIs. This lib is directly written into the web-page example in the "htdocs" sub-folder. (This 
 generated lib is used from some manually written JavaScript/WebAudio code, see htdocs/stdlib/scriptprocessor_player.min.js). 
-Study the example in "htdocs" for how the player is used.
+Study the example in "htdocs" for how the player is used. (disclaimer: the .sh version of the make-script has been contributed
+by somebody else and I am not maintaing it or verifying that it still works)
 
 
 ## Change log 

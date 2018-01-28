@@ -21,7 +21,10 @@
 */
 SIDBackendAdapter = (function(){ var $this = function () { 
 		$this.base.call(this, backend_SID.Module, 1);
-		this.playerSampleRate;		
+		this.playerSampleRate;
+		
+		// required if WASM (asynchronously loaded) is used in the backend impl
+		backend_SID.Module.adapterCallback= this.notifyAdapterReady.bind(this);
 	}; 
 	// TinyRSid's sample buffer contains 2-byte (signed short) sample data 
 	// for 1 channel
