@@ -4,7 +4,7 @@ window.spp_backend_state_SID= {
 	notReady: true,
 	adapterCallback: function(){}	// overwritten later	
 };
-window.spp_backend_state_SID["onRuntimeInitialized"] = function() {	// emscripten callback
+window.spp_backend_state_SID["onRuntimeInitialized"] = function() {	// emscripten callback needed in case async init is used (e.g. for WASM)
 	this.notReady= false;
 	this.adapterCallback();
 }.bind(window.spp_backend_state_SID);
@@ -27,7 +27,7 @@ function U(b){for(;0<b.length;){var d=b.shift();if("function"==typeof d)d();else
 (function(){function b(){try{if(a.wasmBinary)return new Uint8Array(a.wasmBinary);if(a.readBinary)return a.readBinary(g);throw"on the web, we need the wasm binary to be preloaded and set on Module['wasmBinary']. emcc.py will do that for you when generating HTML (but not JS)";}catch(na){y(na)}}function d(){return a.wasmBinary||!n&&!p||"function"!==typeof fetch?new Promise(function(c){c(b())}):fetch(g,{credentials:"same-origin"}).then(function(b){if(!b.ok)throw"failed to load wasm binary file at '"+
 g+"'";return b.arrayBuffer()}).catch(function(){return b()})}function e(b){function c(b){k=b.exports;if(k.memory){b=k.memory;var c=a.buffer;b.byteLength<c.byteLength&&a.printErr("the new buffer in mergeMemory is smaller than the previous one. in native wasm, we should grow memory here");c=new Int8Array(c);(new Int8Array(b)).set(c);a.buffer=buffer=b;I()}a.asm=k;a.usingWasm=!0;V--;a.monitorRunDependencies&&a.monitorRunDependencies(V);0==V&&(null!==W&&(clearInterval(W),W=null),X&&(b=X,X=null,b()))}function e(b){c(b.instance)}
 function h(b){d().then(function(b){return WebAssembly.instantiate(b,f)}).then(b).catch(function(b){a.printErr("failed to asynchronously prepare wasm: "+b);y(b)})}if("object"!==typeof WebAssembly)return a.printErr("no native wasm support detected"),!1;if(!(a.wasmMemory instanceof WebAssembly.Memory))return a.printErr("no native wasm Memory in use"),!1;b.memory=a.wasmMemory;f.global={NaN:NaN,Infinity:Infinity};f["global.Math"]=Math;f.env=b;V++;a.monitorRunDependencies&&a.monitorRunDependencies(V);if(a.instantiateWasm)try{return a.instantiateWasm(f,
-c)}catch(oa){return a.printErr("Module.instantiateWasm callback failed with error: "+oa),!1}a.wasmBinary||"function"!==typeof WebAssembly.instantiateStreaming||Y(g)||"function"!==typeof fetch?h(e):WebAssembly.instantiateStreaming(fetch(g,{credentials:"same-origin"}),f).then(e).catch(function(b){a.printErr("wasm streaming compile failed: "+b);a.printErr("falling back to ArrayBuffer instantiation");h(e)});return{}}var c="tinyrsid2.wast",g="tinyrsid2.wasm",h="tinyrsid2.temp.asm.js";"function"===typeof a.locateFile&&
+c)}catch(oa){return a.printErr("Module.instantiateWasm callback failed with error: "+oa),!1}a.wasmBinary||"function"!==typeof WebAssembly.instantiateStreaming||Y(g)||"function"!==typeof fetch?h(e):WebAssembly.instantiateStreaming(fetch(g,{credentials:"same-origin"}),f).then(e).catch(function(b){a.printErr("wasm streaming compile failed: "+b);a.printErr("falling back to ArrayBuffer instantiation");h(e)});return{}}var c="tinyrsid.wast",g="tinyrsid.wasm",h="tinyrsid.temp.asm.js";"function"===typeof a.locateFile&&
 (Y(c)||(c=a.locateFile(c)),Y(g)||(g=a.locateFile(g)),Y(h)||(h=a.locateFile(h)));var f={global:null,env:null,asm2wasm:{"f64-rem":function(b,c){return b%c},"debugger":function(){debugger}},parent:a},k=null;a.asmPreload=a.asm;var J=a.reallocBuffer;a.reallocBuffer=function(b){if("asmjs"===pa)var c=J(b);else a:{var d=a.usingWasm?65536:16777216;0<b%d&&(b+=d-b%d);d=a.buffer.byteLength;if(a.usingWasm)try{c=-1!==a.wasmMemory.grow((b-d)/65536)?a.buffer=a.wasmMemory.buffer:null;break a}catch(ta){c=null;break a}c=
 void 0}return c};var pa="";a.asm=function(b,c){if(!c.table){b=a.wasmTableSize;void 0===b&&(b=1024);var d=a.wasmMaxTableSize;c.table="object"===typeof WebAssembly&&"function"===typeof WebAssembly.Table?void 0!==d?new WebAssembly.Table({initial:b,maximum:d,element:"anyfunc"}):new WebAssembly.Table({initial:b,element:"anyfunc"}):Array(b);a.wasmTable=c.table}c.memoryBase||(c.memoryBase=a.STATIC_BASE);c.tableBase||(c.tableBase=0);(c=e(c))||y("no binaryen method succeeded. consider enabling more options, like interpreting, if you want that: https://github.com/kripken/emscripten/wiki/WebAssembly#binaryen-methods");
 return c}})();K=1024;L=K+277472;ea.push();a.STATIC_BASE=K;a.STATIC_BUMP=277472;L+=16;function la(b){return Math.pow(2,b)}assert(!M);var ma=L;L=L+4+15&-16;R=ma;N=O=w(L);P=N+T;Q=w(P);H[R>>2]=Q;M=!0;a.wasmTableSize=0;a.wasmMaxTableSize=0;a.b={};
@@ -65,9 +65,6 @@ function Z(){function b(){if(!a.calledRun&&(a.calledRun=!0,!x)){ja||(ja=!0,U(ea)
 SIDBackendAdapter = (function(){ var $this = function () { 
 		$this.base.call(this, backend_SID.Module, 1);
 		this.playerSampleRate;
-		
-		// required if WASM (asynchronously loaded) is used in the backend impl
-		backend_SID.Module.adapterCallback= this.notifyAdapterReady.bind(this);
 	}; 
 	// TinyRSid's sample buffer contains 2-byte (signed short) sample data 
 	// for 1 channel
