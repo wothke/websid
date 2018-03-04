@@ -82,8 +82,8 @@ SongDisplay = function(displayAccessor, colors, barType, cpuLimit, doAnimate) {
 	this.mozReflectSpectrum = document.getElementById('moz-reflect-spectrum');
 	this.mozReflectLogo = document.getElementById('moz-reflect-logo');
 	
-	var canvas2 = document.getElementById('logoCanvas');
-	this.ctxLegend = canvas2.getContext('2d');	
+	this.canvasLegend = document.getElementById('logoCanvas');
+	this.ctxLegend = this.canvasLegend.getContext('2d');	
 };
 
 SongDisplay.prototype = {
@@ -137,6 +137,11 @@ SongDisplay.prototype = {
 				for (var i= 0; i<numBars; i++) this.caps[i]= 0;
 			}
 			
+			try {
+				// seems that dumbshit Safari (11.0.1 OS X) uses the fillStyle for "clearRect"!
+				this.ctxSpectrum.fillStyle = "rgba(0, 0, 0, 0.0)";
+			} catch (err) {}
+
 			this.ctxSpectrum.clearRect(0, 0, this.WIDTH, this.HEIGHT);
 
 			this.ctxSpectrum.lineCap = 'round';
@@ -226,7 +231,16 @@ SongDisplay.prototype = {
 	},
 	redrawSongInfo: function() {
 		this.reqAnimationFrame();	// start the animation going
+
+		try {
+			// seems that the Safari (11.0.1 OS X) idiots use the fillStyle for 
+			// "clearRect", i.e. it is impossible to properly make this canvas 
+			// completely transparent
+			this.ctxLegend.fillStyle = "rgba(0, 0, 0, 0.0)";
+		} catch (err) {}
+		
 		this.ctxLegend.clearRect(0, 0, 800, 300);
+		//this.canvasLegend.width  += 0;
 		
 		this.ctxLegend.textBaseline = "middle";
 		this.ctxLegend.fillStyle = '#000';

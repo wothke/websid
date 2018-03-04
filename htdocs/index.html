@@ -78,8 +78,13 @@ function doOnTrackReadyToPlay(){
 	ScriptNodePlayer.getInstance().play();
 	songDisplay.redrawSongInfo();
 }
+// depending on the browser/timing the player may be ready before or after (see WASM) init(), i.e.
+// the startup sequence must handle both cases (music can only be started when
+// both the player is ready and init() has been completed..)
+var playerReady= false;		
 function doOnPlayerReady() {
-	if (playerControls) playerControls.playNextSong();
+	playerReady= true;
+	if (playerControls) playerControls.playNextSong(); // playerControls are used to check for init()
 }
 
 function init() {
@@ -90,13 +95,15 @@ function init() {
 		
 	// --------------------------- UI - basic player controls --------------
 	var songs = [
-		'/MUSICIANS/G/Gray_Fred/Implosion.sid;1;84',
+		'/LOCAL/music/Jeroen Tel and LMan - 11 Heaven.sid;0;201',
+		'/MUSICIANS/G/Galway_Martin/Neverending_Story.sid;0;227',
+		'/MUSICIANS/D/Daglish_Ben/Trap.sid;0;586',
 		'/MUSICIANS/M/Mahoney/Kapla_Caves.sid;0;153',
+		'/MUSICIANS/G/Gray_Fred/Implosion.sid;1;84',
 		'/MUSICIANS/S/Swallow/Wonderland_XII-Digi_part_4.sid;0;54',
 		'/MUSICIANS/L/LMan/Vortex.sid;0;192',
 		'/MUSICIANS/G/Griff/Clique_Baby.sid;0;292',
 		'/MUSICIANS/G/Galway_Martin/Arkanoid.sid;0;142',
-		'/MUSICIANS/G/Galway_Martin/Neverending_Story.sid;0;227',
 		'/MUSICIANS/G/Galway_Martin/Street_Hawk.sid;0;355',
 		'/MUSICIANS/G/Galway_Martin/Yie_Ar_Kung_Fu.sid;18;540',		
 		'/MUSICIANS/0-9/20CC/Paul_Falco/Spijkerhoek_3.sid;0;126',
@@ -110,7 +117,6 @@ function init() {
 		'/MUSICIANS/P/PVCF/2_Canal_Diggi.sid;0;73',
 		'/MUSICIANS/D/Daglish_Ben/Kettle.sid;0;159',
 		'/MUSICIANS/D/Daglish_Ben/W_E_M_U_S_I_C_1.sid;7;116',
-		'/MUSICIANS/D/Daglish_Ben/Trap.sid;0;586',
 		'/MUSICIANS/D/Deenen_Charles/Eye_to_Eye_intro.sid;0;70',
 		'/MUSICIANS/F/Follin_Tim/Ghouls_n_Ghosts.sid;0;260',
 		'/MUSICIANS/G/Gray_Fred/ShadowFire.sid;1;88',
@@ -135,7 +141,9 @@ function init() {
 						var timeout= arr.length>2?parseInt(arr[2]):-1;
 
 						// you'll be needing your own proxy here..
-						var url=  "/provence/proxy/index.php?http://hvsc.perff.dk"+arr[0];
+						
+						var url= arr[0];
+						url=  url.startsWith("/LOCAL/")?url.substring(7):"/provence/proxy/index.php?http://hvsc.perff.dk"+url;
 							
 						var options= {};
 						options.track= track;
@@ -154,7 +162,7 @@ function init() {
 	songDisplay= new SongDisplay(new SIDDisplayAccessor((function(){return playerControls.getSongInfo();})), 
 								[0xF6D565], 0, 0.5, (function(){playerControls.animate()}));
 
-	playerControls.playNextSong();
+	if (playerReady) playerControls.playNextSong();	// player was ready before it could trigger the playback
 }
 </script>
 <script type="text/javascript" src="stdlib/analytics.js"></script>
@@ -166,13 +174,14 @@ function init() {
 <details>
   <summary>What's this?</summary>
   <div>
-  <p>Latest JavaScript/HTML5 version of <a href="http://www.wothke.ch/tinyrsid/" target="_blank">Tiny'R'Sid</a>.</p>
+  <p>This is the latest version of <a href="http://www.wothke.ch/tinyrsid/" target="_blank">Tiny'R'Sid</a>.</p>
  
-  <p>2017 by Juergen Wothke  (The source code can be found <a target="_blank" href="https://github.com/wothke/">here</a>.)</p>
+  <p>2015 by Juergen Wothke  (The source code can be found <a target="_blank" href="https://github.com/wothke/">here</a>.)</p>
  
-  <p>This page does not use any plugins but is based exclusively on the WebAudio API. You'll need something like Chrome or Firefox to make it play the music.</p>
+  <p>This page does not use any plugins but is based exclusively on HTML5/JavaScript/WebAudio. You'll need a reasonably recent browser to make it play the music.</p>
   
-  <p>Please note: The played music samples are completely calculated within JavaScript by running the Tiny'R'Sid C64 emulator logic (using original C64 program files from the <a href="http://www.hvsc.de/" target="_blank">HVSC</a>).</p>  
+  <p>The music samples are completely calculated within JavaScript by running the Tiny'R'Sid C64 emulator logic (playing original 
+  C64 program files from the <a href="http://www.hvsc.de/" target="_blank">HVSC</a>). You can bring your own music files by dropping them on the floppy drive image.</p>  
  
   <p>Please use the below controls to navigate between the songs that you have dropped on the player:
   <span id="controls"></span>
@@ -189,7 +198,7 @@ function init() {
 		<!-- use "hight" greater than 80 and the fucking reflection is gone.. FUCK YOU IDIOTS -->
 		<div id="moz-reflect-spectrum"><canvas id="spectrumCanvas" width="800" height="80"></canvas></div>
   </div>
-  <div id="drop" class="drop"><img src="floppy_blinking2.gif" /></div><!--see BasicPlayerControls-->
+  <div id="drop" class="drop"><img src="c64.gif" /></div><!--see BasicPlayerControls-->
 </section>
 </body>
 </html>

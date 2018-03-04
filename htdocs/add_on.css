@@ -85,6 +85,6 @@
 	height:300px;
 }
 #drop {
-	-webkit-transform: translateX(50px) translateY(130px) translateZ(0px) rotateX(10deg) rotateY(-5deg) rotateZ(8deg);
-	-moz-transform: translateX(50px) translateY(0px) translateZ(0px) rotateX(10deg) rotateY(-5deg) rotateZ(8deg);
+	-webkit-transform: translateX(50px) translateY(130px) translateZ(0px) rotateX(0deg) rotateY(0deg) rotateZ(0deg);
+	-moz-transform: translateX(50px) translateY(0px) translateZ(0px) rotateX(0deg) rotateY(0deg) rotateZ(0deg);
 }
