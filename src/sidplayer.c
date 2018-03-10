@@ -25,11 +25,33 @@
 #include "hacks.h"	
 #include "memory.h"
 
+#include "compute!.h"
+
 #ifdef EMSCRIPTEN
 #define EMSCRIPTEN_KEEPALIVE __attribute__((used))
 #else
 #define EMSCRIPTEN_KEEPALIVE
 #endif
+
+
+// handling of Compute!'s SidPlayer (.mus files)
+#define MUS_HEAD 0x8
+#define MUS_BASE_ADDR 0x1800
+#define MUS_PLAYER_START MUS_BASE_ADDR
+	// where the .mus music file is loaded
+#define MUS_DATA_START 0x281e
+	// where the player looks for the pointers into the 3 voice command streams
+#define MUS_VOICE_PTRS 0x2743
+
+const static uint16_t MUS_REL_DATA_START= MUS_DATA_START - MUS_BASE_ADDR;
+const static uint16_t MUS_REL_VOICE_PTRS= MUS_VOICE_PTRS - MUS_BASE_ADDR;	
+const static uint16_t MUS_MAX_SIZE= MUS_REL_DATA_START;
+const static uint16_t MUS_MAX_SONG_SIZE= 0xA000 - MUS_DATA_START;		// stop at BASIC ROM.. or how big are these songs?
+
+	// buffer used to combine .mus and player
+static uint8_t *musMemBuffer= 0;										// represents memory at MUS_BASE_ADDR
+static uint32_t musMemBufferSize= 0xA000 - MUS_BASE_ADDR;
+static uint8_t musMode= 0;
 
 
 static uint32_t totalCyclesPerSec;
@@ -196,8 +218,19 @@ static void resetTimings() {
 	totalCyclesPerSec= totalCyclesPerScreen*fps; 
 }
 
+static uint8_t musIsTrackEnd(uint8_t voice) {
+	uint16_t addr= (memReadRAM(voice + MUS_VOICE_PTRS+3) << 8) + memReadRAM(voice + MUS_VOICE_PTRS) - 2;	// pointer stops past the 0x14f HALT command!
+
+	return (memReadRAM(addr) == 0x1) && (memReadRAM(addr+1) == 0x4f); 	// HALT command 0x14f
+}
 static uint32_t computeAudioSamples()  __attribute__((noinline));
 static uint32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
+	if (musMode) {	// check for end of .mus song 	
+		if (musIsTrackEnd(0) && musIsTrackEnd(1) && musIsTrackEnd(2)) {
+			return -1;
+		}
+	}
+	
 	numberOfSamplesRendered = 0;
 			
 	uint32_t sampleBufferIdx=0;
@@ -232,7 +265,7 @@ static uint32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 			numberOfSamplesToRender = 0;
 		} 
 	}
-
+	
 	return (numberOfSamplesRendered);
 }
 
@@ -328,14 +361,124 @@ static uint16_t loadSIDFromMemory(void *pSidData,
 	// 6: songCopyright;
 static void* loadResult [7];
 
-static 	char song_name[32], song_author[32], song_copyright[32];
 
 
-static uint32_t loadSidFile(void * inBuffer, uint32_t inBufSize)  __attribute__((noinline));
-static uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(void * inBuffer, uint32_t inBufSize) {
+#define MAX_INFO_LEN 32
+#define MAX_INFO_LINES 5
+
+static 	char 	song_name[MAX_INFO_LEN+1], 
+				song_author[MAX_INFO_LEN+1], 
+				song_copyright[MAX_INFO_LEN+1],
+				song_info_trash[MAX_INFO_LEN+1];
+
+static char* info_texts[MAX_INFO_LINES];
+
+
+static uint16_t musGetOffset(uint8_t* buf) {
+	return buf[0] + (((uint16_t)buf[1]) << 8);
+}
+
+static void resetInfoText() {
+	info_texts[0]= song_name;
+	info_texts[1]= song_author;
+	info_texts[2]= song_copyright;
+	
+	// .mus files may have more lines with unstructured text... ignore 	
+	info_texts[3]= song_info_trash;
+	info_texts[4]= song_info_trash;
+
+	memset(song_name, 0, MAX_INFO_LEN);
+	memset(song_author, 0, MAX_INFO_LEN);
+	memset(song_copyright, 0, MAX_INFO_LEN);
+}
+
+
+static void musMapInfoTexts(uint8_t *musSongData, uint32_t musSongDataLen, uint16_t trackLen) {		
+	uint8_t *infoBuff= musSongData + trackLen;
+	uint16_t maxInfo= musSongDataLen - trackLen;
+
+	resetInfoText();
+		
+	uint8_t k = 0;
+	uint8_t currentLen = 0;
+	for (uint8_t j= 0; j<maxInfo; j++) {
+		uint8_t ch= infoBuff[j];	
+		ch= !(ch == 0xd) && ((ch < 0x20) || (ch > 0x60)) ? 0x20 : ch; // remove C64 special chars.. don't have that font anyway
+		
+		if (MAX_INFO_LEN > currentLen) {
+			char* dest = info_texts[k];
+			dest[currentLen++]= (ch == 0xd)? 0 : ch;
+		} else {
+			// ignore
+		}
+		if (ch == 0xd) {
+			currentLen= 0;
+			k++;
+			if (k > MAX_INFO_LINES) break;
+		}
+	}
+}
+
+void musGetSizes(uint8_t *musSongData, uint16_t *v1len, uint16_t *v2len, uint16_t *v3len, uint16_t *trackLen) {
+	(*v1len)= musGetOffset(musSongData+2);
+	(*v2len)= musGetOffset(musSongData+4);
+	(*v3len)= musGetOffset(musSongData+6);
+
+	(*trackLen)= MUS_HEAD+ (*v1len)+ (*v2len)+ (*v3len);
+}	
+
+// Compute!'s .mus files require an addtional player that must installed with the song file.
+static uint16_t loadComputeSidplayerData(uint8_t *musSongData, uint32_t musSongDataLen) {
+	sidVersion= 2;
+	sidModel6581= 1;
+	basicProg= 0;
+	compatibility= 1;
+	ntscMode= 1;			// the .mus stuff is mostely from the US..
+	loadAddr= MUS_BASE_ADDR;
+	loadEndAddr= 0x9fff;
+
+	initAddr= MUS_BASE_ADDR;
+	playAddr= 0x1bf2;
+	
+	uint16_t pSize= COMPUTESIDPLAYER_LENGTH;
+	if((pSize > MUS_MAX_SIZE) || (musSongDataLen > MUS_MAX_SONG_SIZE)) return 0; // ERROR
+	
+	// prepare temp input buffer
+	if (musMemBuffer == 0) {
+		musMemBuffer= (uint8_t*)malloc(musMemBufferSize);	// represents mem from $1800-$9fff
+	}
+	memcpy(musMemBuffer, computeSidplayer, pSize);
+	memcpy(musMemBuffer+MUS_REL_DATA_START, musSongData, musSongDataLen);
+	
+	uint16_t v1len, v2len, v3len, trackLen;
+	musGetSizes(musSongData, &v1len, &v2len, &v3len, &trackLen);
+	if (trackLen >= musSongDataLen) {
+//		fprintf(stderr, "info cannot be retrieved  from corrupt .mus file\n");
+		return 0;
+	}		
+		
+	musMapInfoTexts(musSongData, musSongDataLen, trackLen);
+
+	uint16_t v1start= MUS_HEAD + MUS_DATA_START;
+	uint16_t v2start= v1start+ v1len;
+	uint16_t v3start= v2start+ v2len;
+	
+	// setup player
+	musMemBuffer[MUS_REL_VOICE_PTRS+0]= v1start & 0xff;
+	musMemBuffer[MUS_REL_VOICE_PTRS+1]= v2start & 0xff;
+	musMemBuffer[MUS_REL_VOICE_PTRS+2]= v3start & 0xff;
+	musMemBuffer[MUS_REL_VOICE_PTRS+3]= v1start >> 8;
+	musMemBuffer[MUS_REL_VOICE_PTRS+4]= v2start >> 8;
+	musMemBuffer[MUS_REL_VOICE_PTRS+5]= v3start >> 8;
+
+	return 1;
+}
+
+static uint32_t loadSidFile(uint32_t isMus, void * inBuffer, uint32_t inBufSize)  __attribute__((noinline));
+static uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t isMus, void * inBuffer, uint32_t inBufSize) {
 	uint8_t *inputFileBuffer= (uint8_t *)inBuffer;	
 
-	if (inBufSize < 0x7c) return 1;	// we need at least a header..
+	if (!isMus && (inBufSize < 0x7c)) return 1;	// we need at least a header..
 
 	memResetKernelROM();		// read only (only need to do this once)
 
@@ -348,35 +491,44 @@ static uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(void * inBuffer, uint32_t inBuf
 	playSpeed= 0;		
 	ntscMode= 0;
 	
-	isFilePSID= (inputFileBuffer[0x00] == 0x50) ? 1 : 0;
+	isFilePSID= (inputFileBuffer[0x00] == 0x50) || isMus ? 1 : 0;	
 	envSetPsidMode(isFilePSID);
-	
+
 	memResetRAM(envIsPSID());
 	
-	sidVersion= inputFileBuffer[0x05];
-	
-	// note: emu is not differenciating between SID chip versions (respective flags
-	// are therefore ignored - see bits 4/5)
-	
-	uint8_t flags= (sidVersion > 1) ? inputFileBuffer[0x77] : 0x0;
-	
-	sidModel6581= !((flags>>5) & 0x1); // only use 8580 when bit is explicitly set
-
-	basicProg= (envIsRSID() && (flags & 0x2));	// C64 BASIC program need to be started..
-	
-	compatibility= ( (sidVersion & 0x2) &&  ((flags & 0x2) == 0));	
-	ntscMode= (sidVersion == 2) && envIsPSID() && (flags & 0x8); // NTSC bit
-	
-	uint8_t i;
-    for (i=0;i<32;i++) song_name[i] = inputFileBuffer[0x16+i];
-    for (i=0;i<32;i++) song_author[i] = inputFileBuffer[0x36+i]; 
-    for (i=0;i<32;i++) song_copyright[i] = inputFileBuffer[0x56+i];
-	
-    if (!loadSIDFromMemory(inputFileBuffer, &loadAddr, &loadEndAddr, &initAddr, 
-			&playAddr, &maxSubsong, &actualSubsong, &playSpeed, inBufSize)) {
+	if ((musMode= isMus)) {
+		// todo: the same kind of impl could be used for .sid files that contain .mus data.. (see respectice flag)
+		if (!loadComputeSidplayerData(inputFileBuffer, inBufSize)) {
+			return 1;
+		}
+		rsidLoadSongBinary(musMemBuffer, loadAddr, musMemBufferSize);		
+	} else {
+		sidVersion= inputFileBuffer[0x05];
 		
-		return 1;	// could not load file
+		// note: emu is not differenciating between SID chip versions (respective flags
+		// are therefore ignored - see bits 4/5)
+		
+		uint8_t flags= (sidVersion > 1) ? inputFileBuffer[0x77] : 0x0;
+		
+		sidModel6581= !((flags>>5) & 0x1); // only use 8580 when bit is explicitly set
+
+		basicProg= (envIsRSID() && (flags & 0x2));	// C64 BASIC program need to be started..
+		
+		compatibility= ( (sidVersion & 0x2) &&  ((flags & 0x2) == 0));	
+		ntscMode= (sidVersion == 2) && envIsPSID() && (flags & 0x8); // NTSC bit
+		
+		uint8_t i;
+		for (i=0;i<32;i++) song_name[i] = inputFileBuffer[0x16+i];
+		for (i=0;i<32;i++) song_author[i] = inputFileBuffer[0x36+i]; 
+		for (i=0;i<32;i++) song_copyright[i] = inputFileBuffer[0x56+i];
+
+		if (!loadSIDFromMemory(inputFileBuffer, &loadAddr, &loadEndAddr, &initAddr, 
+				&playAddr, &maxSubsong, &actualSubsong, &playSpeed, inBufSize)) {
+			
+			return 1;	// could not load file
+		}
 	}
+		
 
 	if (basicProg) rsidStartFromBasic(&initAddr);
 	
