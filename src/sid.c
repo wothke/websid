@@ -647,19 +647,24 @@ static void syncRegisterCache() {
 #endif  
 }
 
-static void updateOscillator(uint8_t refosc, uint8_t voice) {
-	uint8_t ctrl= osc[voice].wave;
 
-	// reset counter / noise generator if TEST bit set (blocked at 0 as long as set)
-	if (isTestBit(voice)) {
-		// note: test bit has no influence on the envelope generator whatsoever
-		osc[voice].counter  = 0;
-		osc[voice].noisepos = 0;
-		osc[voice].noiseval = 0x7ffff8;
-	} else {
-		// update wave counter
-		osc[voice].counter = (osc[voice].counter + osc[voice].freq) & 0xFFFFFFF;				
+static void advanceOscillators() {
+	for (uint8_t voice=0; voice<3; voice++) {
+		// reset counter / noise generator if TEST bit set (blocked at 0 as long as set)
+		if (isTestBit(voice)) {
+			// note: test bit has no influence on the envelope generator whatsoever
+			osc[voice].counter  = 0;
+			osc[voice].noisepos = 0;
+			osc[voice].noiseval = 0x7ffff8;
+		} else {
+			// update wave counter
+			osc[voice].counter = (osc[voice].counter + osc[voice].freq) & 0xFFFFFFF;				
+		}		
 	}
+}
+
+static void syncOscillator(uint8_t refosc, uint8_t voice) {
+	uint8_t ctrl= osc[voice].wave;
 	if ((ctrl & SYNC_BITMASK) && (osc[refosc].counter < osc[refosc].freq)) {
 		// sync oscillator to refosc if sync bit set 
 		osc[voice].counter = osc[refosc].counter * osc[voice].freq / osc[refosc].freq;
@@ -692,6 +697,7 @@ void sidSynthRender (int16_t *buffer, uint32_t len) {
 	// now render the buffer
 	for (uint32_t bp=0; bp<len; bp++) {		
 		int32_t outo= 0, outf= 0;
+		advanceOscillators();
 		
 		/* 
 		step 2 : generate the two output signals (for filtered and non-
@@ -701,7 +707,7 @@ void sidSynthRender (int16_t *buffer, uint32_t len) {
 			uint8_t ctrl= osc[voice].wave;
 						
 			uint8_t refosc = voice ? voice-1 : 2;  // reference oscillator for sync/ring (always the "previous" voice)
-			updateOscillator(refosc, voice);
+			syncOscillator(refosc, voice);
 			
 			uint32_t ringMSB= 0;
 			if ((ctrl & RING_BITMASK) && (osc[refosc].counter < 0x8000000)) {
