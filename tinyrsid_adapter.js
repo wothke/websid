@@ -65,7 +65,7 @@ SIDBackendAdapter = (function(){ var $this = function () {
 				ScriptNodePlayer.getInstance().setPlaybackTimeout(options.timeout*1000);
 			}
 			return this.Module.ccall('playTune', 'number', ['number'], [options.track]);
-		},				
+		},
 		teardown: function() {
 			// nothing to do
 		},
@@ -113,6 +113,20 @@ SIDBackendAdapter = (function(){ var $this = function () {
 		// for debugging.. disable voices (0-2) by clearing respective bit
 		enableVoices: function(mask) {
 			this.Module.ccall('enableVoices', 'number', ['number'], [mask]);
+		},
+		
+		// C64 emu specific accessors (that might be useful in GUI)
+		isSID6581: function() {
+			return this.Module.ccall('envIsSID6581', 'number');
+		},
+		setSID6581: function(is6581) {
+			this.Module.ccall('envSetSID6581', 'number', ['number'], [is6581]);
+		},
+		isNTSC: function() {
+			return this.Module.ccall('envIsNTSC', 'number');
+		},
+		setNTSC: function(ntsc) {
+			this.Module.ccall('envSetNTSC', 'number', ['number'], [ntsc]);
 		}
 	});	return $this; })();
 	

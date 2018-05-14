@@ -26,7 +26,7 @@ uint8_t envIsFilePSID();	// original file setting
 
 int32_t envClockRate();
 
-uint8_t envIsSidModel6581();
+uint8_t envIsSID6581();
 
 // PSID stuff
 int8_t envIsRasterDrivenPSID();

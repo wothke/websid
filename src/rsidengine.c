@@ -450,7 +450,7 @@ void rsidReset(uint32_t sampleRate, uint8_t compatibility)
 	
 	cpuInit();
 
-	sidReset(sampleRate, envIsSidModel6581(), compatibility);
+	sidReset(sampleRate, envIsSID6581(), compatibility);
 	
 	cpuSetProgramMode(MAIN_OFFSET_MASK);
 	mainLoopOnlyMode= 0;

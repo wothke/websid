@@ -104,10 +104,6 @@ uint8_t envIsFilePSID(){
 	return (isFilePSID == 1);
 }
 
-uint8_t envIsSidModel6581() {
-	return sidModel6581;
-}
-
 void envSetPsidMode(uint8_t m) {
 	isPSID= m;
 }
@@ -176,7 +172,7 @@ static void resetAudioBuffers() {
 	}
 	chunkSize= numberOfSamplesPerCall*8; 	// e.g. data for 8 50hz screens (0.16 secs)
 
-	if (synthBuffer)	free(synthBuffer);
+	if (synthBuffer) free(synthBuffer);
 	if (digiBuffer)	free(digiBuffer);
 
 	synthBuffer= (int16_t*)malloc(sizeof(int16_t)*numberOfSamplesPerCall + 1);
@@ -563,6 +559,34 @@ static char* EMSCRIPTEN_KEEPALIVE getSoundBuffer() {
 static uint32_t getSampleRate() __attribute__((noinline));
 static uint32_t EMSCRIPTEN_KEEPALIVE getSampleRate() {
 	return sampleRate;
+}
+
+// additional accessors that might be useful for tweaking defaults from the GUI
+
+uint8_t envIsSID6581()  __attribute__((noinline));
+uint8_t EMSCRIPTEN_KEEPALIVE envIsSID6581() {
+	return sidModel6581;
+}
+
+static uint8_t envSetSID6581(uint8_t is6581)  __attribute__((noinline));
+static uint8_t EMSCRIPTEN_KEEPALIVE envSetSID6581(uint8_t is6581) {
+	sidModel6581= is6581;
+	return 0;
+}
+
+static uint8_t envIsNTSC()  __attribute__((noinline));
+static uint8_t EMSCRIPTEN_KEEPALIVE envIsNTSC() {
+	return ntscMode;
+}
+
+static uint8_t envSetNTSC(uint8_t isNTSC)  __attribute__((noinline));
+static uint8_t EMSCRIPTEN_KEEPALIVE envSetNTSC(uint8_t isNTSC) {
+	ntscMode= isNTSC;
+	
+	resetAudioBuffers();
+	resetTimings();
+
+	return 0;
 }
 
 

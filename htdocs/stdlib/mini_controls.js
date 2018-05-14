@@ -45,9 +45,9 @@ BasicPlayerControls.prototype = {
 	},
 	playNextSong: function() {
 		var ready= ScriptNodePlayer.getInstance().isReady();
-		if (ready && this._someSongs.length) {	
+		if (ready && this._someSongs.length) {
 			this._current= (++this._current >=this._someSongs.length) ? 0 : this._current;
-			var someSong= this._someSongs[this._current];
+			var someSong= this._someSongs[this._current];			
 			this.playSong(someSong);
 		}
 	},
@@ -66,6 +66,21 @@ BasicPlayerControls.prototype = {
 										onSuccess, o.doOnTrackReadyToPlay, o.doOnTrackEnd);
 	},
 	playSong: function(someSong) {
+		var audioCtx= ScriptNodePlayer.getInstance().getAudioContext();	// handle Google's bullshit "autoplay policy"
+		if (audioCtx.state == "suspended") {
+			var modal = document.getElementById('autoplayConfirm');	
+			modal.style.display = "block";		// force user to click
+			
+			window.globalDeferredPlay = function() {	// setup function to be used "onClick"
+				audioCtx.resume();
+				this._playSong(someSong);
+			}.bind(this);
+			
+		} else {
+			this._playSong(someSong);
+		}
+	},
+	_playSong: function(someSong) {
 		var arr= this._doParseUrl(someSong);
 		var options= arr[1];
 		if (typeof options.backendAdapter != 'undefined') {
@@ -151,6 +166,43 @@ BasicPlayerControls.prototype = {
 		ev.preventDefault();
 		ev.dataTransfer.dropEffect = 'move'; 	// needed for FF
 	},
+	initUserEngagement: function() {
+		// handle Goggle's latest "autoplay policy" bullshit (patch the HTML/Script from here within this
+		// lib so that the various existing html files need not be touched)
+						
+		var d = document.createElement("DIV");
+		d.setAttribute("id", "autoplayConfirm");
+		d.setAttribute("class", "modal-autoplay");
+
+		var dc = document.createElement("DIV");
+		dc.setAttribute("class", "modal-autoplay-content");
+		
+		var p = document.createElement("P");
+		var t = document.createTextNode("You may thank the clueless Google Chrome idiots for this useless add-on dialog - without which their \
+		user unfriendly browser will no longer play the music (which is the whole point of this page).\
+		Click outside of this box to continue.");
+		p.appendChild(t);
+		
+		dc.appendChild(p);
+		d.appendChild(dc);
+		
+		document.body.insertBefore(d, document.body.firstChild);
+
+		
+		var s= document.createElement('script');
+		s.text = 'var modal = document.getElementById("autoplayConfirm");\
+			window.onclick = function(event) {\
+				if (event.target == modal) {\
+					modal.style.display = "none";\
+					if (typeof window.globalDeferredPlay !== "undefined") { window.globalDeferredPlay();\
+					delete window.globalDeferredPlay; }\
+				}\
+			}';
+		document.body.appendChild(s);
+
+	},
+	
+	
 	initTooltip: function() {
 		var tooltipDiv= document.getElementById("tooltip");
 
@@ -297,6 +349,7 @@ BasicPlayerControls.prototype = {
 			this.appendControlElement(speed);  
 		}
 		
+		this.initUserEngagement();
 		this.initDrop();
 		this.initTooltip();
 		
