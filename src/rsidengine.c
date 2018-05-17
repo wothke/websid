@@ -182,7 +182,7 @@ static uint32_t forwardToNextInterrupt(enum timertype timerType, uint8_t ciaIdx,
 	}
 }
 
-static void renderSynth(int16_t *synthBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall, uint32_t fromTime, uint32_t toTime){
+static void renderSynth(int16_t *synthBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall, uint32_t fromTime, uint32_t toTime, int16_t **synthTraceBufs){
 	if (fromTime < cyclesPerScreen) {
 		if (toTime > cyclesPerScreen) toTime= cyclesPerScreen;
 		
@@ -190,7 +190,7 @@ static void renderSynth(int16_t *synthBuffer, uint32_t cyclesPerScreen, uint16_t
 		uint16_t len= (toTime - fromTime)*scale;
 		if(len) {
 			uint16_t startIdx= fromTime*scale;
-			sidSynthRender(&synthBuffer[startIdx], len+1);
+			sidSynthRender(&synthBuffer[startIdx], len+1, synthTraceBufs);
 		}
 	}
 }
@@ -277,7 +277,7 @@ static void processMain(uint32_t cyclesPerScreen, uint32_t startTime, int32_t ti
 	}
 }
 
-static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall) {	
+static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall, int16_t **synthTraceBufs) {	
 	// cpu cycles used during processing
 	int32_t irqCycles= 0, nmiCycles= 0, mainProgCycles= 0;			
 
@@ -350,7 +350,7 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 				tNmi+= currentNmiTimer;		// will be garbage on last run..		
 			} else {															// handle next IRQ
 				tDone= tIrq;								
-				renderSynth(synthBuffer, cyclesPerScreen, samplesPerCall, synthPos, tIrq);
+				renderSynth(synthBuffer, cyclesPerScreen, samplesPerCall, synthPos, tIrq, synthTraceBufs);
 				synthPos= tIrq;
 				
 				if (hack) {
@@ -383,7 +383,7 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 				tIrq+= currentIrqTimer;		// will be garbage on last run..	
 			}
 		}
-		renderSynth(synthBuffer, cyclesPerScreen, samplesPerCall, synthPos, cyclesPerScreen);	// fill remainder of buffer	
+		renderSynth(synthBuffer, cyclesPerScreen, samplesPerCall, synthPos, cyclesPerScreen, synthTraceBufs);	// fill remainder of buffer	
 	}
 	
 	mainProgCycles= cyclesPerScreen - (nmiCycles + irqCycles + mainProgCycles);
@@ -393,7 +393,7 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 		
 		if (mainLoopOnlyMode && envIsRSID()) {
 			// e.g. Dane's "Crush.sid"
-			renderSynth(synthBuffer, cyclesPerScreen, samplesPerCall, synthPos, cyclesPerScreen);
+			renderSynth(synthBuffer, cyclesPerScreen, samplesPerCall, synthPos, cyclesPerScreen, synthTraceBufs);
 		}
 	}
 }
@@ -409,7 +409,7 @@ static void incFrameCount() {
 /*
 * @return 		1: if digi data available   0: if not
 */
-uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall) {
+uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall, int16_t **synthTraceBufs) {
 	digiMoveBuffer2NextFrame();
 		
 	initCycleCount(0, 0);
@@ -432,13 +432,13 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 		// respective feature showed that some songs (e.g. Cycles.sid, 
 		// Wonderland XII part1.sid) fail miserably when it is used..
 
-		runScreenSimulation(synthBuffer, cyclesPerScreen, samplesPerCall);
+		runScreenSimulation(synthBuffer, cyclesPerScreen, samplesPerCall, synthTraceBufs);
 		return digiRenderSamples(digiBuffer, cyclesPerScreen, samplesPerCall);
 	} else {
 		// legacy PSID mode: one "IRQ" call per screen refresh (a PSID may actually setup CIA 1 
 		// timers but without wanting to use them - e.g. ZigZag.sid track2)
 		processInterrupt(IRQ_OFFSET_MASK, getIrqVector(), 0, -1);
-		sidSynthRender(synthBuffer, samplesPerCall);	
+		sidSynthRender(synthBuffer, samplesPerCall, synthTraceBufs);	
 		digiClearBuffer();		
 		return 0;
 	}

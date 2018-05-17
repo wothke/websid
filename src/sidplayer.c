@@ -48,11 +48,12 @@ const static uint16_t MUS_REL_VOICE_PTRS= MUS_VOICE_PTRS - MUS_BASE_ADDR;
 const static uint16_t MUS_MAX_SIZE= MUS_REL_DATA_START;
 const static uint16_t MUS_MAX_SONG_SIZE= 0xA000 - MUS_DATA_START;		// stop at BASIC ROM.. or how big are these songs?
 
+// FIXME cleanup used naming conventions, e.g. for "private" vars
+
 	// buffer used to combine .mus and player
 static uint8_t *musMemBuffer= 0;										// represents memory at MUS_BASE_ADDR
 static uint32_t musMemBufferSize= 0xA000 - MUS_BASE_ADDR;
 static uint8_t musMode= 0;
-
 
 static uint32_t totalCyclesPerSec;
 static uint32_t totalCyclesPerScreen;
@@ -75,13 +76,27 @@ static uint32_t playSpeed;
 
 static uint8_t digiEnabled = 1;
 
+static uint32_t _traceSID= 0;
+
 // make it large enough for data of 8 PAL screens.. (allocate 
 // statically to ease passing to ActionScript)
 #define BUFLEN 8*882
 static uint32_t soundBufferLen= BUFLEN;
 static int16_t soundBuffer[BUFLEN];
+	// SID debug buffers corresponding to soundBuffer
+static int16_t voice0Buffer[BUFLEN];
+static int16_t voice1Buffer[BUFLEN];
+static int16_t voice2Buffer[BUFLEN];
+static int16_t voiceDigiBuffer[BUFLEN];
 
+
+// these buffers are "per frame" i.e. 1 screen refresh, e.g. 822 samples
 static int16_t * synthBuffer= 0;
+
+static int16_t * synthBufferVoice0= 0;
+static int16_t * synthBufferVoice1= 0;
+static int16_t * synthBufferVoice2= 0;
+static int16_t ** synthTraceBuffers= 0;
 
 // only contains the digi data for 1 screen .. 
 // and is directly merged into the soundBuffer
@@ -172,12 +187,41 @@ static void resetAudioBuffers() {
 	}
 	chunkSize= numberOfSamplesPerCall*8; 	// e.g. data for 8 50hz screens (0.16 secs)
 
+	// just to make sure these is no garbage left
+	memset(voice0Buffer, 0, sizeof(int16_t)*BUFLEN);
+	memset(voice1Buffer, 0, sizeof(int16_t)*BUFLEN);
+	memset(voice2Buffer, 0, sizeof(int16_t)*BUFLEN);
+	memset(voiceDigiBuffer, 0, sizeof(int16_t)*BUFLEN);
+	
 	if (synthBuffer) free(synthBuffer);
 	if (digiBuffer)	free(digiBuffer);
 
 	synthBuffer= (int16_t*)malloc(sizeof(int16_t)*numberOfSamplesPerCall + 1);
-	digiBuffer= (uint8_t*)malloc(sizeof(uint8_t*)*numberOfSamplesPerCall + 1);	
+	digiBuffer= (uint8_t*)malloc(sizeof(uint8_t)*numberOfSamplesPerCall + 1);	
 	
+	// debug output (corresponding to synthBuffer)
+	if (synthBufferVoice0) free(synthBufferVoice0);
+	if (synthBufferVoice1) free(synthBufferVoice1);
+	if (synthBufferVoice2) free(synthBufferVoice2);
+	if (synthTraceBuffers) free(synthTraceBuffers);
+
+	if (_traceSID) {	// availability of synthTraceBuffers controls if SID will generate the respective output
+		synthBufferVoice0= (int16_t*)calloc(sizeof(int16_t),numberOfSamplesPerCall + 1);	
+		synthBufferVoice1= (int16_t*)calloc(sizeof(int16_t),numberOfSamplesPerCall + 1);	
+		synthBufferVoice2= (int16_t*)calloc(sizeof(int16_t),numberOfSamplesPerCall + 1);	
+		
+		synthTraceBuffers= (int16_t**)malloc(sizeof(int16_t*)*3);
+		
+		synthTraceBuffers[0]= synthBufferVoice0;
+		synthTraceBuffers[1]= synthBufferVoice1;
+		synthTraceBuffers[2]= synthBufferVoice2;
+	} else {
+		synthBufferVoice0= 0;	
+		synthBufferVoice1= 0;	
+		synthBufferVoice2= 0;	
+
+		synthTraceBuffers= 0;	// disables respective SID rendering
+	}
 	numberOfSamplesRendered = 0;
 	numberOfSamplesToRender = 0;	
 }
@@ -238,7 +282,7 @@ static uint32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 			numberOfSamplesToRender = numberOfSamplesPerCall;
 			sampleBufferIdx=0;
 			hasDigi= rsidProcessOneScreen(synthBuffer, digiBuffer, 
-						totalCyclesPerScreen, numberOfSamplesPerCall);
+						totalCyclesPerScreen, numberOfSamplesPerCall, synthTraceBuffers);
 			if (!digiEnabled) hasDigi= 0;
 		}
 		
@@ -246,22 +290,45 @@ static uint32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 			uint32_t availableSpace = chunkSize-numberOfSamplesRendered;
 			
 			memcpy(&soundBuffer[numberOfSamplesRendered], &synthBuffer[sampleBufferIdx], sizeof(int16_t)*availableSpace);
-	
 			digiMergeSampleData(hasDigi, &soundBuffer[numberOfSamplesRendered], &digiBuffer[sampleBufferIdx], availableSpace);			
-			
+	
+			/*
+			* In addition to the actual sample data played by WebAudio, buffers containing raw voice data are also
+			* created here. These are 1:1 in sync with the sample buffer, i.e. for each sample entry in the sample buffer
+			* there are respective there is a corresponding entry in the additional buffers - which are all exactly the
+			* same size as the sample buffer. Note: things start to become messy when trying to use (e.g. visualize) 
+			* respective add-on data *in-sync* with the actual WebAudio playback (see AbstractTicker).
+			*/
+	
+			if (_traceSID) {
+				// do the same for the respecive voice traces
+				memcpy(&voice0Buffer[numberOfSamplesRendered], &synthBufferVoice0[sampleBufferIdx], sizeof(int16_t)*availableSpace);
+				memcpy(&voice1Buffer[numberOfSamplesRendered], &synthBufferVoice1[sampleBufferIdx], sizeof(int16_t)*availableSpace);
+				memcpy(&voice2Buffer[numberOfSamplesRendered], &synthBufferVoice2[sampleBufferIdx], sizeof(int16_t)*availableSpace);
+					
+				memset(&voiceDigiBuffer[numberOfSamplesRendered], 0, availableSpace*sizeof(int16_t)); // clear buffer so that existing "merge" can be reused
+				digiMergeSampleData(hasDigi, &voiceDigiBuffer[numberOfSamplesRendered], &digiBuffer[sampleBufferIdx], availableSpace);			
+			}
 			sampleBufferIdx += availableSpace;
 			numberOfSamplesToRender -= availableSpace;
 			numberOfSamplesRendered = chunkSize;
 		} else {
 			memcpy(&soundBuffer[numberOfSamplesRendered], &synthBuffer[sampleBufferIdx], sizeof(int16_t)*numberOfSamplesToRender);
-
 			digiMergeSampleData(hasDigi, &soundBuffer[numberOfSamplesRendered], &digiBuffer[sampleBufferIdx], numberOfSamplesToRender);
-		
+
+			if (_traceSID) {
+				// do the same for the respecive voice traces
+				memcpy(&voice0Buffer[numberOfSamplesRendered], &synthBufferVoice0[sampleBufferIdx], sizeof(int16_t)*numberOfSamplesToRender);
+				memcpy(&voice1Buffer[numberOfSamplesRendered], &synthBufferVoice1[sampleBufferIdx], sizeof(int16_t)*numberOfSamplesToRender);
+				memcpy(&voice2Buffer[numberOfSamplesRendered], &synthBufferVoice2[sampleBufferIdx], sizeof(int16_t)*numberOfSamplesToRender);
+					
+				memset(&voiceDigiBuffer[numberOfSamplesRendered], 0, numberOfSamplesToRender*sizeof(int16_t)); // clear buffer so that existing "merge" can be reused
+				digiMergeSampleData(hasDigi, &voiceDigiBuffer[numberOfSamplesRendered], &digiBuffer[sampleBufferIdx], numberOfSamplesToRender);			
+			}
 			numberOfSamplesRendered += numberOfSamplesToRender;
 			numberOfSamplesToRender = 0;
 		} 
 	}
-	
 	return (numberOfSamplesRendered);
 }
 
@@ -278,8 +345,10 @@ static uint32_t EMSCRIPTEN_KEEPALIVE enableVoices(uint32_t mask) {
 	return 0;
 }
 
-static uint32_t playTune(uint32_t selectedTrack)  __attribute__((noinline));
-static uint32_t EMSCRIPTEN_KEEPALIVE playTune(uint32_t selectedTrack) {	
+static uint32_t playTune(uint32_t selectedTrack, uint32_t traceSID)  __attribute__((noinline));
+static uint32_t EMSCRIPTEN_KEEPALIVE playTune(uint32_t selectedTrack, uint32_t traceSID) {
+	_traceSID= traceSID; 
+	
 	if (1 || (sidVersion <= 2)) {
 		actualSubsong= selectedTrack & 0xff;
 		digiEnabled = 1;
@@ -589,6 +658,31 @@ static uint8_t EMSCRIPTEN_KEEPALIVE envSetNTSC(uint8_t isNTSC) {
 	resetTimings();
 
 	return 0;
+}
+
+static char* getBufferVoice1() __attribute__((noinline));
+static char* EMSCRIPTEN_KEEPALIVE getBufferVoice1() {
+	return (char*) voice0Buffer;
+}
+
+static char* getBufferVoice2() __attribute__((noinline));
+static char* EMSCRIPTEN_KEEPALIVE getBufferVoice2() {
+	return (char*) voice1Buffer;
+}
+
+static char* getBufferVoice3() __attribute__((noinline));
+static char* EMSCRIPTEN_KEEPALIVE getBufferVoice3() {
+	return (char*) voice2Buffer;
+}
+
+static char* getBufferVoice4() __attribute__((noinline));
+static char* EMSCRIPTEN_KEEPALIVE getBufferVoice4() {
+	return (char*) voiceDigiBuffer;
+}
+
+static uint16_t getRegisterSID(uint16_t reg) __attribute__((noinline));
+static uint16_t EMSCRIPTEN_KEEPALIVE getRegisterSID(uint16_t reg) {
+	return  memReadIO(0xd400 + reg);
 }
 
 

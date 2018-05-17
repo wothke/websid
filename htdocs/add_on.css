@@ -79,6 +79,19 @@
 	-moz-transform: scaleY(-1);
 }
 
+
+#sidVoice1,#sidVoice2,#sidVoice3,#sidVoiceDigi {
+	position: relative;	
+
+	top: 0px;
+	left: 0px;
+	z-index:1;
+	border-style: solid;
+	border-color: #92a8d1;
+	border-width: 1px;
+}
+
+
 .drop {
   position: relative;
 	width:300px;

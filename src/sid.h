@@ -20,7 +20,7 @@ void sidPoke(uint8_t reg, uint8_t val);		// update SID registers
 void sidSetMute(uint8_t voice, uint8_t value);
 
 // use current SID state to generate audio samples
-void sidSynthRender (int16_t *buffer, uint32_t len);
+void sidSynthRender (int16_t *buffer, uint32_t len, int16_t **synthTraceBufs);
 void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t v);
 
 

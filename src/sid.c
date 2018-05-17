@@ -686,7 +686,7 @@ static void syncOscillator(uint8_t refosc, uint8_t voice) {
 * sample or better per cycle basis. But that would mean that the currently used "predictive" emulation 
 * logic would need to be completely replaced..  and so far that does not seem to be worth the trouble.
 */
-void sidSynthRender (int16_t *buffer, uint32_t len) {
+void sidSynthRender (int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {	
 	/*
 	note: TEST (Bit 3): The TEST bit, when set to one, resets and locks oscillator 1 at zero 
 	until the TEST bit is cleared. The noise waveform output of oscillator 1 is also 
@@ -789,32 +789,47 @@ void sidSynthRender (int16_t *buffer, uint32_t len) {
 
 			// outf and outo here end up with the sum of 3 voices..
 			// envelopeOutput has 8-bit and and outv (8 or 16 depending on the used impl)
+
+			// old 8-bit wave * 8 bit envelope	-> 16bit >>6 = 10bit
+			// new 16-bit wave * 8 bit envelope	-> 24bit >>8 = 16bit
+
 #ifdef OLD_TINYSID_IMPL
 	// old impl based on 8-bit wave output (after >>6 the result here is 10-bit.. WHY?)
-	#define RESCALE >>6
-	#define RESCALE_NO_FILTER >>2
+	#define RESCALE 6
+	#define RESCALE_NO_FILTER 2
 	#define BASELINE 0x80
 #else
 	// Hermit's impl based on 16-bit wave output
-	#define RESCALE	>>8				// rescale by envelopeOutput to get 16-bit output
-	#define RESCALE_NO_FILTER >>8		
+	#define RESCALE	8				// rescale by envelopeOutput to get 16-bit output
+	#define RESCALE_NO_FILTER 8		
 	#define BASELINE 0x8000	
 #endif
-			
+			int32_t voiceOut= ( (((int32_t)outv)-BASELINE) * osc[voice].envelopeOutput );
+
 #ifdef USE_FILTER
 			if (((voice<2) || filter.v3ena) && !voiceMute) {
-				// old 8-bit wave * 8 bit envelope	-> 16bit >>6 = 10bit
-				// new 16-bit wave * 8 bit envelope	-> 24bit >>8 = 16bit
 				if (osc[voice].filter) {
-					outf+=( (((int32_t)outv)-BASELINE) * osc[voice].envelopeOutput ) RESCALE;
+					outf+= voiceOut >> RESCALE;
 				} else {
-					outo+=( (((int32_t)outv)-BASELINE) * osc[voice].envelopeOutput ) RESCALE;
+					outo+= voiceOut >> RESCALE;
 				}
 			}
 #else
 			// Don't use filters, just mix all voices together
-			if (!voiceMute) outf+= ( (((int32_t)outv)-BASELINE) * osc[voice].envelopeOutput) RESCALE_NO_FILTER; 
+			if (!voiceMute) { 
+				outf+= voiceOut >> RESCALE_NO_FILTER; 
+			}
 #endif
+			// trace output (always make it 16-bit - in case somebody wants to play the voices separately)
+			
+			if (synthTraceBufs) {
+				int16_t *voiceTraceBuffer= synthTraceBufs[voice];
+#ifdef OLD_TINYSID_IMPL
+				*(voiceTraceBuffer+bp)= (int16_t)voiceOut;				
+#else
+				*(voiceTraceBuffer+bp)= (int16_t)(voiceOut >> 8);			
+#endif
+			}
 		}
 
 #ifdef USE_FILTER

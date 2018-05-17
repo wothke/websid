@@ -51,11 +51,19 @@
 <script>window.openDetails=false;</script>
 <script type="text/javascript" src="stdlib/mini_display.js"></script>
 <script type="text/javascript" src="stdlib/mini_controls.js"></script>
+<script type="text/javascript" src="stdlib/sid_tracer.js"></script>
 
 <script type="text/javascript" src="backend_tinyrsid.js"></script>
 <script>
 var playerControls;
 var	songDisplay;
+
+var displayVoice1;
+var displayVoice2;
+var displayVoice3;
+var displayVoice4;
+var displayRegs;
+
 	
 // configure what music infos to display in SongDisplay
 SIDDisplayAccessor = (function(){ var $this = function (doGetSongInfo) {
@@ -76,6 +84,12 @@ function doOnTrackEnd(){
 function doOnTrackReadyToPlay(){ 	
 	ScriptNodePlayer.getInstance().play();
 	songDisplay.redrawSongInfo();
+	
+	displayVoice1.reqAnimationFrame();
+	displayVoice2.reqAnimationFrame();
+	displayVoice3.reqAnimationFrame();
+	displayVoice4.reqAnimationFrame();
+	displayRegs.reqAnimationFrame();
 }
 // depending on the browser/timing the player may be ready before or after (see WASM) init(), i.e.
 // the startup sequence must handle both cases (music can only be started when
@@ -87,10 +101,18 @@ function doOnPlayerReady() {
 }
 
 function init() {
+	window.sidTracer= new SidTracer(8192);
+	displayVoice1 = new VoiceDisplay('voice1Canvas', function() { return sidTracer.getDataVoice1();});
+	displayVoice2 = new VoiceDisplay('voice2Canvas', function() { return sidTracer.getDataVoice2();});
+	displayVoice3 = new VoiceDisplay('voice3Canvas', function() { return sidTracer.getDataVoice3();});
+	displayVoice4 = new VoiceDisplay('voice4Canvas', function() { return sidTracer.getDataVoice4();});
+	displayRegs= new RegDisplay('sidRegDump', function(reg) { return sidTracer.getRegisterSID(reg);});
+	
+	
 	// --------------------------- SID music player -----------------------
 	var basePath= '';		// not needed here
 	ScriptNodePlayer.createInstance(new SIDBackendAdapter(), basePath, [], true, doOnPlayerReady,
-										doOnTrackReadyToPlay, doOnTrackEnd);
+										doOnTrackReadyToPlay, doOnTrackEnd, function(){}, sidTracer);
 		
 	// --------------------------- UI - basic player controls --------------
 	var songs = [
@@ -147,6 +169,7 @@ function init() {
 						var options= {};
 						options.track= track;
 						options.timeout= timeout;
+						options.traceSID= true;	// XXX FIXME DOES NOT WORK! enable additional output used by the SidTracer
 											
 						return [url, options];
 					} else {
@@ -185,6 +208,19 @@ function init() {
  
   <p>Please use the below controls to navigate between the songs that you have dropped on the player:
   <span id="controls"></span>
+  <div id="sidVoice1">voice 1 <canvas id="voice1Canvas" width="40" height="512"></canvas></div>  
+  <div id="sidVoice2">voice 2 <canvas id="voice2Canvas" width="40" height="512"></canvas></div>  
+  <div id="sidVoice3">voice 3<canvas id="voice3Canvas" width="40" height="512"></canvas></div>  
+  <div id="sidVoiceDigi">digi&nbsp;&nbsp;&nbsp;<canvas id="voice4Canvas" width="80" height="512"></canvas></div>  
+  <div"><span id="sidRegDump"></span></div>  
+  <div class="slidecontainer">
+  Zoom: <input type="range" min="1" max="5" value="5" class="slider" id="zoom" onchange="function(e){ this.setVolume(gain.value/255); }">
+  <script>
+	var slider = document.getElementById("zoom");
+	slider.onchange = function(e){ window.sidTracer.setOutputSize(246 << slider.value)  };		
+  </script>
+</div>
+
  </div>
 </details>
 <aside></aside>
@@ -198,6 +234,7 @@ function init() {
 		<!-- use "hight" greater than 80 and the fucking reflection is gone.. FUCK YOU IDIOTS -->
 		<div id="moz-reflect-spectrum"><canvas id="spectrumCanvas" width="800" height="80"></canvas></div>
   </div>
+
   <div id="drop" class="drop"><img src="c64.gif" /></div><!--see BasicPlayerControls-->
 </section>
 </body>
