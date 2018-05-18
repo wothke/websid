@@ -6,8 +6,9 @@
 *
 * <p>This crude UI is not meant to be reusable but to show how the ScriptNodePlayer is used. ()
 */
-BasicPlayerControls = function(songs, enableSeek, enableSpeedTweak, doParseUrl, doOnDropFile, current) {
+BasicPlayerControls = function(songs, enableSeek, enableSpeedTweak, doParseUrl, doOnDropFile, current, defaultOptions) {
 	this._doOnDropFile= doOnDropFile;
+	this._options= (typeof defaultOptions != 'undefined') ? defaultOptions : {};
 	this._current= (typeof current != 'undefined')?current:-1;
 	if(Object.prototype.toString.call( songs ) === '[object Array]') {
 		this._someSongs=  songs;
@@ -154,8 +155,7 @@ BasicPlayerControls.prototype = {
 		}
 	},
 	drop: function(ev) {
-		var options= {};
-		this.dropFile(true, ev, 'loadMusicFromTmpFile', options, (function(filename){		
+		this.dropFile(true, ev, 'loadMusicFromTmpFile', this._options, (function(filename){		
 						this.addSong(filename);
 					}).bind(this));
 	},

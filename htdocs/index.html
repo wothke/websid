@@ -169,7 +169,7 @@ function init() {
 						var options= {};
 						options.track= track;
 						options.timeout= timeout;
-						options.traceSID= true;	// XXX FIXME DOES NOT WORK! enable additional output used by the SidTracer
+						options.traceSID= true;	// enable additional output used by the SidTracer
 											
 						return [url, options];
 					} else {
@@ -177,7 +177,8 @@ function init() {
 						return [someSong, new Object()];
 					}
 				}),
-				0
+				0, -1, 
+				{traceSID: true}
 			);
 
 	// limit rendering to 50% of the available time (Tiny'R'Sid is fast so there is no need ..)
