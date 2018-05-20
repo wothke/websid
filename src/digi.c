@@ -885,7 +885,7 @@ uint8_t digiRenderSamples(uint8_t * digiBuffer, uint32_t cyclesPerScreen, uint16
 static inline int16_t genDigi(int16_t in, uint8_t digi) { 
     // transform unsigned 8 bit range into signed 16 bit (–32,768 to 32,767) range	(
 	// shift only 7 instead of 8 because digis are otherwise too loud)	
-	int32_t value = in + (((digi & 0xff) << 7) - 0x4000); 
+	int32_t value = in + (((digi & 0xff) << 6) - (0x4000>>2)); // FIXME do all the rescaling in one place!
 	
 	const int32_t clipValue = 32767;
 	if ( value < -clipValue ) {

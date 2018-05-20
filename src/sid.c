@@ -51,6 +51,9 @@
 // switch to completely disable use of the filter
 #define USE_FILTER
 
+//#define USE_DIGIFILTER	// PROBLEM: this totally messes up the samples of songs like Vortex.. 
+//#define USE_JS_MATH		// doesn't make any difference
+
 // switch to use integer based 8-bit waveform / filter implementation originally used in the old "tinysid": supposedly this
 // was a performance optimization meant to avoid "expensive" floating point calculations.
 // It seems there is no point in using this optimization for the JavaScript version:
@@ -58,8 +61,10 @@
 
 #ifdef OLD_TINYSID_IMPL
 	#define WAVE_DATA_TYPE uint8_t
+	uint8_t previousOut[3];
 #else
 	#define WAVE_DATA_TYPE uint16_t
+	uint16_t previousOut[3];
 #endif
 
 // FIXME: broken.. Clique_Baby.sid does not work in "cycle mode" .. why?
@@ -88,10 +93,12 @@ struct mosSid {
 		double prevwavdata;
 		WAVE_DATA_TYPE prevwfout;
     } voices[3];
-    uint8_t ffreqlo;
-    uint8_t ffreqhi;
-    uint8_t resFtv;
-    uint8_t ftpVol;
+	
+	// filter
+    uint8_t ffreqlo;	// filter cutoff low (3 bits)
+    uint8_t ffreqhi;	// filter cutoff high (8 bits)
+    uint8_t resFtv;		// resonance (4bits) / Filt
+    uint8_t ftpVol;		// mode (hi/band/lo pass) / volume
 	
 	struct envGenerator {	// envelope generator stuff
 		int32_t limitLFSR; // the original cycle counter would be 15-bit (here samples are counted & counter is rescaled accordingly)
@@ -233,7 +240,7 @@ struct sidFilter {
 	// derived from Hermit's filter implementation: see http://hermit.sidrip.com/jsSID.html
 	double prevlowpass;
     double prevbandpass;
-#if 0	
+#ifdef USE_DIGIFILTER	
 	double prevlowpassDigi;
     double prevbandpassDigi;
 #endif	
@@ -419,82 +426,117 @@ static void createCombinedWF(double *wfarray, double bitmul, double bitstrength,
 			for (uint8_t k = 0; k < 12; k++) {
 				bitlevel += (bitmul / pow(bitstrength, abs(k - j))) * (((i >> k) & 1) - 0.5);
 			}
-			wfarray[i] += (bitlevel >= treshold) ? pow(2, j) : 0;
+			wfarray[i] += (bitlevel >= treshold) ? pow(2.0, (double)j) : 0;
 		}
 		wfarray[i] *= 12;
 	}
 }
+
+
+#include <emscripten.h>
+
+static double jsPow(double a, double b) {
+	// tests suggest that the 2 impls are actually equivalent.. these do not seem to be 
+	// the cause of the filter issues..
+#ifdef USE_JS_MATH	
+	return EM_ASM_DOUBLE({
+			return Math.pow($0, $1);
+		}, a, b);
+#else
+	return pow(a, b);
+#endif
+}
+static double jsExp(double a) {	
+#ifdef USE_JS_MATH	
+	return EM_ASM_DOUBLE({
+			return Math.exp($0);
+		}, a);
+#else
+	return exp(a);
+#endif
+}
+
 #ifndef OLD_TINYSID_IMPL
 static double runFilter(double in, double output, double *prevbandpass, double *prevlowpass) {
-	// derived from filter implementation used by Hermit:
+	// derived from Hermit's filter implementation:
 	//"FILTER: two integrator loop bi-quadratic filter, workings learned from resid code, but I kindof simplified the equations
 	//The phases of lowpass and highpass outputs are inverted compared to the input, but bandpass IS in phase with the input signal.
 	//The 8580 cutoff frequency control-curve is ideal, while the 6581 has a threshold, and below it outputs a constant lowpass frequency."
 	
-	double cutoff = ((double)(sid.ffreqlo & 7)) / 8 +  sid.ffreqhi + 0.2;	// why the +0.2 ?
+	// The ugly effect on Vortex's digi channel suggests that this filter impl might be flawed.. (and with 
+	// the above direct use of the respective JavaScript math functions this impl should be identical to
+	// Hermit's original JavaScript code..) interestingly respective artefacts do not seem to occur during regular 
+	// voice data filtering so maybe it is "normal" behavior for this kind of input data?
+		
+	// weird scale.. - using the "lo" register as a fractional part..
+	double cutoff = ((double)(sid.ffreqlo & 0x7)) / 8 +  sid.ffreqhi + 0.2;	// why the +0.2 ?
+	
 	double resonance;
 	
 	if (!sid.isModel6581) {
-		cutoff = 1 - exp(cutoff * filter.cutoff_ratio_8580);
-		resonance = pow(2, (((double)(4 - (sid.resFtv >> 4))) / 8));
+		cutoff = 1.0 - jsExp(cutoff * filter.cutoff_ratio_8580);
+		resonance = jsPow(2.0, ((4.0 - (sid.resFtv >> 4)) / 8));
 	} else {
-		if (cutoff < 24) cutoff = 0.035;
-		else cutoff = ((double)1) - 1.263 * exp(cutoff * filter.cutoff_ratio_6581);
-		resonance = (sid.resFtv > 0x5F) ? ((double)8) / (sid.resFtv >> 4) : 1.41;
+		if (cutoff < 24.0) { cutoff = 0.035; }
+		else { cutoff = 1.0 - 1.263 * jsExp(cutoff * filter.cutoff_ratio_6581); }
+		resonance = (sid.resFtv > 0x5F) ? 8.0 / (sid.resFtv >> 4) : 1.41;
 	}
 	double tmp = in + (*prevbandpass) * resonance + (*prevlowpass);
 			
-	if (filter.hiEna) 
-		output -= tmp;
+	if (filter.hiEna) { output -= tmp;} 
 	tmp = (*prevbandpass) - tmp * cutoff;
 	(*prevbandpass) = tmp;
-	if (filter.bandEna) 
-		output -= tmp;
+	
+	if (filter.bandEna) { output -= tmp; }
 	tmp = (*prevlowpass) + tmp * cutoff;
 	(*prevlowpass) = tmp;
-	if (filter.lowEna) 
-		output += tmp;
 	
+	if (filter.lowEna) { output += tmp; }	
 	return output;
 }
 #endif
 
-inline void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t voice) {
+void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 	// depending on the used sample playback implementation, respective digi samples 
 	// should be processed by the filter  (e.g. for PWM - but not for D418)
 	// respective sample data would need to be merged into the regular SID output before 
 	// the filter is applied... this emulator does NOT support this yet - the below 
 	// workaround separately runs the imaginary "digi channel" through the filter 
 
-#if !defined(OLD_TINYSID_IMPL) && defined(USE_FILTER)
-	if (((voice<2) || filter.v3ena) && osc[voice].filter) {
-#if 0
-		// Use of the below impl introduces ugly noise artefacts into the digi in songs like "Vortex".
-		// FIXME: Is this an indication that something is wrong with the filter in general? or just some bug in this code here?
-		filter.prevbandpassDigi= filter.prevlowpassDigi= 0;	// this reduces the periodic distortions.. 
 	
-		double volMul= ((double)filter.vol)/0xf * 0.66; // apply filter volume / adjust for "perceved loudness"	- digis are too loud
+#if !defined(OLD_TINYSID_IMPL) && defined(USE_FILTER)
+	if (((voice<2) || filter.v3ena || (!filter.v3ena && osc[voice].filter)) && osc[voice].filter) {
+#ifdef USE_DIGIFILTER
+		// Use of the below impl introduces ugly noise artefacts into the digi in songs like "Vortex".
+		// FIXME: Is this an indication that something is wrong with the filter in general? or is it just 
+		// some bug in this code here?
+		// note: "Vortex" uses a frequency modulation based impl on voice=2 for its digis (and only the
+		// respective data seems to be correctly fed in here..)
 		
+		double volMul= ((double)filter.vol)/0xf * 0.66;	// volume reduction tuned according to LMan's feedback 
 		for (uint32_t i= 0; i<len; i++) {
-			double in= (((int32_t)digiBuffer[i]) << 8) - 0x8000;		// filter logic designed for 16-bit signed			
-			double output= runFilter(in, (double)0x0, &(filter.prevbandpassDigi), &(filter.prevlowpassDigi));
+			double in= ((((int32_t)digiBuffer[i]) << 8) - 0x8000);	// filter logic designed for 16-bit signed			
 			
-			// "output" is a signed 16-bit sample - but "digiBuffer" expects unsigned 8-bit 
-			output+= 0x8000;	// convert to unsigned			
-			output*= volMul;
+			// output signal seems to be "inverted"
+			double output= 0;
+			output= runFilter(in, output, &(filter.prevbandpassDigi), &(filter.prevlowpassDigi));
 			
-			// filter may drive output outside the available range..
-			uint32_t unsignedOut= output<0 ? 0 : (output>0xffff ? 0xffff : round(output));			
-			digiBuffer[i]= unsignedOut >> 8; // SID output
+			
+			output += 0x8000;		// back  to unsigned
+			output *= volMul;		// apply filter volume
+			
+			// filter might drive output outside the available range..
+			uint32_t unsignedOut= output<0 ? 0 : (output>0xff00 ? 0xff00 : output);			
+			
+			digiBuffer[i]= unsignedOut >> 8; // unsigned 8-bit 
 		}
 #else
+		double volAdjust= 0.66;	 // tuned according to LMan's feedback
 		for (uint32_t i= 0; i<len; i++) {
-			digiBuffer[i]= round((((int16_t)digiBuffer[i])-128) * 0.66)+128;	// tuned according to LMan's feedback
+			digiBuffer[i]= round((((int16_t)digiBuffer[i])-128) * volAdjust)+128;	
 		}
 #endif		
-		
 	}
-
 #endif
 }
 
@@ -534,14 +576,17 @@ static WAVE_DATA_TYPE createPulseOutput(uint8_t voice) {
 	return plsout;
 #else
 	// Hermit's "anti-aliasing" (note: this impl is based on 28-bit counter where Hermit uses 24-bit)
-	if (isTestBit(voice)) return 0xFF;	// pulse start position
+	if (isTestBit(voice)) return 0xFFFF;	// pulse start position
 	
 	uint32_t pw = osc[voice].pulse >> 12;	// 16 bits pulse expected (but we have 28)
 	uint32_t tmp = osc[voice].freq >> 13;	// our freq is for 28bit counter - not 24bit as in Hermit's impl
+
 	if (0 < pw && pw < tmp) pw = tmp;
 	tmp ^= 0xFFFF;
 	if (pw > tmp) pw = tmp;
 	tmp = osc[voice].counter >> 12;			// 28bits not 24
+
+		// Hermit's "anti-aliasing"
 	double step = 256 / (osc[voice].freq >> 20); //simple pulse, most often used waveform, make it sound as clean as possible without oversampling
 
 	int32_t wfout;
@@ -634,7 +679,7 @@ static void syncRegisterCache() {
 	filter.bandEna = getBit(sid.ftpVol,5);	// bandpass
 	filter.hiEna = getBit(sid.ftpVol,6);	// highpass
 	filter.v3ena = !getBit(sid.ftpVol,7);	// chan3 off
-	filter.vol   = (sid.ftpVol & 0xf);
+	filter.vol   = (sid.ftpVol & 0xf);		// main volume
 
 	#ifdef OLD_TINYSID_IMPL			
 		/* 
@@ -793,6 +838,14 @@ void sidSynthRender (int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {
 				simOneEnvelopeCycle(voice);
 			}	  
 #endif
+
+			// FIXME ask Hermit for testcase song where this is used.. 
+			if (ctrl & 0xf0) {		// emulate waveform 00 floating wave-DAC 
+				previousOut[voice]= outv;		
+			} else {
+				outv= previousOut[voice];		
+			}
+
 			// now route the voice output to either the non-filtered or the
 			// filtered channel and dont forget to blank out osc3 if desired	
 
@@ -816,10 +869,14 @@ void sidSynthRender (int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {
 			int32_t voiceOut= ( (((int32_t)outv)-BASELINE) * osc[voice].envelopeOutput );
 
 #ifdef USE_FILTER
-			if (((voice<2) || filter.v3ena) && !voiceMute) {
+			// NOTE: Voice 3 is not silenced by !v3ena if it is routed through the filter!
+//XXXX this change might be audible..
+			if (((voice<2) || filter.v3ena || (!filter.v3ena && osc[voice].filter)) && !voiceMute) {
 				if (osc[voice].filter) {
+					// route to filter
 					outf+= voiceOut >> RESCALE;
 				} else {
+					// route directly to output
 					outo+= voiceOut >> RESCALE;
 				}
 			}
@@ -1105,8 +1162,8 @@ static void resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 	fillMem((uint8_t*)&filter,0,sizeof(filter));
 
 #ifndef OLD_TINYSID_IMPL
-    filter.cutoff_ratio_8580 = ((double)-2) * 3.14 * (12500 / 256) / sid.sampleRate,
-    filter.cutoff_ratio_6581 = ((double)-2) * 3.14 * (20000 / 256) / sid.sampleRate;
+    filter.cutoff_ratio_8580 = (-2.0) * 3.1415926535897932385 * (12500.0 / 256) / sid.sampleRate,
+    filter.cutoff_ratio_6581 = (-2.0) * 3.1415926535897932385 * (20000.0 / 256) / sid.sampleRate;
 //	filter.prevbandpass = 0;	// redundant
 //	filter.prevlowpass = 0;	
 #else
@@ -1126,6 +1183,7 @@ static void resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 //		osc[i].adsrBugTriggerTime= 0;	// redundant
 //		osc[i].adsrBugFrameCount= 0;
 	}
+	fillMem((uint8_t*)previousOut,0,sizeof(previousOut));
 }
 
 static void resetEnvelopeGenerator(uint32_t sampleRate) {
