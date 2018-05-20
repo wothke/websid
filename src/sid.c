@@ -57,14 +57,13 @@
 // switch to use integer based 8-bit waveform / filter implementation originally used in the old "tinysid": supposedly this
 // was a performance optimization meant to avoid "expensive" floating point calculations.
 // It seems there is no point in using this optimization for the JavaScript version:
+// FIXME trash old impl
 //#define OLD_TINYSID_IMPL				
 
 #ifdef OLD_TINYSID_IMPL
 	#define WAVE_DATA_TYPE uint8_t
-	uint8_t previousOut[3];
 #else
 	#define WAVE_DATA_TYPE uint16_t
-	uint16_t previousOut[3];
 #endif
 
 // FIXME: broken.. Clique_Baby.sid does not work in "cycle mode" .. why?
@@ -552,7 +551,7 @@ static WAVE_DATA_TYPE createTriangleOutput(uint8_t voice, uint32_t ringMSB) {
 #else
 	uint32_t tmp = osc[voice].counter ^ ringMSB;	// 28-bit
     uint32_t wfout = (tmp ^ (tmp & 0x8000000 ? 0xFFFFFFF : 0)) >> 11;
-	return wfout;
+	return wfout & 0xFFFF;
 #endif
 }			
 static WAVE_DATA_TYPE createSawOutput(uint8_t voice) {	// test with Alien or Kawasaki_Synthesizer_Demo
@@ -569,38 +568,42 @@ static WAVE_DATA_TYPE createSawOutput(uint8_t voice) {	// test with Alien or Kaw
 	return wfout;
 #endif
 }	
-static WAVE_DATA_TYPE createPulseOutput(uint8_t voice) {
+
+static void calcPulseBase(uint8_t voice, uint32_t *tmp, uint32_t *pw) {
+	// based on Hermit's impl (note: this impl is based on 28-bit counter where Hermit uses 24-bit)
+	(*pw) = osc[voice].pulse >> 12;	// 16 MSB pulse needed (but we have 28)
+	(*tmp) = osc[voice].freq >> 13;	// 15 MSB needed: our freq is for 28bit counter - not 24bit as in Hermit's impl
+	
+	if (0 < (*pw) && (*pw) < (*tmp)) { (*pw) = (*tmp); }
+	(*tmp) ^= 0xFFFF;
+	if ((*pw) > (*tmp)) (*pw) = (*tmp);
+	(*tmp) = osc[voice].counter >> 12;			// 16 MSB needed: 28bits not 24
+}
+
+
+static WAVE_DATA_TYPE createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// elementary pulse
 #ifdef OLD_TINYSID_IMPL
 	// old impl
 	uint8_t plsout = isTestBit(voice) ? sid.level_DC : (uint8_t) ((osc[voice].counter > osc[voice].pulse)-1) ^ 0xff;
 	return plsout;
 #else
-	// Hermit's "anti-aliasing" (note: this impl is based on 28-bit counter where Hermit uses 24-bit)
 	if (isTestBit(voice)) return 0xFFFF;	// pulse start position
 	
-	uint32_t pw = osc[voice].pulse >> 12;	// 16 bits pulse expected (but we have 28)
-	uint32_t tmp = osc[voice].freq >> 13;	// our freq is for 28bit counter - not 24bit as in Hermit's impl
-
-	if (0 < pw && pw < tmp) pw = tmp;
-	tmp ^= 0xFFFF;
-	if (pw > tmp) pw = tmp;
-	tmp = osc[voice].counter >> 12;			// 28bits not 24
-
 		// Hermit's "anti-aliasing"
-	double step = 256 / (osc[voice].freq >> 20); //simple pulse, most often used waveform, make it sound as clean as possible without oversampling
+	double step = 256.0 / (osc[voice].freq >> 20); //simple pulse, most often used waveform, make it sound as clean as possible without oversampling
 
 	int32_t wfout;
 	if (tmp < pw) {
 		wfout = round((0xFFFF - pw) * step);
-		if (wfout > 0xFFFF) wfout = 0xFFFF;
+		if (wfout > 0xFFFF) { wfout = 0xFFFF; }
 		wfout = wfout - round((pw - tmp) * step);
-		if (wfout < 0) wfout = 0;
+		if (wfout < 0) { wfout = 0; }
 	} //rising edge
 	else {
 		wfout = pw * step;
-		if (wfout > 0xFFFF) wfout = 0xFFFF;
+		if (wfout > 0xFFFF) { wfout = 0xFFFF; }
 		wfout = round((0xFFFF - tmp) * step) - wfout;
-		if (wfout >= 0) wfout = 0xFFFF;
+		if (wfout >= 0) { wfout = 0xFFFF; }
 		wfout &= 0xFFFF;
 	} //falling edge
 	return wfout;
@@ -631,7 +634,6 @@ static WAVE_DATA_TYPE createNoiseOutput(uint8_t voice) {
 				
 		osc[voice].noiseval = (osc[voice].noiseval << 1) |
 				(getBit(osc[voice].noiseval,22) ^ getBit(osc[voice].noiseval,17));
-				
 	}
 #ifdef OLD_TINYSID_IMPL	
 	return osc[voice].noiseout;
@@ -784,23 +786,30 @@ void sidSynthRender (int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {
 				// use special handling for certain combined waveforms
 				WAVE_DATA_TYPE plsout;
 				if ((ctrl & PULSE_BITMASK)) {
-					plsout= createPulseOutput(voice);
+					uint32_t tmp, pw;	// 16 bits used
+					calcPulseBase(voice, &tmp, &pw);
+					
+					if (((ctrl&0xf0) == PULSE_BITMASK)) {
+						// pulse only 
+						plsout= createPulseOutput(voice, tmp, pw);
+					} else {
+						// combined waveforms with pulse
+						plsout=  ((tmp >= pw) || isTestBit(voice)) ? 0xFFFF : 0; //(this would be enough for simple but aliased-at-high-pitches pulse)
 
 					if ((ctrl & TRI_BITMASK) && ++combined)  {
 						if (ctrl & SAW_BITMASK) {	// PULSE & TRIANGLE & SAW	- like in Lenore.sid
-							uint32_t tmp = osc[voice].counter >> 16;	// top 12-bits
-							outv &= plsout ? combinedWF(voice, sid.PulseTriSaw_8580, tmp, 1) : 0;
+								outv &= plsout ? combinedWF(voice, sid.PulseTriSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
 						} else { // PULSE & TRIANGLE - like in Kentilla, Convincing, Clique_Baby, etc
-							uint32_t tmp = osc[voice].counter ^ (ctrl & RING_BITMASK ? ringMSB : 0);
+								tmp = osc[voice].counter ^ (ctrl & RING_BITMASK ? ringMSB : 0);
 							outv &= plsout ? combinedWF(voice, sid.PulseSaw_8580, (tmp ^ (tmp & 0x8000000 ? 0xFFFFFFF : 0)) >> 15, 0) : 0;	// either on or off						
 						}				
 					} else if ((ctrl & SAW_BITMASK) && ++combined)  {	// PULSE & SAW - like in Defiler.sid
-						uint32_t tmp = osc[voice].counter >> 16;	// top 12-bits
-						outv &= plsout ? combinedWF(voice, sid.PulseSaw_8580, tmp, 1) : 0;
+							outv &= plsout ? combinedWF(voice, sid.PulseSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
+						}
 					}
 				} else if ((ctrl & TRI_BITMASK) && (ctrl & SAW_BITMASK) && ++combined) {		// TRIANGLE & SAW - like in Garden_Party.sid
-					uint32_t tmp = osc[voice].counter >> 16;	// top 12-bits
-					outv &= combinedWF(voice, sid.TriSaw_8580, tmp, 1);
+					uint32_t tmp = osc[voice].counter >> 16;	// have 4 more bits than Hermit
+					outv &= combinedWF(voice, sid.TriSaw_8580, tmp, 1);	// tmp 12 MSB
 				} 
 				if (!combined) {
 					/* for the rest mix the oscillators with an AND operation as stated in
@@ -811,7 +820,8 @@ void sidSynthRender (int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {
 					if (ctrl & PULSE_BITMASK) outv &= plsout;
 					if (ctrl & NOISE_BITMASK)  outv &= createNoiseOutput(voice);
 					
-					if (ctrl & 0xf0) {
+					// emulate waveform 00 floating wave-DAC 
+					if (ctrl & 0xf0) {	// FIXME ask Hermit for testcase song where this is relevant.. 
 						sid.voices[voice].prevwfout= outv;
 					} else {
 						// no waveform set						
@@ -838,14 +848,6 @@ void sidSynthRender (int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {
 				simOneEnvelopeCycle(voice);
 			}	  
 #endif
-
-			// FIXME ask Hermit for testcase song where this is used.. 
-			if (ctrl & 0xf0) {		// emulate waveform 00 floating wave-DAC 
-				previousOut[voice]= outv;		
-			} else {
-				outv= previousOut[voice];		
-			}
-
 			// now route the voice output to either the non-filtered or the
 			// filtered channel and dont forget to blank out osc3 if desired	
 
@@ -862,15 +864,17 @@ void sidSynthRender (int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {
 	#define BASELINE 0x80
 #else
 	// Hermit's impl based on 16-bit wave output
-	#define RESCALE	8				// rescale by envelopeOutput to get 16-bit output
-	#define RESCALE_NO_FILTER 8		
+
+// FIXME XXX compared to other emus output volume it quite high.. maybe better reduce it a bit?
+	// 8 would be correct - use 9 to reduce loudness
+	#define RESCALE	9				// rescale by envelopeOutput to get 16-bit output
+	#define RESCALE_NO_FILTER 9		
 	#define BASELINE 0x8000	
 #endif
 			int32_t voiceOut= ( (((int32_t)outv)-BASELINE) * osc[voice].envelopeOutput );
 
 #ifdef USE_FILTER
 			// NOTE: Voice 3 is not silenced by !v3ena if it is routed through the filter!
-//XXXX this change might be audible..
 			if (((voice<2) || filter.v3ena || (!filter.v3ena && osc[voice].filter)) && !voiceMute) {
 				if (osc[voice].filter) {
 					// route to filter
@@ -1183,7 +1187,6 @@ static void resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 //		osc[i].adsrBugTriggerTime= 0;	// redundant
 //		osc[i].adsrBugFrameCount= 0;
 	}
-	fillMem((uint8_t*)previousOut,0,sizeof(previousOut));
 }
 
 static void resetEnvelopeGenerator(uint32_t sampleRate) {
