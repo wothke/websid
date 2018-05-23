@@ -4,8 +4,18 @@
  * <p>It also handles the *.sid input data and provides the respective 
  * environment exposed in env.h
  *
- * <p>Copyright (C) 2013 Juergen Wothke
- * <p>version 0.81
+ * Coding conventions:
+ *  - names use camelStyle
+ *  - type names start uppercase, vars and functions start lowercase
+ *  - there are NO globally visible (project level) vars
+ *  - non-local variables start with _ (i.e. "globally" visible within file but NOT visible outside of the file)
+ *  - global constants and defines are all uppercase 
+ *  - cross C-file APIs start with a prefix that reflects the file that provides them, e.g. 
+ *    "sid...()" is provided by "sid.c". API is advertised in respective *.h files.
+ *  - everything that is not considered to be part of the API is hidden (e.g. by making it static)
+ *
+ * <p>Copyright (C) 2011-2018 Juergen Wothke
+ * <p>version 0.9
  *
  * <p>Emulation approach: Each call to computeAudioSamples() delivers some fixed number of audio samples.
  *
@@ -48,79 +58,77 @@ const static uint16_t MUS_REL_VOICE_PTRS= MUS_VOICE_PTRS - MUS_BASE_ADDR;
 const static uint16_t MUS_MAX_SIZE= MUS_REL_DATA_START;
 const static uint16_t MUS_MAX_SONG_SIZE= 0xA000 - MUS_DATA_START;		// stop at BASIC ROM.. or how big are these songs?
 
-// FIXME cleanup used naming conventions, e.g. for "private" vars
-
 	// buffer used to combine .mus and player
-static uint8_t *musMemBuffer= 0;										// represents memory at MUS_BASE_ADDR
-static uint32_t musMemBufferSize= 0xA000 - MUS_BASE_ADDR;
-static uint8_t musMode= 0;
+static uint8_t *_musMemBuffer= 0;										// represents memory at MUS_BASE_ADDR
+static uint32_t _musMemBufferSize= 0xA000 - MUS_BASE_ADDR;
+static uint8_t _musMode= 0;
 
-static uint32_t totalCyclesPerSec;
-static uint32_t totalCyclesPerScreen;
-static uint8_t cyclesPerRaster;
-static uint16_t linesPerScreen;
+static uint32_t _totalCyclesPerSec;
+static uint32_t _totalCyclesPerScreen;
+static uint8_t _cyclesPerRaster;
+static uint16_t _linesPerScreen;
 
-static uint8_t sidVersion;
-static uint8_t sidModel6581;	// default
+static uint8_t _sidVersion;
+static uint8_t _sidModel6581;	// default
 
-static uint8_t ntscMode= 0;
-static uint8_t compatibility;
-static uint8_t basicProg;
-static uint32_t clockRate;
+static uint8_t _ntscMode= 0;
+static uint8_t _compatibility;
+static uint8_t _basicProg;
+static uint32_t _clockRate;
 
-static uint32_t sampleRate;
+static uint32_t _sampleRate;
 
-static uint16_t loadAddr, initAddr, playAddr, loadEndAddr;
-static uint8_t actualSubsong, maxSubsong;
-static uint32_t playSpeed;
+static uint16_t _loadAddr, _initAddr, _playAddr, _loadEndAddr;
+static uint8_t _actualSubsong, _maxSubsong;
+static uint32_t _playSpeed;
 
-static uint8_t digiEnabled = 1;
+static uint8_t _digiEnabled = 1;
 
 static uint32_t _traceSID= 0;
 
 // make it large enough for data of 8 PAL screens.. (allocate 
 // statically to ease passing to ActionScript)
 #define BUFLEN 8*882
-static uint32_t soundBufferLen= BUFLEN;
-static int16_t soundBuffer[BUFLEN];
-	// SID debug buffers corresponding to soundBuffer
-static int16_t voice0Buffer[BUFLEN];
-static int16_t voice1Buffer[BUFLEN];
-static int16_t voice2Buffer[BUFLEN];
-static int16_t voiceDigiBuffer[BUFLEN];
+static uint32_t _soundBufferLen= BUFLEN;
+static int16_t _soundBuffer[BUFLEN];
+	// SID debug buffers corresponding to _soundBuffer
+static int16_t _voice1Buffer[BUFLEN];
+static int16_t _voice2Buffer[BUFLEN];
+static int16_t _voice3Buffer[BUFLEN];
+static int16_t _voice4Buffer[BUFLEN];
 
 
 // these buffers are "per frame" i.e. 1 screen refresh, e.g. 822 samples
-static int16_t * synthBuffer= 0;
+static int16_t * _synthBuffer= 0;
 
-static int16_t * synthBufferVoice0= 0;
-static int16_t * synthBufferVoice1= 0;
-static int16_t * synthBufferVoice2= 0;
-static int16_t ** synthTraceBuffers= 0;
+static int16_t * _synthBufferVoice1= 0;
+static int16_t * _synthBufferVoice2= 0;
+static int16_t * _synthBufferVoice3= 0;
+static int16_t ** _synthTraceBuffers= 0;
 
 // only contains the digi data for 1 screen .. 
-// and is directly merged into the soundBuffer
-static uint8_t * digiBuffer= 0;	
+// and is directly merged into the _soundBuffer
+static uint8_t * _digiBuffer= 0;	
 
-static uint32_t chunkSize; 
-static uint16_t numberOfSamplesPerCall;  
+static uint32_t _chunkSize; 
+static uint16_t _numberOfSamplesPerCall;  
 
-static uint8_t isPSID;
-static uint8_t isFilePSID;
+static uint8_t _isPSID;
+static uint8_t _isFilePSID;
 
-static uint32_t numberOfSamplesRendered = 0;
-static uint32_t numberOfSamplesToRender = 0;
+static uint32_t _numberOfSamplesRendered = 0;
+static uint32_t _numberOfSamplesToRender = 0;
 
 uint8_t envIsRSID() {
-	return (isPSID == 0);
+	return (_isPSID == 0);
 }
 
 uint8_t envIsFilePSID(){
-	return (isFilePSID == 1);
+	return (_isFilePSID == 1);
 }
 
 void envSetPsidMode(uint8_t m) {
-	isPSID= m;
+	_isPSID= m;
 }
 
 uint8_t envIsPSID() {
@@ -128,27 +136,27 @@ uint8_t envIsPSID() {
 }
 
 uint16_t envSidPlayAddr() {
-	return playAddr;
+	return _playAddr;
 }
 
 uint16_t envLinesPerScreen() {
-	return linesPerScreen;
+	return _linesPerScreen;
 }
 
 uint8_t envCyclesPerRaster() {
-	return cyclesPerRaster;
+	return _cyclesPerRaster;
 }
 
 uint16_t envNumberOfSamplesPerCall() {
-	return numberOfSamplesPerCall;
+	return _numberOfSamplesPerCall;
 }
 
 uint32_t envCyclesPerSec() {
-	return totalCyclesPerSec;
+	return _totalCyclesPerSec;
 }
 
 uint32_t envCyclesPerScreen() {
-	return totalCyclesPerScreen;
+	return _totalCyclesPerScreen;
 }
 
 static inline uint8_t get_bit(uint32_t val, uint8_t b)
@@ -162,11 +170,11 @@ uint8_t envCurrentSongSpeed() {
 	*                       timer settings an just play 1x per refresh 
 	*					 1: means 60hz OR CIA 1 timer A 
 	*/	
-	return get_bit(playSpeed, actualSubsong > 31 ? 31 : actualSubsong); 
+	return get_bit(_playSpeed, _actualSubsong > 31 ? 31 : _actualSubsong); 
 }
 
 uint32_t envClockRate() {
-	return clockRate;
+	return _clockRate;
 }
 int8_t envIsTimerDrivenPSID() {
 	return ((envIsPSID() == 1) && (envCurrentSongSpeed() == 1));
@@ -180,64 +188,64 @@ int8_t envIsRasterDrivenPSID() {
 static void resetAudioBuffers() {
 	// song with original 60 hz playback.. adjust number of samples to play it faster.	
 
-	if(ntscMode && envIsRasterDrivenPSID()) { 
-		numberOfSamplesPerCall= 735; 		// NTSC: 735*60=44100
+	if(_ntscMode && envIsRasterDrivenPSID()) { 
+		_numberOfSamplesPerCall= 735; 		// NTSC: 735*60=44100
 	} else {
-		numberOfSamplesPerCall= 882; 		// PAL: 882*50=44100
+		_numberOfSamplesPerCall= 882; 		// PAL: 882*50=44100
 	}
-	chunkSize= numberOfSamplesPerCall*8; 	// e.g. data for 8 50hz screens (0.16 secs)
+	_chunkSize= _numberOfSamplesPerCall*8; 	// e.g. data for 8 50hz screens (0.16 secs)
 
 	// just to make sure these is no garbage left
-	memset(voice0Buffer, 0, sizeof(int16_t)*BUFLEN);
-	memset(voice1Buffer, 0, sizeof(int16_t)*BUFLEN);
-	memset(voice2Buffer, 0, sizeof(int16_t)*BUFLEN);
-	memset(voiceDigiBuffer, 0, sizeof(int16_t)*BUFLEN);
+	memset(_voice1Buffer, 0, sizeof(int16_t)*BUFLEN);
+	memset(_voice2Buffer, 0, sizeof(int16_t)*BUFLEN);
+	memset(_voice3Buffer, 0, sizeof(int16_t)*BUFLEN);
+	memset(_voice4Buffer, 0, sizeof(int16_t)*BUFLEN);
 	
-	if (synthBuffer) free(synthBuffer);
-	if (digiBuffer)	free(digiBuffer);
+	if (_synthBuffer) free(_synthBuffer);
+	if (_digiBuffer)	free(_digiBuffer);
 
-	synthBuffer= (int16_t*)malloc(sizeof(int16_t)*numberOfSamplesPerCall + 1);
-	digiBuffer= (uint8_t*)malloc(sizeof(uint8_t)*numberOfSamplesPerCall + 1);	
+	_synthBuffer= (int16_t*)malloc(sizeof(int16_t)*_numberOfSamplesPerCall + 1);
+	_digiBuffer= (uint8_t*)malloc(sizeof(uint8_t)*_numberOfSamplesPerCall + 1);	
 	
-	// debug output (corresponding to synthBuffer)
-	if (synthBufferVoice0) free(synthBufferVoice0);
-	if (synthBufferVoice1) free(synthBufferVoice1);
-	if (synthBufferVoice2) free(synthBufferVoice2);
-	if (synthTraceBuffers) free(synthTraceBuffers);
+	// debug output (corresponding to _synthBuffer)
+	if (_synthBufferVoice1) free(_synthBufferVoice1);
+	if (_synthBufferVoice2) free(_synthBufferVoice2);
+	if (_synthBufferVoice3) free(_synthBufferVoice3);
+	if (_synthTraceBuffers) free(_synthTraceBuffers);
 
-	if (_traceSID) {	// availability of synthTraceBuffers controls if SID will generate the respective output
-		synthBufferVoice0= (int16_t*)calloc(sizeof(int16_t),numberOfSamplesPerCall + 1);	
-		synthBufferVoice1= (int16_t*)calloc(sizeof(int16_t),numberOfSamplesPerCall + 1);	
-		synthBufferVoice2= (int16_t*)calloc(sizeof(int16_t),numberOfSamplesPerCall + 1);	
+	if (_traceSID) {	// availability of _synthTraceBuffers controls if SID will generate the respective output
+		_synthBufferVoice1= (int16_t*)calloc(sizeof(int16_t),_numberOfSamplesPerCall + 1);	
+		_synthBufferVoice2= (int16_t*)calloc(sizeof(int16_t),_numberOfSamplesPerCall + 1);	
+		_synthBufferVoice3= (int16_t*)calloc(sizeof(int16_t),_numberOfSamplesPerCall + 1);	
 		
-		synthTraceBuffers= (int16_t**)malloc(sizeof(int16_t*)*3);
+		_synthTraceBuffers= (int16_t**)malloc(sizeof(int16_t*)*3);
 		
-		synthTraceBuffers[0]= synthBufferVoice0;
-		synthTraceBuffers[1]= synthBufferVoice1;
-		synthTraceBuffers[2]= synthBufferVoice2;
+		_synthTraceBuffers[0]= _synthBufferVoice1;
+		_synthTraceBuffers[1]= _synthBufferVoice2;
+		_synthTraceBuffers[2]= _synthBufferVoice3;
 	} else {
-		synthBufferVoice0= 0;	
-		synthBufferVoice1= 0;	
-		synthBufferVoice2= 0;	
+		_synthBufferVoice1= 0;	
+		_synthBufferVoice2= 0;	
+		_synthBufferVoice3= 0;	
 
-		synthTraceBuffers= 0;	// disables respective SID rendering
+		_synthTraceBuffers= 0;	// disables respective SID rendering
 	}
-	numberOfSamplesRendered = 0;
-	numberOfSamplesToRender = 0;	
+	_numberOfSamplesRendered = 0;
+	_numberOfSamplesToRender = 0;	
 }
 
 static void resetTimings() {	
 	uint8_t fps;
-	if(ntscMode) {		
+	if(_ntscMode) {		
 		fps= 60;
-		cyclesPerRaster= 65;			// NTSC
-		linesPerScreen = 263;
-		clockRate= 1022727;
+		_cyclesPerRaster= 65;			// NTSC
+		_linesPerScreen = 263;
+		_clockRate= 1022727;
 	} else {
 		fps= 50;
-		cyclesPerRaster= 63;			// PAL	
-		linesPerScreen = 312;
-		clockRate= 985248;
+		_cyclesPerRaster= 63;			// PAL	
+		_linesPerScreen = 312;
+		_clockRate= 985248;
 	}
 	/*
 	hack: correct cycle handling would consider badlines, usage of sprites, 
@@ -250,12 +258,12 @@ static void resetTimings() {
 	
 	// increased to 4 for the benefit of Kapla_Caves.sid (problem: 
 	// due to this hack main loop players will be getting too many cycles)
-	uint32_t badlineCycles= cyclesPerRaster*4;	
+	uint32_t badlineCycles= _cyclesPerRaster*4;	
 	
 	// NTSC: 17095	/ PAL: 19656		
-	totalCyclesPerScreen= cyclesPerRaster*linesPerScreen- badlineCycles;			
+	_totalCyclesPerScreen= _cyclesPerRaster*_linesPerScreen- badlineCycles;			
 	// NTSC: 1025700 (clock would be: 1022727);		/ PAL: 982800 (clock would be: 985248);			
-	totalCyclesPerSec= totalCyclesPerScreen*fps; 
+	_totalCyclesPerSec= _totalCyclesPerScreen*fps; 
 }
 
 static uint8_t musIsTrackEnd(uint8_t voice) {
@@ -265,32 +273,32 @@ static uint8_t musIsTrackEnd(uint8_t voice) {
 }
 static uint32_t computeAudioSamples()  __attribute__((noinline));
 static uint32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
-	if (musMode) {	// check for end of .mus song 	
+	if (_musMode) {	// check for end of .mus song 	
 		if (musIsTrackEnd(0) && musIsTrackEnd(1) && musIsTrackEnd(2)) {
 			return -1;
 		}
 	}
 	
-	numberOfSamplesRendered = 0;
+	_numberOfSamplesRendered = 0;
 			
 	uint32_t sampleBufferIdx=0;
 	uint32_t hasDigi= 0;
 	
-	while (numberOfSamplesRendered < chunkSize)
+	while (_numberOfSamplesRendered < _chunkSize)
 	{
-		if (numberOfSamplesToRender == 0) {
-			numberOfSamplesToRender = numberOfSamplesPerCall;
+		if (_numberOfSamplesToRender == 0) {
+			_numberOfSamplesToRender = _numberOfSamplesPerCall;
 			sampleBufferIdx=0;
-			hasDigi= rsidProcessOneScreen(synthBuffer, digiBuffer, 
-						totalCyclesPerScreen, numberOfSamplesPerCall, synthTraceBuffers);
-			if (!digiEnabled) hasDigi= 0;
+			hasDigi= rsidProcessOneScreen(_synthBuffer, _digiBuffer, 
+						_totalCyclesPerScreen, _numberOfSamplesPerCall, _synthTraceBuffers);
+			if (!_digiEnabled) hasDigi= 0;
 		}
 		
-		if (numberOfSamplesRendered + numberOfSamplesToRender > chunkSize) {
-			uint32_t availableSpace = chunkSize-numberOfSamplesRendered;
+		if (_numberOfSamplesRendered + _numberOfSamplesToRender > _chunkSize) {
+			uint32_t availableSpace = _chunkSize-_numberOfSamplesRendered;
 			
-			memcpy(&soundBuffer[numberOfSamplesRendered], &synthBuffer[sampleBufferIdx], sizeof(int16_t)*availableSpace);
-			digiMergeSampleData(hasDigi, &soundBuffer[numberOfSamplesRendered], &digiBuffer[sampleBufferIdx], availableSpace);			
+			memcpy(&_soundBuffer[_numberOfSamplesRendered], &_synthBuffer[sampleBufferIdx], sizeof(int16_t)*availableSpace);
+			digiMergeSampleData(hasDigi, &_soundBuffer[_numberOfSamplesRendered], &_digiBuffer[sampleBufferIdx], availableSpace);			
 	
 			/*
 			* In addition to the actual sample data played by WebAudio, buffers containing raw voice data are also
@@ -302,34 +310,34 @@ static uint32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 	
 			if (_traceSID) {
 				// do the same for the respecive voice traces
-				memcpy(&voice0Buffer[numberOfSamplesRendered], &synthBufferVoice0[sampleBufferIdx], sizeof(int16_t)*availableSpace);
-				memcpy(&voice1Buffer[numberOfSamplesRendered], &synthBufferVoice1[sampleBufferIdx], sizeof(int16_t)*availableSpace);
-				memcpy(&voice2Buffer[numberOfSamplesRendered], &synthBufferVoice2[sampleBufferIdx], sizeof(int16_t)*availableSpace);
+				memcpy(&_voice1Buffer[_numberOfSamplesRendered], &_synthBufferVoice1[sampleBufferIdx], sizeof(int16_t)*availableSpace);
+				memcpy(&_voice2Buffer[_numberOfSamplesRendered], &_synthBufferVoice2[sampleBufferIdx], sizeof(int16_t)*availableSpace);
+				memcpy(&_voice3Buffer[_numberOfSamplesRendered], &_synthBufferVoice3[sampleBufferIdx], sizeof(int16_t)*availableSpace);
 					
-				memset(&voiceDigiBuffer[numberOfSamplesRendered], 0, availableSpace*sizeof(int16_t)); // clear buffer so that existing "merge" can be reused
-				digiMergeSampleData(hasDigi, &voiceDigiBuffer[numberOfSamplesRendered], &digiBuffer[sampleBufferIdx], availableSpace);			
+				memset(&_voice4Buffer[_numberOfSamplesRendered], 0, availableSpace*sizeof(int16_t)); // clear buffer so that existing "merge" can be reused
+				digiMergeSampleData(hasDigi, &_voice4Buffer[_numberOfSamplesRendered], &_digiBuffer[sampleBufferIdx], availableSpace);			
 			}
 			sampleBufferIdx += availableSpace;
-			numberOfSamplesToRender -= availableSpace;
-			numberOfSamplesRendered = chunkSize;
+			_numberOfSamplesToRender -= availableSpace;
+			_numberOfSamplesRendered = _chunkSize;
 		} else {
-			memcpy(&soundBuffer[numberOfSamplesRendered], &synthBuffer[sampleBufferIdx], sizeof(int16_t)*numberOfSamplesToRender);
-			digiMergeSampleData(hasDigi, &soundBuffer[numberOfSamplesRendered], &digiBuffer[sampleBufferIdx], numberOfSamplesToRender);
+			memcpy(&_soundBuffer[_numberOfSamplesRendered], &_synthBuffer[sampleBufferIdx], sizeof(int16_t)*_numberOfSamplesToRender);
+			digiMergeSampleData(hasDigi, &_soundBuffer[_numberOfSamplesRendered], &_digiBuffer[sampleBufferIdx], _numberOfSamplesToRender);
 
 			if (_traceSID) {
 				// do the same for the respecive voice traces
-				memcpy(&voice0Buffer[numberOfSamplesRendered], &synthBufferVoice0[sampleBufferIdx], sizeof(int16_t)*numberOfSamplesToRender);
-				memcpy(&voice1Buffer[numberOfSamplesRendered], &synthBufferVoice1[sampleBufferIdx], sizeof(int16_t)*numberOfSamplesToRender);
-				memcpy(&voice2Buffer[numberOfSamplesRendered], &synthBufferVoice2[sampleBufferIdx], sizeof(int16_t)*numberOfSamplesToRender);
+				memcpy(&_voice1Buffer[_numberOfSamplesRendered], &_synthBufferVoice1[sampleBufferIdx], sizeof(int16_t)*_numberOfSamplesToRender);
+				memcpy(&_voice2Buffer[_numberOfSamplesRendered], &_synthBufferVoice2[sampleBufferIdx], sizeof(int16_t)*_numberOfSamplesToRender);
+				memcpy(&_voice3Buffer[_numberOfSamplesRendered], &_synthBufferVoice3[sampleBufferIdx], sizeof(int16_t)*_numberOfSamplesToRender);
 					
-				memset(&voiceDigiBuffer[numberOfSamplesRendered], 0, numberOfSamplesToRender*sizeof(int16_t)); // clear buffer so that existing "merge" can be reused
-				digiMergeSampleData(hasDigi, &voiceDigiBuffer[numberOfSamplesRendered], &digiBuffer[sampleBufferIdx], numberOfSamplesToRender);			
+				memset(&_voice4Buffer[_numberOfSamplesRendered], 0, _numberOfSamplesToRender*sizeof(int16_t)); // clear buffer so that existing "merge" can be reused
+				digiMergeSampleData(hasDigi, &_voice4Buffer[_numberOfSamplesRendered], &_digiBuffer[sampleBufferIdx], _numberOfSamplesToRender);			
 			}
-			numberOfSamplesRendered += numberOfSamplesToRender;
-			numberOfSamplesToRender = 0;
+			_numberOfSamplesRendered += _numberOfSamplesToRender;
+			_numberOfSamplesToRender = 0;
 		} 
 	}
-	return (numberOfSamplesRendered);
+	return (_numberOfSamplesRendered);
 }
 
 // bit0=voice0, bit1=voice1,..
@@ -340,7 +348,7 @@ static uint32_t EMSCRIPTEN_KEEPALIVE enableVoices(uint32_t mask) {
 		mask = mask >> 1;
 	}
 	// "voice 4" is digi-output..
-	digiEnabled= mask&0x1;
+	_digiEnabled= mask&0x1;
 	
 	return 0;
 }
@@ -349,11 +357,11 @@ static uint32_t playTune(uint32_t selectedTrack, uint32_t traceSID)  __attribute
 static uint32_t EMSCRIPTEN_KEEPALIVE playTune(uint32_t selectedTrack, uint32_t traceSID) {
 	_traceSID= traceSID; 
 	
-	if (1 || (sidVersion <= 2)) {
-		actualSubsong= selectedTrack & 0xff;
-		digiEnabled = 1;
+	if (1 || (_sidVersion <= 2)) {
+		_actualSubsong= selectedTrack & 0xff;
+		_digiEnabled = 1;
 
-		rsidPlayTrack(sampleRate, compatibility, &initAddr, loadEndAddr, playAddr, actualSubsong);
+		rsidPlayTrack(_sampleRate, _compatibility, &_initAddr, _loadEndAddr, _playAddr, _actualSubsong);
 
 		resetAudioBuffers();
 	} else {
@@ -417,8 +425,8 @@ static uint16_t loadSIDFromMemory(void *pSidData,
 }
 
 
-	// 0: loadAddr;
-	// 1: playSpeed;
+	// 0: _loadAddr;
+	// 1: _playSpeed;
 	// 2: maxSubSong;
 	// 3: actualSubSong;
 	// 4: songName;
@@ -494,26 +502,26 @@ void musGetSizes(uint8_t *musSongData, uint16_t *v1len, uint16_t *v2len, uint16_
 
 // Compute!'s .mus files require an addtional player that must installed with the song file.
 static uint16_t loadComputeSidplayerData(uint8_t *musSongData, uint32_t musSongDataLen) {
-	sidVersion= 2;
-	sidModel6581= 1;
-	basicProg= 0;
-	compatibility= 1;
-	ntscMode= 1;			// the .mus stuff is mostely from the US..
-	loadAddr= MUS_BASE_ADDR;
-	loadEndAddr= 0x9fff;
+	_sidVersion= 2;
+	_sidModel6581= 1;
+	_basicProg= 0;
+	_compatibility= 1;
+	_ntscMode= 1;			// the .mus stuff is mostely from the US..
+	_loadAddr= MUS_BASE_ADDR;
+	_loadEndAddr= 0x9fff;
 
-	initAddr= MUS_BASE_ADDR;
-	playAddr= 0x1bf2;
+	_initAddr= MUS_BASE_ADDR;
+	_playAddr= 0x1bf2;
 	
 	uint16_t pSize= COMPUTESIDPLAYER_LENGTH;
 	if((pSize > MUS_MAX_SIZE) || (musSongDataLen > MUS_MAX_SONG_SIZE)) return 0; // ERROR
 	
 	// prepare temp input buffer
-	if (musMemBuffer == 0) {
-		musMemBuffer= (uint8_t*)malloc(musMemBufferSize);	// represents mem from $1800-$9fff
+	if (_musMemBuffer == 0) {
+		_musMemBuffer= (uint8_t*)malloc(_musMemBufferSize);	// represents mem from $1800-$9fff
 	}
-	memcpy(musMemBuffer, computeSidplayer, pSize);
-	memcpy(musMemBuffer+MUS_REL_DATA_START, musSongData, musSongDataLen);
+	memcpy(_musMemBuffer, computeSidplayer, pSize);
+	memcpy(_musMemBuffer+MUS_REL_DATA_START, musSongData, musSongDataLen);
 	
 	uint16_t v1len, v2len, v3len, trackLen;
 	musGetSizes(musSongData, &v1len, &v2len, &v3len, &trackLen);
@@ -529,12 +537,12 @@ static uint16_t loadComputeSidplayerData(uint8_t *musSongData, uint32_t musSongD
 	uint16_t v3start= v2start+ v2len;
 	
 	// setup player
-	musMemBuffer[MUS_REL_VOICE_PTRS+0]= v1start & 0xff;
-	musMemBuffer[MUS_REL_VOICE_PTRS+1]= v2start & 0xff;
-	musMemBuffer[MUS_REL_VOICE_PTRS+2]= v3start & 0xff;
-	musMemBuffer[MUS_REL_VOICE_PTRS+3]= v1start >> 8;
-	musMemBuffer[MUS_REL_VOICE_PTRS+4]= v2start >> 8;
-	musMemBuffer[MUS_REL_VOICE_PTRS+5]= v3start >> 8;
+	_musMemBuffer[MUS_REL_VOICE_PTRS+0]= v1start & 0xff;
+	_musMemBuffer[MUS_REL_VOICE_PTRS+1]= v2start & 0xff;
+	_musMemBuffer[MUS_REL_VOICE_PTRS+2]= v3start & 0xff;
+	_musMemBuffer[MUS_REL_VOICE_PTRS+3]= v1start >> 8;
+	_musMemBuffer[MUS_REL_VOICE_PTRS+4]= v2start >> 8;
+	_musMemBuffer[MUS_REL_VOICE_PTRS+5]= v3start >> 8;
 
 	return 1;
 }
@@ -547,63 +555,63 @@ static uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t isMus, void * inBuffer
 
 	memResetKernelROM();		// read only (only need to do this once)
 
-    sampleRate= 44100;		// TODO: extend API & use actual target sample rate
-	initAddr= 0;
-	playAddr= 0;
-	loadEndAddr= 0;
-	actualSubsong= 0;
-	maxSubsong= 0;	
-	playSpeed= 0;		
-	ntscMode= 0;
+    _sampleRate= 44100;		// TODO: extend API & use actual target sample rate
+	_initAddr= 0;
+	_playAddr= 0;
+	_loadEndAddr= 0;
+	_actualSubsong= 0;
+	_maxSubsong= 0;	
+	_playSpeed= 0;		
+	_ntscMode= 0;
 	
-	isFilePSID= (inputFileBuffer[0x00] == 0x50) || isMus ? 1 : 0;	
-	envSetPsidMode(isFilePSID);
+	_isFilePSID= (inputFileBuffer[0x00] == 0x50) || isMus ? 1 : 0;	
+	envSetPsidMode(_isFilePSID);
 
 	memResetRAM(envIsPSID());
 	
-	if ((musMode= isMus)) {
+	if ((_musMode= isMus)) {
 		// todo: the same kind of impl could be used for .sid files that contain .mus data.. (see respectice flag)
 		if (!loadComputeSidplayerData(inputFileBuffer, inBufSize)) {
 			return 1;
 		}
-		rsidLoadSongBinary(musMemBuffer, loadAddr, musMemBufferSize);		
+		rsidLoadSongBinary(_musMemBuffer, _loadAddr, _musMemBufferSize);		
 	} else {
-		sidVersion= inputFileBuffer[0x05];
+		_sidVersion= inputFileBuffer[0x05];
 		
 		// note: emu is not differenciating between SID chip versions (respective flags
 		// are therefore ignored - see bits 4/5)
 		
-		uint8_t flags= (sidVersion > 1) ? inputFileBuffer[0x77] : 0x0;
+		uint8_t flags= (_sidVersion > 1) ? inputFileBuffer[0x77] : 0x0;
 		
-		sidModel6581= !((flags>>5) & 0x1); // only use 8580 when bit is explicitly set
+		_sidModel6581= !((flags>>5) & 0x1); // only use 8580 when bit is explicitly set
 
-		basicProg= (envIsRSID() && (flags & 0x2));	// C64 BASIC program need to be started..
+		_basicProg= (envIsRSID() && (flags & 0x2));	// C64 BASIC program need to be started..
 		
-		compatibility= ( (sidVersion & 0x2) &&  ((flags & 0x2) == 0));	
-		ntscMode= (sidVersion == 2) && envIsPSID() && (flags & 0x8); // NTSC bit
+		_compatibility= ( (_sidVersion & 0x2) &&  ((flags & 0x2) == 0));	
+		_ntscMode= (_sidVersion == 2) && envIsPSID() && (flags & 0x8); // NTSC bit
 		
 		uint8_t i;
 		for (i=0;i<32;i++) song_name[i] = inputFileBuffer[0x16+i];
 		for (i=0;i<32;i++) song_author[i] = inputFileBuffer[0x36+i]; 
 		for (i=0;i<32;i++) song_copyright[i] = inputFileBuffer[0x56+i];
 
-		if (!loadSIDFromMemory(inputFileBuffer, &loadAddr, &loadEndAddr, &initAddr, 
-				&playAddr, &maxSubsong, &actualSubsong, &playSpeed, inBufSize)) {
+		if (!loadSIDFromMemory(inputFileBuffer, &_loadAddr, &_loadEndAddr, &_initAddr, 
+				&_playAddr, &_maxSubsong, &_actualSubsong, &_playSpeed, inBufSize)) {
 			
 			return 1;	// could not load file
 		}
 	}
 		
 
-	if (basicProg) rsidStartFromBasic(&initAddr);
+	if (_basicProg) rsidStartFromBasic(&_initAddr);
 	
 	// global settings that depend on the loaded music file
 	resetTimings();
 	
-	loadResult[0]= &loadAddr;
-	loadResult[1]= &playSpeed;
-	loadResult[2]= &maxSubsong;
-	loadResult[3]= &actualSubsong;
+	loadResult[0]= &_loadAddr;
+	loadResult[1]= &_playSpeed;
+	loadResult[2]= &_maxSubsong;
+	loadResult[3]= &_actualSubsong;
 	loadResult[4]= song_name;
 	loadResult[5]= song_author;
 	loadResult[6]= song_copyright;
@@ -617,42 +625,42 @@ static char** EMSCRIPTEN_KEEPALIVE getMusicInfo() {
 
 static uint32_t getSoundBufferLen() __attribute__((noinline));
 static uint32_t EMSCRIPTEN_KEEPALIVE getSoundBufferLen() {
-	return numberOfSamplesRendered;	// in samples
+	return _numberOfSamplesRendered;	// in samples
 }
 
 static char* getSoundBuffer() __attribute__((noinline));
 static char* EMSCRIPTEN_KEEPALIVE getSoundBuffer() {
-	return (char*) soundBuffer;
+	return (char*) _soundBuffer;
 }
 
 static uint32_t getSampleRate() __attribute__((noinline));
 static uint32_t EMSCRIPTEN_KEEPALIVE getSampleRate() {
-	return sampleRate;
+	return _sampleRate;
 }
 
 // additional accessors that might be useful for tweaking defaults from the GUI
 
 uint8_t envIsSID6581()  __attribute__((noinline));
 uint8_t EMSCRIPTEN_KEEPALIVE envIsSID6581() {
-	return sidModel6581;
+	return _sidModel6581;
 }
 
 static uint8_t envSetSID6581(uint8_t is6581)  __attribute__((noinline));
 static uint8_t EMSCRIPTEN_KEEPALIVE envSetSID6581(uint8_t is6581) {
-	sidModel6581= is6581;	
-	sidReset(sampleRate, sidModel6581, compatibility);
+	_sidModel6581= is6581;	
+	sidReset(_sampleRate, _sidModel6581, _compatibility);
 
 	return 0;
 }
 
 static uint8_t envIsNTSC()  __attribute__((noinline));
 static uint8_t EMSCRIPTEN_KEEPALIVE envIsNTSC() {
-	return ntscMode;
+	return _ntscMode;
 }
 
 static uint8_t envSetNTSC(uint8_t isNTSC)  __attribute__((noinline));
 static uint8_t EMSCRIPTEN_KEEPALIVE envSetNTSC(uint8_t isNTSC) {
-	ntscMode= isNTSC;
+	_ntscMode= isNTSC;
 	
 	resetAudioBuffers();
 	resetTimings();
@@ -662,22 +670,22 @@ static uint8_t EMSCRIPTEN_KEEPALIVE envSetNTSC(uint8_t isNTSC) {
 
 static char* getBufferVoice1() __attribute__((noinline));
 static char* EMSCRIPTEN_KEEPALIVE getBufferVoice1() {
-	return (char*) voice0Buffer;
+	return (char*) _voice1Buffer;
 }
 
 static char* getBufferVoice2() __attribute__((noinline));
 static char* EMSCRIPTEN_KEEPALIVE getBufferVoice2() {
-	return (char*) voice1Buffer;
+	return (char*) _voice2Buffer;
 }
 
 static char* getBufferVoice3() __attribute__((noinline));
 static char* EMSCRIPTEN_KEEPALIVE getBufferVoice3() {
-	return (char*) voice2Buffer;
+	return (char*) _voice3Buffer;
 }
 
 static char* getBufferVoice4() __attribute__((noinline));
 static char* EMSCRIPTEN_KEEPALIVE getBufferVoice4() {
-	return (char*) voiceDigiBuffer;
+	return (char*) _voice4Buffer;
 }
 
 static uint16_t getRegisterSID(uint16_t reg) __attribute__((noinline));

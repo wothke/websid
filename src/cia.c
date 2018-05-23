@@ -21,7 +21,7 @@
 * <p>The flaws of the approach surface when timers are not just used 
 * as triggers but when code tries to poll for a timer's current counter
 * value - which is "out of scope" of the "trigger prediction" impl (and
-* a separate impl - see 'pollcia' below - was added as a hack).
+* a separate impl - see 'PollCia' below - was added as a hack).
 *
 * <p>However other problems arise when the music program is sufficiently 
 * complex, or ill-behaved: e.g. mix of main/IRQ/NMI manipulating 
@@ -49,11 +49,11 @@
 #define ADDR_CIA2 0xdd00
 
 // *********************** hacks *********************************************
-static uint8_t dummyDC04;
-static uint8_t nmiVectorHack= 0;
+static uint8_t _dummyDC04;
+static uint8_t _nmiVectorHack= 0;
 
 void ciaSetNmiVectorHack(){
-	nmiVectorHack= 1;
+	_nmiVectorHack= 1;
 }
 
 // *********************** "regular" / predictive CIA simulation ***************
@@ -63,9 +63,9 @@ uint32_t STOPPED= 0x1ffffff;
 
 // next interrupt not on this screen; use value bigger than any 
 // 16-bit counter for easy comparison
-static uint32_t failMarker;	
+static uint32_t _failMarker;	
 
-struct timer {
+struct Timer {
 	/*
 	implementation info: 
 		-D*0D (interrupt control and status): "io_area" contains the "write" 
@@ -86,31 +86,31 @@ struct timer {
 	uint8_t	timerInterruptStatus;	// read version of the respective DX0D register
 };
 
-static struct timer cia[2];
+static struct Timer _cia[2];
 
 
-static int isBLinkedToA(struct timer *t) {
+static int isBLinkedToA(struct Timer *t) {
 	// '10' is the only "special mode currently implemented here
 	return ((memReadIO((*t).memoryAddress + 0x0f)&0x60) == 0x40);
 }
 
 // the current counter of this timer
-static uint16_t getTimerCounter(struct timer *t, uint8_t timerIdx) {
+static uint16_t getTimerCounter(struct Timer *t, uint8_t timerIdx) {
 	uint16_t addr= (*t).memoryAddress + ((timerIdx==TIMER_A) ? 0x04 : 0x06);
 	
 	return (memReadIO(addr)|(memReadIO(addr+1)<<8));
 }
 
-static uint8_t* getSuspended(struct timer *t, uint8_t timerIdx) {
+static uint8_t* getSuspended(struct Timer *t, uint8_t timerIdx) {
 	return &((*t).ts[timerIdx].timerSuspended);
 }
 
 // the current counter of this timer
-static uint16_t getTimerNextCounter(struct timer *t, uint8_t timerIdx) {
+static uint16_t getTimerNextCounter(struct Timer *t, uint8_t timerIdx) {
 	uint16_t counter= getTimerCounter(t, timerIdx);
 	if (counter == 0) {
 		if (*getSuspended(t, timerIdx)) {
-			return failMarker;			// 0 counter must be reset >0 before it is reused..
+			return _failMarker;			// 0 counter must be reset >0 before it is reused..
 		} else {
 			*getSuspended(t, timerIdx)= 1;
 			return counter;
@@ -119,12 +119,12 @@ static uint16_t getTimerNextCounter(struct timer *t, uint8_t timerIdx) {
 	return counter;
 }
 
-static uint32_t getTimerLatch(struct timer *t, uint8_t timerIdx) {
+static uint32_t getTimerLatch(struct Timer *t, uint8_t timerIdx) {
 	return 	(*t).ts[timerIdx].timerLatch;
 }
 
 // bootstrap using current memory settings..
-static void initTimerData(uint16_t memoryAddress, struct timer *t) {
+static void initTimerData(uint16_t memoryAddress, struct Timer *t) {
 	(*t).memoryAddress= memoryAddress;
 	
 	uint16_t timerA= getTimerCounter(t, TIMER_A);		
@@ -138,7 +138,7 @@ static void initTimerData(uint16_t memoryAddress, struct timer *t) {
 	(*t).timerInterruptStatus= 0;
 }
 
-static void setInterruptMask(struct timer *t, uint8_t value) {
+static void setInterruptMask(struct Timer *t, uint8_t value) {
 	// handle updates of the CIA interrupt control mask
 	uint16_t addr= (*t).memoryAddress + 0x0d;
 	
@@ -151,7 +151,7 @@ static void setInterruptMask(struct timer *t, uint8_t value) {
 }
 
 // read version of the respective DX0D register
-static uint8_t getInterruptStatus(struct timer *t) {
+static uint8_t getInterruptStatus(struct Timer *t) {
 	uint8_t retVal= (*t).timerInterruptStatus;
 		
 	(*t).timerInterruptStatus= 0;	// read clears status
@@ -159,31 +159,31 @@ static uint8_t getInterruptStatus(struct timer *t) {
 }
 
 // "running" means "not stopped"
-static int isTimerStarted(struct timer *t, uint8_t timerIdx) {
+static int isTimerStarted(struct Timer *t, uint8_t timerIdx) {
 	return ((memReadIO((*t).memoryAddress + (0x0e + timerIdx))&0x1) != 0) 
 			&& (!(*t).ts[timerIdx].timerSuspended || 
 				((timerIdx == TIMER_B) && isBLinkedToA(t) && isTimerStarted(t, TIMER_A)));
 }
 
 // the current counter of this timer / STOPPED if counter is not running
-static uint32_t getTimerRunningCounter(struct timer *t, uint8_t timerIdx) {
+static uint32_t getTimerRunningCounter(struct Timer *t, uint8_t timerIdx) {
 	if ((!(*t).ts[timerIdx].timerSuspended) && isTimerStarted(t, timerIdx)) {
 		return getTimerNextCounter(t, timerIdx);
 	}
 	return STOPPED;
 }
 
-static void stopTimer(struct timer *t, uint8_t timerIdx) {
+static void stopTimer(struct Timer *t, uint8_t timerIdx) {
 	uint16_t addr= (*t).memoryAddress + (0x0e + timerIdx);
 	memWriteIO(addr, memReadIO(addr)&(~0x1));
 }
 
 // "armed" means an underflow if this timer will trigger an interrupt
-static int isTimerArmed(struct timer *t, uint8_t timerIdx) {
+static int isTimerArmed(struct Timer *t, uint8_t timerIdx) {
 	return (memReadIO((*t).memoryAddress + 0x0d)&(timerIdx==TIMER_A ? 0x1 : 0x2)) != 0;
 }
 
-static void signalTimerInterrupt(struct timer *t) {
+static void signalTimerInterrupt(struct Timer *t) {
 	(*t).timerInterruptStatus|= 0x80;
 }
 
@@ -193,20 +193,20 @@ static void signalTimerInterrupt(struct timer *t) {
 * Continuous: Timer will count down from the latched value to zero, generate an interrupt, 
 *             reload the latched value, and repeat the procedure continously.
 */
-static int isTimerContinuous(struct timer *t, uint8_t timerIdx) {
+static int isTimerContinuous(struct Timer *t, uint8_t timerIdx) {
 	return (memReadIO((*t).memoryAddress + (0x0e + timerIdx))&0x8) == 0;
 }
 
-static void intSignalTimerUnderflow(struct timer *t, uint8_t timerIdx) {
+static void intSignalTimerUnderflow(struct Timer *t, uint8_t timerIdx) {
 	(*t).timerInterruptStatus|= (timerIdx==TIMER_A) ? 0x01 : 0x02;
 }
 
 void ciaSignalUnderflow(uint8_t ciaIdx, uint8_t timerIdx) {
-	struct timer *t= &(cia[ciaIdx]);
+	struct Timer *t= &(_cia[ciaIdx]);
 	intSignalTimerUnderflow(t, timerIdx);
 }
 
-static void reloadTimer(struct timer *t, uint8_t timerIdx) {
+static void reloadTimer(struct Timer *t, uint8_t timerIdx) {
 	uint16_t addr= (*t).memoryAddress + ((timerIdx==TIMER_A) ? 0x04 : 0x06);
 	struct timerState *in= &(*t).ts[timerIdx];
 	
@@ -220,7 +220,7 @@ static void reloadTimer(struct timer *t, uint8_t timerIdx) {
 
 
 // the current counter of this timer
-static void reduceTimerCounter(struct timer *t, uint8_t timerIdx, uint16_t diff) {
+static void reduceTimerCounter(struct Timer *t, uint8_t timerIdx, uint16_t diff) {
 	uint16_t newCount= getTimerCounter(t, timerIdx) - diff;
 	
 	uint16_t addr= (*t).memoryAddress + (timerIdx==TIMER_A ? 0x04 : 0x06);
@@ -228,7 +228,7 @@ static void reduceTimerCounter(struct timer *t, uint8_t timerIdx, uint16_t diff)
 	memWriteIO(addr+1, newCount>>8);
 }
 
-static void setLatch(struct timer *t, uint8_t timerIdx, uint16_t value) {
+static void setLatch(struct Timer *t, uint8_t timerIdx, uint16_t value) {
 	(*t).ts[timerIdx].timerLatch= value;
 	
 	if (value > 0) {
@@ -236,7 +236,7 @@ static void setLatch(struct timer *t, uint8_t timerIdx, uint16_t value) {
 	}
 }
 
-static void setTimer(struct timer *t, uint16_t offset, uint8_t value) {
+static void setTimer(struct Timer *t, uint16_t offset, uint8_t value) {
 	switch (offset) {
 		case 0x04:
 			setLatch(t, TIMER_A, ((*t).ts[TIMER_A].timerLatch&0xff00) | value);
@@ -263,27 +263,27 @@ static void setTimer(struct timer *t, uint16_t offset, uint8_t value) {
 *
 * <p> use more generic impl to avoid copy/paste
 *
-* @return failMarker: timeLimit was reached / [positive number] wait time in 
+* @return _failMarker: timeLimit was reached / [positive number] wait time in 
 *					 cycles until the interrupt occurs
 */
-static uint32_t intForwardToNextCiaInterrupt(struct timer *t, uint32_t timeLimit) {
+static uint32_t intForwardToNextCiaInterrupt(struct Timer *t, uint32_t timeLimit) {
 	uint32_t waited= 0;
 		
 	for(;;) {
 		if (!(isTimerStarted(t, TIMER_A) || isTimerStarted(t, TIMER_B))) {
-			waited= failMarker; 
+			waited= _failMarker; 
 			break;
 		}		
 		if (!(isTimerArmed(t, TIMER_A) || isTimerArmed(t, TIMER_B))) {
 			// todo: the timers should be updated even if they are not "armed" (but running)
-			waited= failMarker; 	
+			waited= _failMarker; 	
 			break;
 		}		
 		
 		if (isBLinkedToA(t) && isTimerStarted(t, TIMER_B)) {
 			// unfortunately this really is used - e.g. in Graphixmania_2_part_6.sid
 			if (!isTimerStarted(t, TIMER_A)) {
-				waited= failMarker;				// without A nothing will happen here..
+				waited= _failMarker;				// without A nothing will happen here..
 				break;
 			} else {
 				uint32_t cA= getTimerRunningCounter(t, TIMER_A);
@@ -291,7 +291,7 @@ static uint32_t intForwardToNextCiaInterrupt(struct timer *t, uint32_t timeLimit
 					// handle remaining counter in next screen
 					uint16_t timeLeft= timeLimit-waited;
 					reduceTimerCounter(t, TIMER_A, timeLeft);
-					waited= failMarker;				// no interrupts in the specified timeLimit
+					waited= _failMarker;				// no interrupts in the specified timeLimit
 					break;
 				} else {
 					// persume A in never "Armed" in this scenario
@@ -330,7 +330,7 @@ static uint32_t intForwardToNextCiaInterrupt(struct timer *t, uint32_t timeLimit
 					uint16_t timeLeft= timeLimit-waited;
 					reduceTimerCounter(t, TIMER_B, timeLeft);
 					reduceTimerCounter(t, TIMER_A, timeLeft);
-					waited= failMarker;							// no interrupts in the specified timeLimit
+					waited= _failMarker;							// no interrupts in the specified timeLimit
 					break;
 				} else {										// still within the time limit
 					waited+= cB;
@@ -370,7 +370,7 @@ static uint32_t intForwardToNextCiaInterrupt(struct timer *t, uint32_t timeLimit
 					if (count2 != STOPPED) {
 						reduceTimerCounter(t, timer2, timeLeft);
 					}
-					waited= failMarker;							// no interrupts in the specified timeLimit
+					waited= _failMarker;							// no interrupts in the specified timeLimit
 					break;
 				} else {										// still within the time limit
 					waited+= count1;
@@ -397,14 +397,14 @@ uint32_t ciaForwardToNextInterrupt(uint8_t ciaIdx, uint32_t timeLimit) {
 	// XXX needs to be tested
 	
 	// must not be used for PSID (see Synth_Sample_III.sid tracks >3)
-	if (!envIsPSID() && cpuIrqFlag() && (ciaIdx == 0)) return failMarker; // no IRQ while I-flag is set (NMI cannot be masked)
+	if (!envIsPSID() && cpuIrqFlag() && (ciaIdx == 0)) return _failMarker; // no IRQ while I-flag is set (NMI cannot be masked)
 	
-	struct timer *t= &(cia[ciaIdx]);
+	struct Timer *t= &(_cia[ciaIdx]);
 	return  intForwardToNextCiaInterrupt(t, timeLimit);
 }
 
 int ciaIsActive(uint8_t ciaIdx) {
-	struct timer *t= &(cia[ciaIdx]);
+	struct Timer *t= &(_cia[ciaIdx]);
 	return (isTimerStarted(t, TIMER_A) && isTimerArmed(t, TIMER_A)) 
 				|| (isTimerStarted(t, TIMER_B) && isTimerArmed(t, TIMER_B));
 }
@@ -412,20 +412,20 @@ int ciaIsActive(uint8_t ciaIdx) {
 // -----------------------------  CIA timer I/O -------------------------------------------
 
 // hack: poor man's TOD sim (only secs & 10th of sec), see Kawasaki_Synthesizer_Demo.sid
-static uint32_t todInMillies= 0;
+static uint32_t _todInMillies= 0;
 static uint32_t getTimeOfDayMillis() {
-	return todInMillies;
+	return _todInMillies;
 }
 
 static void updateTimeOfDay10thOfSec(uint8_t value) {
-	todInMillies= ((uint32_t)(todInMillies/1000))*1000 + value*100;
+	_todInMillies= ((uint32_t)(_todInMillies/1000))*1000 + value*100;
 }
 static void updateTimeOfDaySec(uint8_t value) {
-	todInMillies= value*1000 + (todInMillies%1000);	// ignore minutes, etc
+	_todInMillies= value*1000 + (_todInMillies%1000);	// ignore minutes, etc
 }
 
 void ciaUpdateTOD(uint8_t songSpeed) {
-	todInMillies+= (songSpeed ? 17 : 20);	
+	_todInMillies+= (songSpeed ? 17 : 20);	
 }
 
 
@@ -440,25 +440,25 @@ void ciaUpdateTOD(uint8_t songSpeed) {
 	stuff - it is not implemented.
 ***************************************************************************************************/
 
-struct pollcia {
+struct PollCia {
 	uint8_t isStarted;
 	uint32_t baseCycles;
 	uint16_t latch;
 	uint16_t nextLatch;	
 	uint8_t stopStatus;
 };
-static struct pollcia dcia[4];
+static struct PollCia _dcia[4];
 
 
 static void simWriteTABLO(uint8_t ciaIdx, uint8_t timerIdx, uint8_t val) {
-	struct pollcia *c= &(dcia[ciaIdx*2+timerIdx]);
+	struct PollCia *c= &(_dcia[ciaIdx*2+timerIdx]);
 	c->nextLatch=  (c->nextLatch & 0xff00) | (0x00ff & val);
 }
 
 static uint8_t intReadICR(uint8_t ciaIdx, uint8_t timerIdx) {	
 	// calc timer underflow status (there is no timer counted down, instead
 	// the "time elapsed" since the start of the countdown is tracked)
-	struct pollcia *c= &(dcia[ciaIdx*2+timerIdx]);
+	struct PollCia *c= &(_dcia[ciaIdx*2+timerIdx]);
 
 	if (!c->isStarted ) {
 		uint8_t readOnce= c->stopStatus;
@@ -492,7 +492,7 @@ static void simWriteCRAB(uint8_t ciaIdx, uint8_t timerIdx, uint8_t val) {
 	// Control Timer: DC0E/F DD0E/F  write start/stop flag (other flags NOT implemented)
 
 	uint8_t i= ciaIdx*2+timerIdx;
-	struct pollcia *c= &(dcia[i]);
+	struct PollCia *c= &(_dcia[i]);
 		
 	if (val & 0x1) {	// ignore other flags here
 		// start timer
@@ -523,7 +523,7 @@ static void simWriteCRAB(uint8_t ciaIdx, uint8_t timerIdx, uint8_t val) {
 }
 static uint8_t simReadCRAB(uint8_t ciaIdx, uint8_t timerIdx) {
 	// DC0E/F DD0E/F  read start/stop bit (other flags NOT implemented)
-	struct pollcia *c= &(dcia[ciaIdx*2+timerIdx]);
+	struct PollCia *c= &(_dcia[ciaIdx*2+timerIdx]);
 	return c->isStarted;
 }
 
@@ -573,10 +573,10 @@ uint8_t ciaReadMem(uint16_t addr) {
 				timing handling (e.g. based on used cycles) does not seem to work - but 
 				this hack does..
 				*/
-				dummyDC04+=3;
-				return dummyDC04;
+				_dummyDC04+=3;
+				return _dummyDC04;
 			} 
-			if (nmiVectorHack) {
+			if (_nmiVectorHack) {
 				/*
 				wonderland_xii*.sid hack: NMI routines at $8xx, $9xx, ... 
 				set the low-byte to the next routine to be called in 0xdc03 and it is 
@@ -613,10 +613,10 @@ uint8_t ciaReadMem(uint16_t addr) {
 		// fixme: also used for write.. clearing the status here then might be a problem:
 		case 0xdc0d:
 			if (useCiaPollingHack()) { return simReadICR_1(); }
-			return getInterruptStatus(&(cia[0]));	
+			return getInterruptStatus(&(_cia[0]));	
 		case 0xdd0d:
 			if (useCiaPollingHack()) { return simReadICR_2(); }
-			return getInterruptStatus(&(cia[1]));
+			return getInterruptStatus(&(_cia[1]));
 		case 0xdc0e:
 		case 0xdc0f:
 			if (useCiaPollingHack()) { return simReadCRAB(0, addr-0xdc0e); }
@@ -645,16 +645,16 @@ void ciaWriteMem(uint16_t addr, uint8_t value) {
 		case 0xdc01:
 			break;		// keep default config (write/read here means other info anyway)
 		case 0xdc0d:
-			setInterruptMask(&(cia[0]), value);
+			setInterruptMask(&(_cia[0]), value);
 			break;
 		case 0xdd0d:
-			setInterruptMask(&(cia[1]), value);
+			setInterruptMask(&(_cia[1]), value);
 			break;
 		case 0xdc04:
 		case 0xdc05:
 		case 0xdc06:
 		case 0xdc07:	
-			setTimer(&(cia[0]), addr-ADDR_CIA1, value);
+			setTimer(&(_cia[0]), addr-ADDR_CIA1, value);
 			break;	
 		case 0xdc08: 
 			updateTimeOfDay10thOfSec(value);
@@ -666,7 +666,7 @@ void ciaWriteMem(uint16_t addr, uint8_t value) {
 		case 0xdd05:
 		case 0xdd06:
 		case 0xdd07:
-			setTimer(&(cia[1]), addr-ADDR_CIA2, value);
+			setTimer(&(_cia[1]), addr-ADDR_CIA2, value);
 			break;
 		default:
 			memWriteIO(addr, value);
@@ -684,9 +684,9 @@ static void initMem(uint16_t addr, uint8_t value) {
 }
 
 void ciaReset(uint32_t cyclesPerScreen, uint8_t isRsid, uint32_t f) {
-	failMarker= f;
+	_failMarker= f;
 
-	fillMem((uint8_t*)&dcia,0,sizeof(dcia));
+	fillMem((uint8_t*)&_dcia,0,sizeof(_dcia));
 
 	initMem(0xdc00, 0x10);	 	// fire botton NOT pressed (see Alter_Digi_Piece.sid)
 	initMem(0xdc01, 0xff);	 	// Master_Blaster_intro.sid/instantfunk.sid actually check this
@@ -704,14 +704,12 @@ void ciaReset(uint32_t cyclesPerScreen, uint8_t isRsid, uint32_t f) {
 		initMem(0xdd0f, 0x08); 	// control timer 2B (start/stop)		
 	} 
 
-	initTimerData(ADDR_CIA1, &(cia[0]));
-	initTimerData(ADDR_CIA2, &(cia[1]));
+	initTimerData(ADDR_CIA1, &(_cia[0]));
+	initTimerData(ADDR_CIA2, &(_cia[1]));
 
 	// reset hacks
-	nmiVectorHack= 0;
-	dummyDC04= 0;
+	_nmiVectorHack= 0;
+	_dummyDC04= 0;
 
-	todInMillies= 0;
-	
-
+	_todInMillies= 0;
 }

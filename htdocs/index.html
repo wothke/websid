@@ -5,26 +5,12 @@
 <!--
  websid: HTML5 Audio/JavaScript port of Tiny'R'Sid.
 
- 	Copyright (C) 2013 Juergen Wothke
+ 	Copyright (C) 2011-2018 Juergen Wothke
 
  Tiny'R'Sid is a C64 music emulator - see https://www.wothke.ch/tinyrsid/
 
  Credits: The visualization used on this page was strongly "inspired" by this demo:
  http://html5-demos.appspot.com/static/webaudio/createMediaSourceElement.html
-
- LICENSE
- 
- This library is free software; you can redistribute it and/or modify it
- under the terms of the GNU General Public License as published by
- the Free Software Foundation; either version 2.1 of the License, or (at
- your option) any later version. This library is distributed in the hope
- that it will be useful, but WITHOUT ANY WARRANTY; without even the implied
- warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- GNU General Public License for more details.
- 
- You should have received a copy of the GNU General Public
- License along with this library; if not, write to the Free Software
- Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
 -->
 <meta http-equiv="X-UA-Compatible" content="chrome=1" />
 <title>WebSid - the first HTML5/JavaScript C64 music player</title>
@@ -57,12 +43,29 @@
 <script>
 var playerControls;
 var	songDisplay;
+var sidDisplay;
 
-var displayVoice1;
-var displayVoice2;
-var displayVoice3;
-var displayVoice4;
-var displayRegs;
+SidDisplay = function (sidTracer, canvId1,canvId2,canvId3,canvId4, spanId) {
+	this.v1 = new VoiceDisplay(canvId1, function() { return sidTracer.getDataVoice1();});
+	this.v2 = new VoiceDisplay(canvId2, function() { return sidTracer.getDataVoice2();});
+	this.v3 = new VoiceDisplay(canvId3, function() { return sidTracer.getDataVoice3();});
+	this.v4 = new VoiceDisplay(canvId4, function() { return sidTracer.getDataVoice4();});
+	this.regs= new RegDisplay(spanId, function(reg) { return sidTracer.getRegisterSID(reg);});
+};
+
+SidDisplay.prototype = {
+	reqAnimationFrame: function() {
+		window.requestAnimationFrame(this.redraw.bind(this));
+	},
+	redraw: function() {
+		this.v1.redrawGraph();		
+		this.v2.redrawGraph();		
+		this.v3.redrawGraph();		
+		this.v4.redrawGraph();		
+		this.regs.redrawText();		
+		this.reqAnimationFrame();	
+	},	
+};
 
 	
 // configure what music infos to display in SongDisplay
@@ -84,12 +87,7 @@ function doOnTrackEnd(){
 function doOnTrackReadyToPlay(){ 	
 	ScriptNodePlayer.getInstance().play();
 	songDisplay.redrawSongInfo();
-	
-	displayVoice1.reqAnimationFrame();
-	displayVoice2.reqAnimationFrame();
-	displayVoice3.reqAnimationFrame();
-	displayVoice4.reqAnimationFrame();
-	displayRegs.reqAnimationFrame();
+	sidDisplay.redraw();
 }
 // depending on the browser/timing the player may be ready before or after (see WASM) init(), i.e.
 // the startup sequence must handle both cases (music can only be started when
@@ -102,13 +100,7 @@ function doOnPlayerReady() {
 
 function init() {
 	window.sidTracer= new SidTracer(8192);
-	displayVoice1 = new VoiceDisplay('voice1Canvas', function() { return sidTracer.getDataVoice1();});
-	displayVoice2 = new VoiceDisplay('voice2Canvas', function() { return sidTracer.getDataVoice2();});
-	displayVoice3 = new VoiceDisplay('voice3Canvas', function() { return sidTracer.getDataVoice3();});
-	displayVoice4 = new VoiceDisplay('voice4Canvas', function() { return sidTracer.getDataVoice4();});
-	displayRegs= new RegDisplay('sidRegDump', function(reg) { return sidTracer.getRegisterSID(reg);});
-	
-	
+		
 	// --------------------------- SID music player -----------------------
 	var basePath= '';		// not needed here
 	ScriptNodePlayer.createInstance(new SIDBackendAdapter(), basePath, [], true, doOnPlayerReady,
@@ -122,6 +114,7 @@ function init() {
 		'/MUSICIANS/M/Mahoney/Kapla_Caves.sid;0;153',
 		'/MUSICIANS/G/Gray_Fred/Implosion.sid;1;84',
 		'/MUSICIANS/S/Swallow/Wonderland_XII-Digi_part_4.sid;0;54',
+		'/MUSICIANS/P/Prosonix/Trick_n_Treat.sid;0;325',
 		'/MUSICIANS/L/LMan/Vortex.sid;0;192',
 		'/MUSICIANS/G/Griff/Clique_Baby.sid;0;292',
 		'/MUSICIANS/G/Galway_Martin/Arkanoid.sid;0;142',
@@ -184,6 +177,7 @@ function init() {
 	// limit rendering to 50% of the available time (Tiny'R'Sid is fast so there is no need ..)
 	songDisplay= new SongDisplay(new SIDDisplayAccessor((function(){return playerControls.getSongInfo();})), 
 								[0xF6D565], 0, 0.5, (function(){playerControls.animate()}));
+	sidDisplay= new SidDisplay(sidTracer, 'voice1Canvas', 'voice2Canvas', 'voice3Canvas', 'voice4Canvas', 'sidRegDump');
 
 	if (playerReady) playerControls.playNextSong();	// player was ready before it could trigger the playback
 }
@@ -199,16 +193,17 @@ function init() {
   <div>
   <p>This is the latest version of <a href="http://www.wothke.ch/tinyrsid/" target="_blank">Tiny'R'Sid</a>.</p>
  
-  <p>2015 by Juergen Wothke  (The source code can be found <a target="_blank" href="https://github.com/wothke/">here</a>.)</p>
+  <p>2011-2018 by Juergen Wothke  (The source code can be found <a target="_blank" href="https://github.com/wothke/">here</a>.)</p>
  
-  <p>This page does not use any plugins but is based exclusively on HTML5/JavaScript/WebAudio. You'll need a reasonably recent browser to make it play the music.</p>
+  <p>You'll need a JavaScript/WebAudio enabled browser to make it play the music.</p>
   
-  <p>The music samples are completely calculated within JavaScript by running the Tiny'R'Sid C64 emulator logic (playing original 
-  C64 program files from the <a href="http://www.hvsc.de/" target="_blank">HVSC</a>). You can bring your own music files by drag&dropping them on the below C64 image.
+  <p>The music samples are calculated on the fly by running the Tiny'R'Sid C64 emulator logic (playing original 
+  C64 program files from the <a href="http://www.hvsc.de/" target="_blank">HVSC</a>). You can bring your own music files by drag&dropping them onto the below C64 image.
   (Plays *.sid, *.psid, *.rsid and Compute! *.mus music files.)</p>  
  
   <p>Please use the below controls to navigate between the songs that you have dropped on the player:
   <span id="controls"></span>
+  <p>Here a realtime view of some internals of the respective emulator:</p>
   <div id="sidVoice1">voice 1 <canvas id="voice1Canvas" width="40" height="512"></canvas></div>  
   <div id="sidVoice2">voice 2 <canvas id="voice2Canvas" width="40" height="512"></canvas></div>  
   <div id="sidVoice3">voice 3<canvas id="voice3Canvas" width="40" height="512"></canvas></div>  

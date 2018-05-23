@@ -17,21 +17,21 @@
 #include "sid.h"
 
 #define MEMORY_SIZE 65536
-static uint8_t memory[MEMORY_SIZE];
+static uint8_t _memory[MEMORY_SIZE];
 
 #define KERNAL_SIZE 8192
-static uint8_t kernal_rom[KERNAL_SIZE];	// mapped to $e000-$ffff
+static uint8_t _kernal_rom[KERNAL_SIZE];	// mapped to $e000-$ffff
 
 #define IO_AREA_SIZE 4096
-static uint8_t io_area[IO_AREA_SIZE];	// mapped to $d000-$dfff
+static uint8_t _io_area[IO_AREA_SIZE];	// mapped to $d000-$dfff
 
 
 uint8_t memMatch(uint16_t addr, uint8_t *pattern, uint8_t len) {
-	return !memcmp(&(memory[addr]), pattern, len);
+	return !memcmp(&(_memory[addr]), pattern, len);
 }
 
 static void setMemBank(uint8_t b) {
-	memory[0x0001]= b;
+	_memory[0x0001]= b;
 }
 
 void memSetDefaultBanks(uint8_t isRsid, uint16_t initAddr, uint16_t loadEndAddr) {
@@ -82,47 +82,47 @@ void memResetPsidBanks(uint8_t isPsid, uint16_t playAddr) {
 * @return 0 if RAM is visible; 1 if ROM is visible
 */ 
 static uint8_t isKernalRomVisible() {
-	return memory[0x0001] & 0x2;
+	return _memory[0x0001] & 0x2;
 }
 
 /*
 * @return 0 if RAM is visible; 1 if IO area is visible
 */ 
 static uint8_t isIoAreaVisible() {
-	uint8_t bits= memory[0x0001] & 0x7;	
+	uint8_t bits= _memory[0x0001] & 0x7;	
 	return ((bits & 0x4) != 0) && (bits != 0x4);
 }
 
 uint8_t memReadIO(uint16_t addr) {
 	if ((addr&0xfc00)==0xd400) {			
-		return io_area[(addr&0xfc1f) - 0xd000];
+		return _io_area[(addr&0xfc1f) - 0xd000];
 	}
-	return io_area[addr-0xd000];
+	return _io_area[addr-0xd000];
 }
 
 void memWriteIO(uint16_t addr, uint8_t value) {
-	io_area[addr - 0xd000]= value;
+	_io_area[addr - 0xd000]= value;
 }
 
 uint8_t memReadRAM(uint16_t addr) {
-	return memory[addr];
+	return _memory[addr];
 }
 void memWriteRAM(uint16_t addr, uint8_t value) {
-	 memory[addr]= value;
+	 _memory[addr]= value;
 }
 
 void memCopyToRAM(uint8_t *src, uint16_t destAddr, uint32_t len) {
-	memcpy(&memory[destAddr], src, len);		
+	memcpy(&_memory[destAddr], src, len);		
 
 }
 void memCopyFromRAM(uint8_t *dest, uint16_t srcAddr, uint32_t len) {
-	memcpy(dest, &memory[srcAddr], len);
+	memcpy(dest, &_memory[srcAddr], len);
 }
 
 uint8_t memGet(uint16_t addr)
 {
 	if (addr < 0xd000) {
-		return  memory[addr];	// basic rom not implemented
+		return  _memory[addr];	// basic rom not implemented
 	} else if ((addr >= 0xd000) && (addr < 0xe000)) {	// handle I/O area 		
 		if (isIoAreaVisible()) {		
 			if ((addr >= 0xd000) && (addr < 0xd400)) {
@@ -135,14 +135,14 @@ uint8_t memGet(uint16_t addr)
 			return memReadIO(addr);
 		} else {
 			// normal RAM access
-			return  memory[addr];
+			return  _memory[addr];
 		}
 	} else {	// handle kernal ROM
 		if (isKernalRomVisible()) {
-			return kernal_rom[addr - 0xe000];
+			return _kernal_rom[addr - 0xe000];
 		} else {
 			// normal RAM access
-			return  memory[addr];
+			return  _memory[addr];
 		}
 	}
 }
@@ -162,22 +162,22 @@ void memSet(uint16_t addr, uint8_t value)
 				return;
 			}
 			  
-			io_area[addr - 0xd000]= value;
+			_io_area[addr - 0xd000]= value;
 		} else {
 			// normal RAM access
-			memory[addr]=value;
+			_memory[addr]=value;
 		}
 		
 	} else {
 		// normal RAM or
 		// kernal ROM (even if the ROM is visible, writes always go to the RAM)
-		memory[addr]=value;
+		_memory[addr]=value;
 	}
 }
 
-const static uint8_t irqHandlerFF48[19] ={0x48,0x8A,0x48,0x98,0x48,0xBA,0xBD,0x04,0x01,0x29,0x10,0xEA,0xEA,0xEA,0xEA,0xEA,0x6C,0x14,0x03};
-const static uint8_t irqHandlerEA7E[9] ={0xAD,0x0D,0xDC,0x68,0xA8,0x68,0xAA,0x68,0x40};
-const static uint8_t nmiHandlerFE43[5] ={0x78,0x6c,0x18,0x03,0x40};
+const static uint8_t _irqHandlerFF48[19] ={0x48,0x8A,0x48,0x98,0x48,0xBA,0xBD,0x04,0x01,0x29,0x10,0xEA,0xEA,0xEA,0xEA,0xEA,0x6C,0x14,0x03};
+const static uint8_t _irqHandlerEA7E[9] ={0xAD,0x0D,0xDC,0x68,0xA8,0x68,0xAA,0x68,0x40};
+const static uint8_t _nmiHandlerFE43[5] ={0x78,0x6c,0x18,0x03,0x40};
 
 void memResetKernelROM() {
 	// we dont have the complete rom but in order to ensure consistent stack handling (regardless of
@@ -186,39 +186,39 @@ void memResetKernelROM() {
 	
 	// use RTS as default ROM content: some songs actually try to call stuff, e.g. mountain march.sid, 
 	// Soundking_V1.sid(basic rom init routines: 0x1D50, 0x1D15, 0x1F5E), Voodoo_People_part_1.sid (0x1F81)
-    fillMem(&kernal_rom[0], 0x60, KERNAL_SIZE);			// RTS by default 
+    fillMem(&_kernal_rom[0], 0x60, KERNAL_SIZE);			// RTS by default 
 	
-    memcpy(&kernal_rom[0x1f48], irqHandlerFF48, 19);	// $ff48 irq routine
-    fillMem(&kernal_rom[0x0a31], 0xea, 0x4d);			// $ea31 fill some NOPs	
-    memcpy(&kernal_rom[0x0a7e], irqHandlerEA7E, 9);	// $ea31 return sequence
-    memcpy(&kernal_rom[0x1e43], nmiHandlerFE43, 4);	// $fe43 nmi handler
+    memcpy(&_kernal_rom[0x1f48], _irqHandlerFF48, 19);	// $ff48 irq routine
+    fillMem(&_kernal_rom[0x0a31], 0xea, 0x4d);			// $ea31 fill some NOPs	
+    memcpy(&_kernal_rom[0x0a7e], _irqHandlerEA7E, 9);	// $ea31 return sequence
+    memcpy(&_kernal_rom[0x1e43], _nmiHandlerFE43, 4);	// $fe43 nmi handler
 	
-	kernal_rom[0x1ffe]= 0x48;
-	kernal_rom[0x1fff]= 0xff;
+	_kernal_rom[0x1ffe]= 0x48;
+	_kernal_rom[0x1fff]= 0xff;
 		
-	kernal_rom[0x1ffa]= 0x43;	// standard NMI vectors (this will point into the void at: 0318/19)
-	kernal_rom[0x1ffb]= 0xfe;	
+	_kernal_rom[0x1ffa]= 0x43;	// standard NMI vectors (this will point into the void at: 0318/19)
+	_kernal_rom[0x1ffb]= 0xfe;	
 }
 
 void memResetRAM(uint8_t isPsid) {
-    fillMem(memory, 0x0, sizeof(memory));
+    fillMem(_memory, 0x0, sizeof(_memory));
 
-	memory[0x0314]= 0x31;		// standard IRQ vector
-	memory[0x0315]= 0xea;
+	_memory[0x0314]= 0x31;		// standard IRQ vector
+	_memory[0x0315]= 0xea;
 
 	// Master_Blaster_intro.sid actually checks this:
-	memory[0x00cb]= 0x40;		// no key pressed 
+	_memory[0x00cb]= 0x40;		// no key pressed 
 
 	// Dill_Pickles.sid depends on this
 	memWriteRAM(0x0000, 0x2f);	//default: processor port data direction register		
 	
 	// for our PSID friends who don't know how to properly use memory banks lets mirror the kernal ROM into RAM
 	if (isPsid) {
-		memcpy(&memory[0xe000], &kernal_rom[0], 0x2000);
+		memcpy(&_memory[0xe000], &_kernal_rom[0], 0x2000);
 	}
 }
 void memResetIO(uint32_t cyclesPerScreen, uint8_t isRsid, uint32_t f) {
-    fillMem(&io_area[0], 0x0, IO_AREA_SIZE);
+    fillMem(&_io_area[0], 0x0, IO_AREA_SIZE);
 
 	ciaReset(cyclesPerScreen, isRsid, f);
 		

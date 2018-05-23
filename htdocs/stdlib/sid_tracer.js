@@ -254,10 +254,13 @@ RegDisplay.prototype = {
 	reqAnimationFrame: function() {
 		window.requestAnimationFrame(this.redraw.bind(this));
 	},
-	redraw: function() {
+	redrawText: function() {
 		this.span.innerHTML =	"d400: "+this.getData(0).toString(16)+
 								" d401: "+this.getData(1).toString(16)+ 
 								"... d404: "+this.getData(4).toString(16)+" ..";
+	},
+	redraw: function() {
+		this.redrawText();
 		this.reqAnimationFrame();	
 	}
 };

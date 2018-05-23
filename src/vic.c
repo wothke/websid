@@ -15,17 +15,17 @@
 #include "env.h"
 
 
-static int32_t timerCarryOverIrq= -1;		// irq pos calculated on previous screen
-static int16_t lastRasterInterrupt= -1;	
-static uint16_t currentRasterPos= 0;		// 	simulated "read" raster position (see d012/d011)
-static uint32_t lastRelativeCyclePos= 0;	// sim progress of rasterline during current code execution
-static uint32_t remainingCyclesThisRaster= 0;
+static int32_t _timerCarryOverIrq= -1;		// irq pos calculated on previous screen
+static int16_t _lastRasterInterrupt= -1;	
+static uint16_t _currentRasterPos= 0;		// 	simulated "read" raster position (see d012/d011)
+static uint32_t _lastRelativeCyclePos= 0;	// sim progress of rasterline during current code execution
+static uint32_t _remainingCyclesThisRaster= 0;
 
 // next interrupt not on this screen; use value bigger than any 16-bit counter for easy comparison
-static uint32_t failMarker;
+static uint32_t _failMarker;
 
 void vicReset(uint8_t isRsid, uint32_t f) {
-	failMarker= f;
+	_failMarker= f;
 
 	if (isRsid) {	
 		// by default C64 is configured with CIA1 timer / not raster irq
@@ -34,31 +34,31 @@ void vicReset(uint8_t isRsid, uint32_t f) {
 		memWriteIO(0xd012, 0x00); 	// raster at line x
 	}
 	
-	timerCarryOverIrq= -1;
-	lastRasterInterrupt= -1;
-	currentRasterPos= 0;
-	lastRelativeCyclePos= 0;
-	remainingCyclesThisRaster= 0;
+	_timerCarryOverIrq= -1;
+	_lastRasterInterrupt= -1;
+	_currentRasterPos= 0;
+	_lastRelativeCyclePos= 0;
+	_remainingCyclesThisRaster= 0;
 }
 
 static void setCurrentRasterPos(uint32_t cycleTime) {
 // FIXME maybe badlines should be considered here?
-	currentRasterPos= ((uint32_t)((float)cycleTime/envCyclesPerRaster()))%envLinesPerScreen();	
+	_currentRasterPos= ((uint32_t)((float)cycleTime/envCyclesPerRaster()))%envLinesPerScreen();	
 }
 
 static void incCurrentRasterPos() {
-	currentRasterPos+=1;
-	if (currentRasterPos == envLinesPerScreen()) {
-		currentRasterPos= 0;
+	_currentRasterPos+=1;
+	if (_currentRasterPos == envLinesPerScreen()) {
+		_currentRasterPos= 0;
 	}
 }
 
 void vicStartRasterSim(uint32_t rasterPosInCycles) {
 	setCurrentRasterPos(rasterPosInCycles);
 	
-	remainingCyclesThisRaster=rasterPosInCycles-(currentRasterPos*envCyclesPerRaster());
+	_remainingCyclesThisRaster=rasterPosInCycles-(_currentRasterPos*envCyclesPerRaster());
 	
-	lastRelativeCyclePos= cpuCycles();
+	_lastRelativeCyclePos= cpuCycles();
 }
 
 void vicSimRasterline() {
@@ -71,13 +71,13 @@ void vicSimRasterline() {
 	we do not have the correct timing.. (i.e. the attempt to directly derive a d012 position 
 	from the start and current execution time failed )
 	*/	
-	long cdiff= cpuCycles()-lastRelativeCyclePos;
-	if (cdiff > remainingCyclesThisRaster) {
+	long cdiff= cpuCycles()-_lastRelativeCyclePos;
+	if (cdiff > _remainingCyclesThisRaster) {
 		incCurrentRasterPos();					// sim progress of VIC raster line..
-		remainingCyclesThisRaster+= envCyclesPerRaster();	// badlines korrektur?
+		_remainingCyclesThisRaster+= envCyclesPerRaster();	// badlines korrektur?
 	}	
-	remainingCyclesThisRaster-= cdiff;
-	lastRelativeCyclePos= cpuCycles();	
+	_remainingCyclesThisRaster-= cdiff;
+	_lastRelativeCyclePos= cpuCycles();	
 }
 
 static void setD019(uint8_t value) {
@@ -109,10 +109,10 @@ static uint8_t getD019() {
 }
 
 static uint8_t getCurrentD012() {
-	return currentRasterPos & 0xff;
+	return _currentRasterPos & 0xff;
 }
 static uint8_t getCurrentD011() {
-	return (currentRasterPos & 0x100) >> 1;
+	return (_currentRasterPos & 0x100) >> 1;
 }
 
 uint16_t vicGetRasterline() {
@@ -131,34 +131,34 @@ uint8_t vicIsIrqActive() {
 
 /*
 * Gets the next 'timer' based on next raster interrupt which will occur on the current screen.
-* @return failMarker if no event on the  current screen
+* @return _failMarker if no event on the  current screen
 */
 uint32_t vicForwardToNextRaster() {
 	if (!vicIsIrqActive()) {
-		return failMarker;
+		return _failMarker;
 	}
 	int32_t timer= 0;
-	if (timerCarryOverIrq >=0) {
-		timer= timerCarryOverIrq;
-		timerCarryOverIrq= -1;
+	if (_timerCarryOverIrq >=0) {
+		timer= _timerCarryOverIrq;
+		_timerCarryOverIrq= -1;
 	} else {
 		uint16_t nextRasterline= vicGetRasterline(); 
 		
-		if (lastRasterInterrupt<0) {	// first run
+		if (_lastRasterInterrupt<0) {	// first run
 			timer= getCycleTime(nextRasterline); 
 		} else {
-			int16_t lineDelta= nextRasterline - lastRasterInterrupt;
+			int16_t lineDelta= nextRasterline - _lastRasterInterrupt;
 			if (lineDelta > 0){
 				timer= getCycleTime(lineDelta);					// next IRQ on same page refresh			
 			} else {
-				timerCarryOverIrq= getCycleTime(nextRasterline);// IRQ on next screen
-				timer= failMarker; 								// no event on this screen
+				_timerCarryOverIrq= getCycleTime(nextRasterline);// IRQ on next screen
+				timer= _failMarker; 								// no event on this screen
 			}			
 		}
-		lastRasterInterrupt= nextRasterline;
+		_lastRasterInterrupt= nextRasterline;
 
 	}
-	if (timer != failMarker) {
+	if (timer != _failMarker) {
 		signalVicIrq();	// in case some IRQ routine is checking.. e.g. Galdrumway.sid	
 	} 
 

@@ -46,31 +46,31 @@
 #include "digi.h"
 #include "hacks.h"
 
-enum timertype { RASTER_TIMER = 0, CIA1_TIMER = 1, NO_IRQ = 2};
+enum TimerType { RASTER_TIMER = 0, CIA1_TIMER = 1, NO_IRQ = 2};
 
 // next interrupt not on this screen; value bigger 
 // than any 16-bit counter for easy comparison
-const uint32_t NO_INT=0x1ffffff;		
+const uint32_t NO_INT= 0x1ffffff;		
 
 // if 'init' takes longer than 2 secs then something is wrong (mb in endless loop)
 #define CYCLELIMIT 2000000
 
-static uint8_t mainLoopOnlyMode= 0;
-static uint8_t mainProgStatus= 0; 		// 0: completed 1: interrupted by cycleLimit
+static uint8_t _mainLoopOnlyMode= 0;
+static uint8_t _mainProgStatus= 0; 		// 0: completed 1: interrupted by cycleLimit
 
-static uint32_t irqTimeout= 18000;		// will be reset anyway
+static uint32_t _irqTimeout= 18000;		// will be reset anyway
 
-static int32_t frameCount= 0;			// keeps track of current frame
+static int32_t _frameCount= 0;			// keeps track of current frame
 
 /*
 * snapshot of c64 memory right after loading.. 
 * it is restored before playing a new track..
 */
-static uint8_t memorySnapshot[MEMORY_SIZE];
+static uint8_t _memorySnapshot[MEMORY_SIZE];
 
 
 static void setIrqTimeout(uint32_t t) {
-	irqTimeout= t;		// in cpu cycles
+	_irqTimeout= t;		// in cpu cycles
 } 
 
 static uint16_t getNmiVector() {
@@ -143,7 +143,7 @@ static int8_t isCiaActive(uint8_t ciaIdx) {
 	return ((cpuIrqFlag() == 0) && ciaIsActive(ciaIdx)) || envIsTimerDrivenPSID();
 }
 
-static enum timertype getIrqTimerMode(uint8_t ciaIdx) {	
+static enum TimerType getIrqTimerMode(uint8_t ciaIdx) {	
 	if (envIsPSID() == 1) {		
 		return vicIsIrqActive() ? RASTER_TIMER : CIA1_TIMER;
 	} else {	
@@ -170,7 +170,7 @@ static enum timertype getIrqTimerMode(uint8_t ciaIdx) {
 *
 * @return NO_INT: timeLimit was reached / [positive number] wait time in cycles until the interrupt occurs
 */
-static uint32_t forwardToNextInterrupt(enum timertype timerType, uint8_t ciaIdx, uint32_t timeLimit) {
+static uint32_t forwardToNextInterrupt(enum TimerType timerType, uint8_t ciaIdx, uint32_t timeLimit) {
 	// timing based on CIA1 timer (e.g. Wizball) or timing based on raster timer (e.g. Arkanoid subsongs 3-8)
 
 	if (timerType == NO_IRQ) {
@@ -270,9 +270,9 @@ static void processMain(uint32_t cyclesPerScreen, uint32_t startTime, int32_t ti
 	// they use busy-wait for some condition which does not materialize in our emulator env. Consequently our 
 	// "timeout" may be completely off the target...
 
-	if ((mainProgStatus >0) && (timeout >0)) {		// might be the rest of some "init" logic... or some loop playing samples		
+	if ((_mainProgStatus >0) && (timeout >0)) {		// might be the rest of some "init" logic... or some loop playing samples		
 		uint32_t originalDigiCount= digiGetCount();
-		mainProgStatus= callMain(0, 0, startTime, timeout);	// continue where interrupted
+		_mainProgStatus= callMain(0, 0, startTime, timeout);	// continue where interrupted
 		digiTagOrigin(MAIN_OFFSET_MASK, startTime, originalDigiCount);
 	}
 }
@@ -313,10 +313,10 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 	uint16_t mainProgStart= mainProgStep;
 
 	if (0 || (envIsRSID() && (currentIrqTimer == NO_INT) && (currentNmiTimer == NO_INT))) {
-		mainLoopOnlyMode= 1;
+		_mainLoopOnlyMode= 1;
 		mainProgStart= 0; 	// this might be the better choice in any case.. but to avoid regression testing lets use it here for now..
 	} else {
-		mainLoopOnlyMode= 0;
+		_mainLoopOnlyMode= 0;
 		for (;(currentIrqTimer != NO_INT) || (currentNmiTimer != NO_INT) ;) {
 			// periodically give unused cycles to main program (needed, e.g. by THCM's stuff)	
 			
@@ -337,7 +337,7 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 				mainProgStart= tDone + mainProgStep;
 			}
 			
-			// FIXME: we should better allow NMI to interrupt IRQ, i.e. set respectice cycle-limit
+			// FIXME: better allow NMI to interrupt IRQ, i.e. set respectice cycle-limit
 			// accordingly - and then resume the IRQ later. see Ferrari_Formula_One.sid
 			
 			if (!isIrqNext(currentIrqTimer, currentNmiTimer, tIrq, tNmi)) {		// handle next NMI
@@ -360,10 +360,10 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 				}
 				
 				// FIXME: multi-frame IRQ handling would be necessary to deal with songs like: Musik_Run_Stop.sid				
-				uint32_t usedCycles= processInterrupt(IRQ_OFFSET_MASK, getIrqVector(), tIrq, irqTimeout);				
+				uint32_t usedCycles= processInterrupt(IRQ_OFFSET_MASK, getIrqVector(), tIrq, _irqTimeout);				
 				// flaw: IRQ might have switched off NMI, e.g. Vicious_SID_2-Blood_Money.sid
 				
-				if (usedCycles >=irqTimeout) { // IRQ gets aborted due to a timeout
+				if (usedCycles >=_irqTimeout) { // IRQ gets aborted due to a timeout
 					if (cpuIrqFlag()) {
 						// this IRQ handler does not want to be interrupted.. (either the code got stuck due to some impossible
 						// condition - e.g. waiting for a timer which we don't update - or it is an endless IRQ routine that needs to 
@@ -391,7 +391,7 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 	if (mainProgCycles >0) {
 		processMain(cyclesPerScreen, mainProgStart, mainProgCycles);
 		
-		if (mainLoopOnlyMode && envIsRSID()) {
+		if (_mainLoopOnlyMode && envIsRSID()) {
 			// e.g. Dane's "Crush.sid"
 			renderSynth(synthBuffer, cyclesPerScreen, samplesPerCall, synthPos, cyclesPerScreen, synthTraceBufs);
 		}
@@ -399,11 +399,11 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 }
 
 uint32_t rsidGetFrameCount() {
-	return frameCount;
+	return _frameCount;
 }
 
 static void incFrameCount() {
-	frameCount++;
+	_frameCount++;
 }
 
 /*
@@ -446,14 +446,14 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 
 void rsidReset(uint32_t sampleRate, uint8_t compatibility)
 {	
-	frameCount= 0;
+	_frameCount= 0;
 	
 	cpuInit();
 
 	sidReset(sampleRate, envIsSID6581(), compatibility);
 	
 	cpuSetProgramMode(MAIN_OFFSET_MASK);
-	mainLoopOnlyMode= 0;
+	_mainLoopOnlyMode= 0;
 	
 	// hack: some IRQ players don't finish within one screen, e.g. A-Maze-Ing.sid and Axel_F.sid 
 	// (Sean Connolly) even seems to play digis during multi-screen IRQs (so give them more time)			
@@ -467,7 +467,7 @@ void rsidLoadSongBinary(uint8_t *src, uint16_t destAddr, uint32_t len) {
 	memCopyToRAM(src, destAddr, len);
 
 	// backup initial state for use in 'track change'	
-	memCopyFromRAM(memorySnapshot, 0, MEMORY_SIZE);	
+	memCopyFromRAM(_memorySnapshot, 0, MEMORY_SIZE);	
 }
 
 void rsidPlayTrack(uint32_t sampleRate, uint8_t compatibility, uint16_t *pInitAddr, uint16_t loadEndAddr, 
@@ -476,7 +476,7 @@ void rsidPlayTrack(uint32_t sampleRate, uint8_t compatibility, uint16_t *pInitAd
 	rsidReset(sampleRate, compatibility);
 	
 	// restore original mem image.. previous "initAddr" run may have corrupted the state
-	memCopyToRAM(memorySnapshot, 0, MEMORY_SIZE);
+	memCopyToRAM(_memorySnapshot, 0, MEMORY_SIZE);
 
 	hackIfNeeded(pInitAddr);	
 	
@@ -485,7 +485,7 @@ void rsidPlayTrack(uint32_t sampleRate, uint8_t compatibility, uint16_t *pInitAd
 	// if initAddr call does not complete then it is likely in an endless loop / maybe digi player
 	// FIXME use CYCLELIMIT only for PSID: unfortunately RSIDs like Wonderland_XII-Digi_part_1.sid still 
 	// need some kind of startup phase
-	mainProgStatus= callMain((*pInitAddr), actualSubsong, 0, !envIsRSID()? CYCLELIMIT : 200000);		
+	_mainProgStatus= callMain((*pInitAddr), actualSubsong, 0, !envIsRSID()? CYCLELIMIT : 200000);		
 
 	memResetPsidBanks(envIsPSID(), playAddr);	// PSID again
 }

@@ -6,7 +6,7 @@
  * interaction with the SID might result in "direct digi-sample playback).
  *
  * <p>Copyright (C) 2013 Juergen Wothke
- * <p>version 0.81
+ * <p>version 0.9
  *
  * Terms of Use: This software is licensed under a CC BY-NC-SA 
  * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
@@ -30,62 +30,62 @@
 static uint32_t INVALID_TIME= (0x1 << 27);	// large enough so that any regular timestamp will get preference
 static uint16_t IDX_NOT_FOUND= 0x1fff;			// we'll never have that many samples for one screen..
 
-static uint8_t currentDigi;		// last digi sample / default: neutral value 
+static uint8_t _currentDigi;		// last digi sample / default: neutral value 
 
 /*
 * work buffers used to record digi samples produced by NMI/IRQ/main
 */ 
 
 #define MASK_DIGI_UNUSED 0x80
-static int8_t digiSource= MASK_DIGI_UNUSED;	// hi: cpuGetProgramMode / lo: voice +1 
-static uint16_t digiCount= 0;
-static uint32_t digiTime[DIGI_BUF_SIZE];	// time in cycles counted from the beginning of the current screen
-static uint8_t digiVolume[DIGI_BUF_SIZE];	// 8-bit sample
+static int8_t _digiSource= MASK_DIGI_UNUSED;	// hi: cpuGetProgramMode / lo: voice +1 
+static uint16_t _digiCount= 0;
+static uint32_t _digiTime[DIGI_BUF_SIZE];	// time in cycles counted from the beginning of the current screen
+static uint8_t _digiVolume[DIGI_BUF_SIZE];	// 8-bit sample
 
-static uint32_t sortedDigiTime[DIGI_BUF_SIZE];
-static uint8_t sortedDigiVolume[DIGI_BUF_SIZE];
+static uint32_t _sortedDigiTime[DIGI_BUF_SIZE];
+static uint8_t _sortedDigiVolume[DIGI_BUF_SIZE];
 
-static uint8_t isC64compatible= 1;
+static uint8_t _isC64compatible= 1;
 
 /*
 * samples which already belong to the next screen, e.g. produced by some long running IRQ which
 * crossed over to the next screen..
 */
-static uint16_t overflowDigiCount= 0;
-static uint32_t overflowDigiTime[DIGI_BUF_SIZE];
-static uint8_t overflowDigiVolume[DIGI_BUF_SIZE];
+static uint16_t _overflowDigiCount= 0;
+static uint32_t _overflowDigiTime[DIGI_BUF_SIZE];
+static uint8_t _overflowDigiVolume[DIGI_BUF_SIZE];
 
 // detection of test-bit based samples
 const uint8_t TB_TIMEOUT = 12;	 	// minimum that still works for "Vortex" is 10
 const uint8_t TB_PULSE_TIMEOUT = 7; // already reduced this one to avoid false positive in "Yie ar kung fu"
 
 /* legacy PSID sample playback */
-static int32_t sampleActive;
-static int32_t samplePosition, sampleStart, sampleEnd, sampleRepeatStart;
-static int32_t fracPos = 0;  /* Fractal position of sample */
-static int32_t samplePeriod;
-static int32_t sampleRepeats;
-static int32_t sampleOrder;
-static int32_t sampleNibble;
+static int32_t _sampleActive;
+static int32_t _samplePosition, _sampleStart, _sampleEnd, _sampleRepeatStart;
+static int32_t _fracPos = 0;  /* Fractal position of sample */
+static int32_t _samplePeriod;
+static int32_t _sampleRepeats;
+static int32_t _sampleOrder;
+static int32_t _sampleNibble;
 
-static int32_t internalPeriod, internalOrder, internalStart, internalEnd,
-internalAdd, internalRepeatTimes, internalRepeatStart;
+static int32_t _internalPeriod, _internalOrder, _internalStart, _internalEnd,
+_internalAdd, _internalRepeatTimes, _internalRepeatStart;
 
 static void recordSample(uint8_t sample) {
 	if (cpuCycles() <= envCyclesPerScreen()) {
-		digiTime[digiCount%(DIGI_BUF_SIZE-1)]= cpuCycles();
-		digiVolume[digiCount%(DIGI_BUF_SIZE-1)]= sample;	// always use 8-bit to ease handling									
+		_digiTime[_digiCount%(DIGI_BUF_SIZE-1)]= cpuCycles();
+		_digiVolume[_digiCount%(DIGI_BUF_SIZE-1)]= sample;	// always use 8-bit to ease handling									
 
-		digiCount+=1;	// buffer is meant to collect no more than the samples from one screen refresh!
+		_digiCount+=1;	// buffer is meant to collect no more than the samples from one screen refresh!
 	}
 	else {
 		// some players (e.g. Digital_Music.sid) start long running IRQ routines at the end of one screen 
 		// producing most of their output on the next screen... so we have to deal with this scenario..
 		
-		overflowDigiTime[overflowDigiCount%(DIGI_BUF_SIZE-1)]= cpuCycles()-envCyclesPerScreen();
-		overflowDigiVolume[overflowDigiCount%(DIGI_BUF_SIZE-1)]= sample;	// always use 8-bit to ease handling									
+		_overflowDigiTime[_overflowDigiCount%(DIGI_BUF_SIZE-1)]= cpuCycles()-envCyclesPerScreen();
+		_overflowDigiVolume[_overflowDigiCount%(DIGI_BUF_SIZE-1)]= sample;	// always use 8-bit to ease handling									
 
-		overflowDigiCount+=1;	// buffer is meant to collect no more than the samples from one screen refresh!		
+		_overflowDigiCount+=1;	// buffer is meant to collect no more than the samples from one screen refresh!		
 	}
 }
 
@@ -113,12 +113,12 @@ typedef enum {
 
 
 // relevant timing state is tracked for each of the 3 channels
-static FreqDetectState freqDetectState[3];
-static uint32_t freqDetectTimestamp[3];
-static uint8_t freqDetectDelayedSample[3];
+static FreqDetectState _freqDetectState[3];
+static uint32_t _freqDetectTimestamp[3];
+static uint8_t _freqDetectDelayedSample[3];
 
 static uint8_t isWithinFreqDetectTimeout(uint8_t voice) {
-	return (cpuCycles()-freqDetectTimestamp[voice]) < TB_TIMEOUT;
+	return (cpuCycles()-_freqDetectTimestamp[voice]) < TB_TIMEOUT;
 }
 #define SAMPLE_TRESHOLD 4
 static uint8_t assertSameSource(uint8_t voicePlus) {
@@ -139,16 +139,16 @@ static uint8_t assertSameSource(uint8_t voicePlus) {
 
 	// note: trying to use the cpuGetProgramMode() to figure out what to use is NOT a good idea
 	
-	if (digiSource != voicePlus) {
-		if (digiSource&MASK_DIGI_UNUSED) {
-			digiSource= voicePlus;	// correct later if necessary
+	if (_digiSource != voicePlus) {
+		if (_digiSource&MASK_DIGI_UNUSED) {
+			_digiSource= voicePlus;	// correct later if necessary
 		} else {
 			if (voicePlus == 0) {		// d418 write while there is already other data.. just ignore					
 				return 0;
-			} else if (digiSource == 0) { // previously recorded D418 stuff is not really sample output
-				digiCount= 0;
-				overflowDigiCount= 0; 
-				digiSource= voicePlus;	// assumtion: only one digi voice..			
+			} else if (_digiSource == 0) { // previously recorded D418 stuff is not really sample output
+				_digiCount= 0;
+				_overflowDigiCount= 0; 
+				_digiSource= voicePlus;	// assumtion: only one digi voice..			
 			} else {
 				// accept voice switches: example Vicious_SID_2-15638Hz.sid
 			}
@@ -166,8 +166,8 @@ static uint8_t recordFreqSample(uint8_t voice, uint8_t sample) {
 	sidPoke(voice*7 + 4, 0);	// GATE
 	sidPoke(voice*7 + 1, 0);	// freq HI
 	
-	freqDetectState[voice]= FreqIdle;
-	freqDetectTimestamp[voice]= 0;
+	_freqDetectState[voice]= FreqIdle;
+	_freqDetectTimestamp[voice]= 0;
 	return 1;
 }
 
@@ -185,39 +185,39 @@ static uint8_t handleFreqModulationDigi(uint8_t voice, uint8_t reg, uint8_t valu
 		switch (value) {
 			case 0x11:	// triangle/GATE
 				// reset statemachine 
-				freqDetectState[voice] = FreqPrep;				// this may be the start of a digi playback
-				freqDetectTimestamp[voice]= cpuCycles();
+				_freqDetectState[voice] = FreqPrep;				// this may be the start of a digi playback
+				_freqDetectTimestamp[voice]= cpuCycles();
 				break;
 			case 0x8:	// TEST
 			case 0x9:	// TEST/GATE
-				if ((freqDetectState[voice] == FreqPrep) && isWithinFreqDetectTimeout(voice)) {
-					freqDetectState[voice] = FreqSet;			// we are getting closer
-					freqDetectTimestamp[voice]= cpuCycles();
+				if ((_freqDetectState[voice] == FreqPrep) && isWithinFreqDetectTimeout(voice)) {
+					_freqDetectState[voice] = FreqSet;			// we are getting closer
+					_freqDetectTimestamp[voice]= cpuCycles();
 				} else {
-					freqDetectState[voice] = FreqIdle;	// just to reduce future comparisons			
+					_freqDetectState[voice] = FreqIdle;	// just to reduce future comparisons			
 				}
 				break;
 			case 0x1:	// GATE
-				if ((freqDetectState[voice] == FreqSet) && isWithinFreqDetectTimeout(voice)) {
+				if ((_freqDetectState[voice] == FreqSet) && isWithinFreqDetectTimeout(voice)) {
 					// variant 1: sample set after GATE
-					freqDetectState[voice] = FreqVariant1;		// bring on that sample!
-					freqDetectTimestamp[voice]= cpuCycles();
-				} else if ((freqDetectState[voice] == FreqVariant2) && isWithinFreqDetectTimeout(voice)) {
+					_freqDetectState[voice] = FreqVariant1;		// bring on that sample!
+					_freqDetectTimestamp[voice]= cpuCycles();
+				} else if ((_freqDetectState[voice] == FreqVariant2) && isWithinFreqDetectTimeout(voice)) {
 					// variant 2: sample set before GATE
-					return recordFreqSample(voice, freqDetectDelayedSample[voice]);				
+					return recordFreqSample(voice, _freqDetectDelayedSample[voice]);				
 				} else {
-					freqDetectState[voice] = FreqIdle;	// just to reduce future comparisons			
+					_freqDetectState[voice] = FreqIdle;	// just to reduce future comparisons			
 				}
 				break;
 		}
 	} else if (reg == 1) {	// step: set sample 
-		if ((freqDetectState[voice] == FreqSet) && isWithinFreqDetectTimeout(voice)) {
+		if ((_freqDetectState[voice] == FreqSet) && isWithinFreqDetectTimeout(voice)) {
 			// variant 2: sample before GATE
-			freqDetectDelayedSample[voice]= value;
+			_freqDetectDelayedSample[voice]= value;
 			
-			freqDetectState[voice] = FreqVariant2;		// now we only need confirmation
-			freqDetectTimestamp[voice]= cpuCycles();
-		} else if ((freqDetectState[voice] == FreqVariant1) && isWithinFreqDetectTimeout(voice)) {
+			_freqDetectState[voice] = FreqVariant2;		// now we only need confirmation
+			_freqDetectTimestamp[voice]= cpuCycles();
+		} else if ((_freqDetectState[voice] == FreqVariant1) && isWithinFreqDetectTimeout(voice)) {
 			// variant 1: sample set after GATE
 			return recordFreqSample(voice, value);
 		}
@@ -243,13 +243,13 @@ typedef enum {
 
 
 // relevant timing state is tracked for each of the 3 channels
-static PulseDetectState pulseDetectState[3];
-static uint32_t pulseDetectTimestamp[3];
-static uint8_t pulseDetectDelayedSample[3];
-static uint8_t pulseDetectMode[3];	// 2= Pulse width LO/ 3= Pulse width HI
+static PulseDetectState _pulseDetectState[3];
+static uint32_t _pulseDetectTimestamp[3];
+static uint8_t _pulseDetectDelayedSample[3];
+static uint8_t _pulseDetectMode[3];	// 2= Pulse width LO/ 3= Pulse width HI
 
 static uint8_t isWithinPulseDetectTimeout(uint8_t voice) {
-	return (cpuCycles()-pulseDetectTimestamp[voice]) < TB_PULSE_TIMEOUT;
+	return (cpuCycles()-_pulseDetectTimestamp[voice]) < TB_PULSE_TIMEOUT;
 }
 
 static uint8_t recordPulseSample(uint8_t voice, uint8_t sample) {
@@ -259,8 +259,8 @@ static uint8_t recordPulseSample(uint8_t voice, uint8_t sample) {
 	sidPoke(voice*7 + 4, 0);	// GATE
 	sidPoke(voice*7 + 2, 0);	// pulse width
 	
-	pulseDetectState[voice]= PulseIdle;
-	pulseDetectTimestamp[voice]= 0;
+	_pulseDetectState[voice]= PulseIdle;
+	_pulseDetectTimestamp[voice]= 0;
 	return 1;
 }
 
@@ -284,42 +284,42 @@ static uint8_t handlePulseModulationDigi(uint8_t voice, uint8_t reg, uint8_t val
 		switch (value) {
 			case 0x49:	// PULSE/TEST/GATE
 				// test bit is set
-				if ((pulseDetectState[voice] == PulsePrep) && isWithinPulseDetectTimeout(voice)) {
-					pulseDetectState[voice] = PulseConfirm;			// we are getting closer
-					pulseDetectTimestamp[voice]= cpuCycles();
+				if ((_pulseDetectState[voice] == PulsePrep) && isWithinPulseDetectTimeout(voice)) {
+					_pulseDetectState[voice] = PulseConfirm;			// we are getting closer
+					_pulseDetectTimestamp[voice]= cpuCycles();
 				} else {
 					// start of variant 2
-					pulseDetectState[voice] = PulsePrep2;
-					pulseDetectTimestamp[voice]= cpuCycles();
+					_pulseDetectState[voice] = PulsePrep2;
+					_pulseDetectTimestamp[voice]= cpuCycles();
 				}
 				break;
 			case 0x41:	// PULSE/GATE
-				if (((pulseDetectState[voice] == PulseConfirm) || (pulseDetectState[voice] == PulseConfirm2)) 
+				if (((_pulseDetectState[voice] == PulseConfirm) || (_pulseDetectState[voice] == PulseConfirm2)) 
 						&& isWithinPulseDetectTimeout(voice)) {
-					uint8_t sample= (pulseDetectMode[voice] == 2) ? 
-									pulseDetectDelayedSample[voice] : (pulseDetectDelayedSample[voice] << 4) & 0xff;
+					uint8_t sample= (_pulseDetectMode[voice] == 2) ? 
+									_pulseDetectDelayedSample[voice] : (_pulseDetectDelayedSample[voice] << 4) & 0xff;
 
 					sidSetMute(voice, 1);	// avoid wheezing base signals
 					
-					pulseDetectState[voice] = PulseIdle;	// just to reduce future comparisons
+					_pulseDetectState[voice] = PulseIdle;	// just to reduce future comparisons
 					return recordPulseSample(voice, sample);								
 				} else {
-					pulseDetectState[voice] = PulseIdle;	// just to reduce future comparisons			
+					_pulseDetectState[voice] = PulseIdle;	// just to reduce future comparisons			
 				}
 				break;
 		}
 	} else if ((reg == 2) || (reg == 3)) {	// PULSE width 
 		uint8_t followState;
-		if ((pulseDetectState[voice] == PulsePrep2) && isWithinPulseDetectTimeout(voice)) {
+		if ((_pulseDetectState[voice] == PulsePrep2) && isWithinPulseDetectTimeout(voice)) {
 			followState= PulseConfirm2;	// variant 2
 		} else {
 			followState= PulsePrep;		// variant 1
 		}
 		// reset statemachine 
-		pulseDetectState[voice] = followState;		// this may be the start of a digi playback
-		pulseDetectTimestamp[voice]= cpuCycles();
-		pulseDetectDelayedSample[voice]= value;
-		pulseDetectMode[voice]= reg;
+		_pulseDetectState[voice] = followState;		// this may be the start of a digi playback
+		_pulseDetectTimestamp[voice]= cpuCycles();
+		_pulseDetectDelayedSample[voice]= value;
+		_pulseDetectMode[voice]= reg;
 	}
 	return 0;	// other "detectors" may still take their turn
 }
@@ -364,7 +364,7 @@ static uint8_t handleIceGuysDigi(uint8_t voice, uint8_t reg, uint8_t value) {
 // -------------------------------------------------------------------------------------------
 
 // based on Mahoney's amplitude_table_8580.txt (FIXME: use .sid file's version preference and support both tables?)
-static const uint8_t mahoneySample[256]= {
+static const uint8_t _mahoneySample[256]= {
 	164, 170, 176, 182, 188, 194, 199, 205, 212, 218, 224, 230, 236, 242, 248, 254, 
 	164, 159, 153, 148, 142, 137, 132, 127, 120, 115, 110, 105, 99, 94, 89, 84, 
 	164, 170, 176, 181, 187, 193, 199, 205, 212, 217, 223, 229, 235, 241, 246, 252, 
@@ -404,10 +404,10 @@ inline static uint8_t isMahoneyDigi() {
 // from musicians like Swallow, Danko or Cyberbrain
 // -------------------------------------------------------------------------------------------
 
-static uint16_t swallowPWM[3];
+static uint16_t _swallowPWM[3];
 
 static uint8_t setSwallowMode(uint8_t voice, uint8_t m) {
-	swallowPWM[voice]= m;
+	_swallowPWM[voice]= m;
 	sidSetMute(voice, 1);	// avoid wheezing base signals
 	
 	return 1;
@@ -434,13 +434,13 @@ static uint8_t handleSwallowDigi(uint8_t voice, uint8_t reg, uint16_t addr, uint
 				return setSwallowMode(voice, 3);
 			} 
 		}
-	} else if (swallowPWM[0] && (reg == 3)) {
+	} else if (_swallowPWM[0] && (reg == 3)) {
 		/* 
 		depending in the specific player routine, the sample info is available 
 		in different registers(d402/d403 and d409/a) ..  for retrieval d403 
 		seems to work for most player impls
 		*/
-		switch(swallowPWM[voice]) {
+		switch(_swallowPWM[voice]) {
 			case 1:
 				recordSample((value<<4) & 0xff);
 				break;
@@ -464,49 +464,49 @@ static void handlePsidDigi(uint16_t addr, uint8_t value) {
 	if ((addr > 0xd418) && (addr < 0xd500))
 	{		
 		// Start-Hi
-		if (addr == 0xd41f) internalStart = (internalStart&0x00ff) | (value<<8);
+		if (addr == 0xd41f) _internalStart = (_internalStart&0x00ff) | (value<<8);
 	  // Start-Lo
-		if (addr == 0xd41e) internalStart = (internalStart&0xff00) | (value);
+		if (addr == 0xd41e) _internalStart = (_internalStart&0xff00) | (value);
 	  // Repeat-Hi
-		if (addr == 0xd47f) internalRepeatStart = (internalRepeatStart&0x00ff) | (value<<8);
+		if (addr == 0xd47f) _internalRepeatStart = (_internalRepeatStart&0x00ff) | (value<<8);
 	  // Repeat-Lo
-		if (addr == 0xd47e) internalRepeatStart = (internalRepeatStart&0xff00) | (value);
+		if (addr == 0xd47e) _internalRepeatStart = (_internalRepeatStart&0xff00) | (value);
 
 	  // End-Hi
 		if (addr == 0xd43e) {
-			internalEnd = (internalEnd&0x00ff) | (value<<8);
+			_internalEnd = (_internalEnd&0x00ff) | (value<<8);
 		}
 	  // End-Lo
 		if (addr == 0xd43d) {
-			internalEnd = (internalEnd&0xff00) | (value);
+			_internalEnd = (_internalEnd&0xff00) | (value);
 		}
 	  // Loop-Size
-		if (addr == 0xd43f) internalRepeatTimes = value;
+		if (addr == 0xd43f) _internalRepeatTimes = value;
 	  // Period-Hi
-		if (addr == 0xd45e) internalPeriod = (internalPeriod&0x00ff) | (value<<8);
+		if (addr == 0xd45e) _internalPeriod = (_internalPeriod&0x00ff) | (value<<8);
 	  // Period-Lo
 		if (addr == 0xd45d) {
-			internalPeriod = (internalPeriod&0xff00) | (value);
+			_internalPeriod = (_internalPeriod&0xff00) | (value);
 		}
 	  // Sample Order
-		if (addr == 0xd47d) internalOrder = value;
+		if (addr == 0xd47d) _internalOrder = value;
 	  // Sample Add
-		if (addr == 0xd45f) internalAdd = value;
+		if (addr == 0xd45f) _internalAdd = value;
 	  // Start-Sampling
 		if (addr == 0xd41d)
 		{
-			sampleRepeats = internalRepeatTimes;
-			samplePosition = internalStart;
-			sampleStart = internalStart;
-			sampleEnd = internalEnd;
-			sampleRepeatStart = internalRepeatStart;
-			samplePeriod = internalPeriod;
-			sampleOrder = internalOrder;
+			_sampleRepeats = _internalRepeatTimes;
+			_samplePosition = _internalStart;
+			_sampleStart = _internalStart;
+			_sampleEnd = _internalEnd;
+			_sampleRepeatStart = _internalRepeatStart;
+			_samplePeriod = _internalPeriod;
+			_sampleOrder = _internalOrder;
 			switch (value)
 			{
-				case 0xfd: sampleActive = 0; break;
+				case 0xfd: _sampleActive = 0; break;
 				case 0xfe:
-				case 0xff: sampleActive = 1; break;
+				case 0xff: _sampleActive = 1; break;
 
 				default: return;
 			}
@@ -518,50 +518,50 @@ int32_t digiGenPsidSample(int32_t sIn)
 {
     static int32_t sample = 0;
 
-    if (!sampleActive) return(sIn);
+    if (!_sampleActive) return(sIn);
 
-    if ((samplePosition < sampleEnd) && (samplePosition >= sampleStart))
+    if ((_samplePosition < _sampleEnd) && (_samplePosition >= _sampleStart))
     {
 		//Interpolation routine
-		//float a = (float)fracPos/(float)sidGetSampleFreq();
+		//float a = (float)_fracPos/(float)sidGetSampleFreq();
 		//float b = 1-a;
 		//sIn += a*sample + b*last_sample;
 
         sIn += sample;
 
-        fracPos += envClockRate()/samplePeriod;		
+        _fracPos += envClockRate()/_samplePeriod;		
         
-        if (fracPos > sidGetSampleFreq()) 
+        if (_fracPos > sidGetSampleFreq()) 
         {
-            fracPos%=sidGetSampleFreq();
+            _fracPos%=sidGetSampleFreq();
 
 			// Naechstes Samples holen
-            if (sampleOrder == 0) {
-                sampleNibble++;                        // Naechstes Sample-Nibble
-                if (sampleNibble==2) {
-                    sampleNibble = 0;
-                    samplePosition++;
+            if (_sampleOrder == 0) {
+                _sampleNibble++;                        // Naechstes Sample-Nibble
+                if (_sampleNibble==2) {
+                    _sampleNibble = 0;
+                    _samplePosition++;
                 }
             }
             else {
-                sampleNibble--;
-                if (sampleNibble < 0) {
-                    sampleNibble=1;
-                    samplePosition++;
+                _sampleNibble--;
+                if (_sampleNibble < 0) {
+                    _sampleNibble=1;
+                    _samplePosition++;
                 }
             }       
-            if (sampleRepeats)
+            if (_sampleRepeats)
             {
-                if  (samplePosition > sampleEnd)
+                if  (_samplePosition > _sampleEnd)
                 {
-                    sampleRepeats--;
-                    samplePosition = sampleRepeatStart;
+                    _sampleRepeats--;
+                    _samplePosition = _sampleRepeatStart;
                 }                       
-                else sampleActive = 0;
+                else _sampleActive = 0;
             }
             
-            sample = memReadRAM(samplePosition&0xffff);
-            if (sampleNibble==1)   // Hi-Nibble holen?     
+            sample = memReadRAM(_samplePosition&0xffff);
+            if (_sampleNibble==1)   // Hi-Nibble holen?     
                 sample = (sample & 0xf0)>>4;
             else 
 				sample = sample & 0x0f;
@@ -574,11 +574,11 @@ int32_t digiGenPsidSample(int32_t sIn)
 }
 
 uint16_t digiGetCount() {
-	return digiCount;
+	return _digiCount;
 }
 
 void digiClearBuffer() {
-	digiCount= 0;
+	_digiCount= 0;
 }
 
 void digiTagOrigin(uint32_t mask, uint32_t offset, uint32_t originalDigiCount) {
@@ -606,57 +606,57 @@ void digiTagOrigin(uint32_t mask, uint32_t offset, uint32_t originalDigiCount) {
 	Alchemy bug.. for now the hack works.
 	*/
 	
-	uint16_t len= digiCount - originalDigiCount;
+	uint16_t len= _digiCount - originalDigiCount;
 	
 	if (len > 0) {
 		for (uint16_t i= 0; i<len; i++) {
-			digiTime[originalDigiCount+i] = (offset + digiTime[originalDigiCount+i]) | mask;
+			_digiTime[originalDigiCount+i] = (offset + _digiTime[originalDigiCount+i]) | mask;
 		}
 	}
 }
 
 void digiReset(uint8_t compatibility, uint8_t isModel6581) {
 	
-	isC64compatible= compatibility;
+	_isC64compatible= compatibility;
 
-	currentDigi= isModel6581 ? 0x38 : 0x80;	// supposedly the DC level for respective chip model
+	_currentDigi= isModel6581 ? 0x38 : 0x80;	// supposedly the DC level for respective chip model
 
-	fillMem( (uint8_t*)&swallowPWM, 0, sizeof(swallowPWM) ); 	
-    fillMem( (uint8_t*)&digiTime, 0, sizeof(digiTime) ); 
-    fillMem( (uint8_t*)&digiVolume, 0, sizeof(digiVolume) ); 
+	fillMem( (uint8_t*)&_swallowPWM, 0, sizeof(_swallowPWM) ); 	
+    fillMem( (uint8_t*)&_digiTime, 0, sizeof(_digiTime) ); 
+    fillMem( (uint8_t*)&_digiVolume, 0, sizeof(_digiVolume) ); 
 
-	digiCount= 0;
-	overflowDigiCount= 0;
-	digiSource= MASK_DIGI_UNUSED;
-    fillMem( (uint8_t*)&overflowDigiTime, 0, sizeof(overflowDigiTime) ); 
-    fillMem( (uint8_t*)&overflowDigiVolume, 0, sizeof(overflowDigiVolume) ); 
+	_digiCount= 0;
+	_overflowDigiCount= 0;
+	_digiSource= MASK_DIGI_UNUSED;
+    fillMem( (uint8_t*)&_overflowDigiTime, 0, sizeof(_overflowDigiTime) ); 
+    fillMem( (uint8_t*)&_overflowDigiVolume, 0, sizeof(_overflowDigiVolume) ); 
 	
 	// PSID digi stuff
-	sampleActive= samplePosition= sampleStart= sampleEnd= sampleRepeatStart= fracPos= 
-		samplePeriod= sampleRepeats= sampleOrder= sampleNibble= 0;
-	internalPeriod= internalOrder= internalStart= internalEnd=
-		internalAdd= internalRepeatTimes= internalRepeatStart= 0;
+	_sampleActive= _samplePosition= _sampleStart= _sampleEnd= _sampleRepeatStart= _fracPos= 
+		_samplePeriod= _sampleRepeats= _sampleOrder= _sampleNibble= 0;
+	_internalPeriod= _internalOrder= _internalStart= _internalEnd=
+		_internalAdd= _internalRepeatTimes= _internalRepeatStart= 0;
 
 	//	digi sample detection 
 	for (uint8_t i= 0; i<3; i++) {
-		freqDetectState[i]= FreqIdle;
-		freqDetectTimestamp[i]= 0;
-		freqDetectDelayedSample[i]= 0;
+		_freqDetectState[i]= FreqIdle;
+		_freqDetectTimestamp[i]= 0;
+		_freqDetectDelayedSample[i]= 0;
 		
-		pulseDetectState[i]= PulseIdle;
-		pulseDetectMode[i]= 0;
-		pulseDetectTimestamp[i]= 0;
-		pulseDetectDelayedSample[i]= 0;
+		_pulseDetectState[i]= PulseIdle;
+		_pulseDetectMode[i]= 0;
+		_pulseDetectTimestamp[i]= 0;
+		_pulseDetectDelayedSample[i]= 0;
 		
-		swallowPWM[i]= 0;
+		_swallowPWM[i]= 0;
 	}
 }
 
 // samples per frame.. actually should be well more than this..
-const uint8_t digiSampleDetectLimit= 10;	
+const uint8_t SAMPLE_DETECT_MIN= 10;	
 
 uint8_t digiDetectSample(uint16_t addr, uint8_t value) {
-	if (envIsFilePSID() & isC64compatible) return 0;	// for songs like MicroProse_Soccer_V1.sid tracks >5 (PSID digis must still be handled.. like Demi-Demo_4_PSID.sid)
+	if (envIsFilePSID() & _isC64compatible) return 0;	// for songs like MicroProse_Soccer_V1.sid tracks >5 (PSID digis must still be handled.. like Demi-Demo_4_PSID.sid)
 	
 	uint8_t reg= addr&0x1f;
 	uint8_t voice= 0;
@@ -683,7 +683,7 @@ uint8_t digiDetectSample(uint16_t addr, uint8_t value) {
 			// note: some tunes also set filters while they play digis, 
 			// e.g. Digi-Piece_for_Telecomsoft.sid
 			// (this may lead to false positives..)
-			if (assertSameSource(0)) recordSample(isMahoneyDigi() ? mahoneySample[value] : value << 4);
+			if (assertSameSource(0)) recordSample(isMahoneyDigi() ? _mahoneySample[value] : value << 4);
 
 			// GianaSisters seems to rely on setting made from NMI
 			sidPoke(addr&0x1f, value);	
@@ -695,9 +695,9 @@ uint8_t digiDetectSample(uint16_t addr, uint8_t value) {
 	} else {
 		// normal handling
 		if (!envIsPSID() && (addr == 0xd418)) {
-			if(assertSameSource(0)) recordSample(isMahoneyDigi() ? mahoneySample[value] : value << 4);	// this may lead to false positives..
+			if(assertSameSource(0)) recordSample(isMahoneyDigi() ? _mahoneySample[value] : value << 4);	// this may lead to false positives..
 		}					
-		if (!isC64compatible) {
+		if (!_isC64compatible) {
 			handlePsidDigi(addr, value);
 		}
 		// info: Fanta_in_Space.sid, digital_music.sid need regular volume settings produced here from Main..
@@ -706,24 +706,24 @@ uint8_t digiDetectSample(uint16_t addr, uint8_t value) {
 }
 
 uint16_t digiGetOverflowCount() {
-	return overflowDigiCount;
+	return _overflowDigiCount;
 } 
  
  void digiMoveBuffer2NextFrame() {
-	if (overflowDigiCount > 0) {
-		uint16_t len= sizeof(long)*overflowDigiCount;
-		memcpy(digiTime, overflowDigiTime, len);		
-		memcpy(digiVolume, overflowDigiVolume, len);		
+	if (_overflowDigiCount > 0) {
+		uint16_t len= sizeof(long)*_overflowDigiCount;
+		memcpy(_digiTime, _overflowDigiTime, len);		
+		memcpy(_digiVolume, _overflowDigiVolume, len);		
 		
 		// clear just in case..
-		fillMem(((uint8_t*)digiTime)+len, 0, DIGI_BUF_SIZE-len);
-		fillMem(((uint8_t*)digiVolume)+len, 0, DIGI_BUF_SIZE-len);
+		fillMem(((uint8_t*)_digiTime)+len, 0, DIGI_BUF_SIZE-len);
+		fillMem(((uint8_t*)_digiVolume)+len, 0, DIGI_BUF_SIZE-len);
 	} else {
-		fillMem((uint8_t*)digiTime, 0, DIGI_BUF_SIZE);
-		fillMem((uint8_t*)digiVolume, 0, DIGI_BUF_SIZE);
+		fillMem((uint8_t*)_digiTime, 0, DIGI_BUF_SIZE);
+		fillMem((uint8_t*)_digiVolume, 0, DIGI_BUF_SIZE);
 	}
-	digiCount= overflowDigiCount;
-	overflowDigiCount= 0;	
+	_digiCount= _overflowDigiCount;
+	_overflowDigiCount= 0;	
 }
 
 static uint32_t isVal(uint32_t mask, uint32_t val) {
@@ -734,21 +734,21 @@ static uint32_t getValue(uint32_t mask, uint16_t fromIdx) {
 	if (fromIdx == IDX_NOT_FOUND) {
 		return INVALID_TIME;			// only relevant while it is used for comparisons..
 	}
-	return (digiTime[fromIdx])&(~mask);	// remove marker flag
+	return (_digiTime[fromIdx])&(~mask);	// remove marker flag
 }
 
 // must only be used for valid "fromIdx"
 static void copy(uint32_t mask, uint16_t toIdx, uint16_t fromIdx) {
-	sortedDigiTime[toIdx]= getValue(mask, fromIdx);
-	sortedDigiVolume[toIdx]= digiVolume[fromIdx];
+	_sortedDigiTime[toIdx]= getValue(mask, fromIdx);
+	_sortedDigiVolume[toIdx]= _digiVolume[fromIdx];
 }
 
 static uint16_t next(uint32_t mask, uint16_t toIdx, uint16_t fromIdx) {
 	copy(mask, toIdx, fromIdx);
 
 	uint16_t i; 
-	for (i= fromIdx+1; i<digiCount; i++) {
-		if(isVal(mask, digiTime[i])) {
+	for (i= fromIdx+1; i<_digiCount; i++) {
+		if(isVal(mask, _digiTime[i])) {
 			return i;	// advance index to the next value of this category
 		}
 	}
@@ -756,7 +756,7 @@ static uint16_t next(uint32_t mask, uint16_t toIdx, uint16_t fromIdx) {
 }
 
 static void sortDigiSamples() {
-	if (digiCount >0) {
+	if (_digiCount >0) {
 		// IRQ and NMI routines are only more or less aligned and may actually be executed in an overlapping
 		// manner. Samples may therefore be stored out of sequence and we need to sort them here first before we render
 				
@@ -770,8 +770,8 @@ static void sortDigiSamples() {
 		uint16_t noOfMainSamples= 0;
 		
 		// find respective start index for data generated by IRQ/NMI/main
-		for (i= 0; i<digiCount; i++) {
-			uint32_t val= digiTime[i];
+		for (i= 0; i<_digiCount; i++) {
+			uint32_t val= _digiTime[i];
 			if (val & MAIN_OFFSET_MASK) {
 				noOfMainSamples+= 1;
 
@@ -799,7 +799,7 @@ static void sortDigiSamples() {
 		// create new list with strictly ascending timestamps
 		uint16_t toIdx;
 		int8_t offset= 0;
-		for (toIdx= 0; toIdx<digiCount; toIdx++) {
+		for (toIdx= 0; toIdx<_digiCount; toIdx++) {
 			if (getValue(MAIN_OFFSET_MASK, mainIdx) < getValue(IRQ_OFFSET_MASK, irqIdx)) {
 				if (getValue(MAIN_OFFSET_MASK, mainIdx) < getValue(NMI_OFFSET_MASK, nmiIdx)) {		// "main" is next
 					mainIdx= next(MAIN_OFFSET_MASK, toIdx+offset, mainIdx);
@@ -824,16 +824,16 @@ static void sortDigiSamples() {
 				nmiIdx= next(NMI_OFFSET_MASK, toIdx+offset, nmiIdx);	// only "nmi" left		
 			}			
 		}
-		digiCount+= offset;
+		_digiCount+= offset;
 		
 		// experiment: attempt to improve playback quality by patching the timing to a constant playback rate
 		// (to compensate for missing badline handling etc) - this does not seem to work so great for Swallow's stuff..
-		if (digiSource & 0x07) {
+		if (_digiSource & 0x07) {
 			//  only use for "modern" digis bcause old stuff like Arkanoid seems to depend on a lousy timing..
-			double step= ((double)(sortedDigiTime[digiCount-1]-sortedDigiTime[1]))/(digiCount-1);
-			uint32_t t= sortedDigiTime[1];
-			for(uint16_t i= 1; i<digiCount; i++, t= round(t+step)) {
-				sortedDigiTime[i]= t;
+			double step= ((double)(_sortedDigiTime[_digiCount-1]-_sortedDigiTime[1]))/(_digiCount-1);
+			uint32_t t= _sortedDigiTime[1];
+			for(uint16_t i= 1; i<_digiCount; i++, t= round(t+step)) {
+				_sortedDigiTime[i]= t;
 			}
 		}
 	}	
@@ -850,22 +850,22 @@ uint8_t digiRenderSamples(uint8_t * digiBuffer, uint32_t cyclesPerScreen, uint16
 	* if there are too few signals, then it's probably just the player setting filters or
 	* resetting the volume with no intention to play a digi-sample, e.g. Transformers.sid (Russel Lieblich)
 	*/
-	if (digiCount > digiSampleDetectLimit) {
+	if (_digiCount > SAMPLE_DETECT_MIN) {
 		sortDigiSamples();
 
 		// render digi samples
 		uint16_t fromIdx=0;	
 		uint16_t j;
-		for (j= 0; j<digiCount; j++) {
+		for (j= 0; j<_digiCount; j++) {
 			float scale= (float) (samplesPerCall-1) / cyclesPerScreen;
-			uint16_t toIdx= scale*((sortedDigiTime[j] > cyclesPerScreen) ? cyclesPerScreen : sortedDigiTime[j]);
+			uint16_t toIdx= scale*((_sortedDigiTime[j] > cyclesPerScreen) ? cyclesPerScreen : _sortedDigiTime[j]);
 
-			fillDigi(digiBuffer, fromIdx, toIdx, currentDigi);				
+			fillDigi(digiBuffer, fromIdx, toIdx, _currentDigi);				
 
 			fromIdx= toIdx;
-			currentDigi= sortedDigiVolume[j];
+			_currentDigi= _sortedDigiVolume[j];
 		}
-		fillDigi(digiBuffer, fromIdx, (samplesPerCall-1), currentDigi);
+		fillDigi(digiBuffer, fromIdx, (samplesPerCall-1), _currentDigi);
 
 		if (vicGetRasterline() == 0xf8) {
 			// hack fixes volume issue in Ferrari_Formula_One.sid
@@ -884,7 +884,7 @@ uint8_t digiRenderSamples(uint8_t * digiBuffer, uint32_t cyclesPerScreen, uint16
 */
 static inline int16_t genDigi(int16_t in, uint8_t digi) { 
     // transform unsigned 8 bit range into signed 16 bit (–32,768 to 32,767) range	(
-	// shift only 7 instead of 8 because digis are otherwise too loud)	
+	// shift only 6 instead of 8 because digis are otherwise too loud)	
 	int32_t value = in + (((digi & 0xff) << 6) - (0x4000>>2)); // FIXME do all the rescaling in one place!
 	
 	const int32_t clipValue = 32767;
@@ -899,9 +899,9 @@ static inline int16_t genDigi(int16_t in, uint8_t digi) {
 
 void digiMergeSampleData(int8_t hasDigi, int16_t *soundBuffer, uint8_t *digiBuffer, uint32_t len) {
 	if (hasDigi) {
-		if (digiSource & 0x7) { 
+		if (_digiSource & 0x7) { 
 			// frequency- and pulsewidth-modulation based digis are affected by the sid filters...
-			sidFilterSamples(digiBuffer, len, (digiSource & 0x7)-1);
+			sidFilterSamples(digiBuffer, len, (_digiSource & 0x7)-1);
 		}
 		uint32_t i;
 		for (i= 0; i<len; i++) {

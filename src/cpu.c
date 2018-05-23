@@ -32,84 +32,84 @@
 #define FLAG_Z 2
 #define FLAG_C 1
 
-static uint32_t cycles= 0;			// counter of burned cpu cycles within current frame
-static uint32_t totalCycles= 0;			// counter of burned cpu cycles since start of emu
-static uint16_t pc;
+static uint32_t _cycles= 0;			// counter of burned cpu cycles within current frame
+static uint32_t _totalCycles= 0;			// counter of burned cpu cycles since start of emu
+static uint16_t _pc;
 
 // ----------------------------------------------------------------- Register
-static uint8_t a,x,y,s,p;	// p= status register
+static uint8_t _a,_x,_y,_s,_p;	// _p= status register
 
 
 // snapshot of current registers and stack (so we can ignore IRQ/NMI effects)
 
-struct snapshot {
+struct Snapshot {
 	uint8_t a, x, y, p, stackPtr;
 	uint16_t pc;
 	uint8_t stack[0xff];
 };
 
-static struct snapshot snapshots[2];
+static struct Snapshot _snapshots[2];
 
-static uint32_t programMode= MAIN_OFFSET_MASK;
+static uint32_t _programMode= MAIN_OFFSET_MASK;
 
 // hacks
-static uint8_t fakeCountD012=0;
-static uint8_t fakeLoopD012=0;
+static uint8_t _fakeCountD012=0;
+static uint8_t _fakeLoopD012=0;
 
 uint32_t cpuGetProgramMode() {
-	return programMode;
+	return _programMode;
 }
 
 void cpuSetProgramMode(uint32_t p) {
-	programMode= p;
+	_programMode= p;
 }
 
 void cpuResetCycles(uint32_t c) {
-	cycles= c;
+	_cycles= c;
 }
 
 uint32_t cpuTotalCycles() {
-	return totalCycles;
+	return _totalCycles;
 }
 
 uint32_t cpuCycles() {
-	return cycles;
+	return _cycles;
 }
 
 uint8_t cpuPcIsValid() {
-	return pc > 1;
+	return _pc > 1;
 }
 
 uint8_t cpuIrqFlag() {
-	return p & FLAG_I;
+	return _p & FLAG_I;
 }
 
 void cpuRegSave(uint8_t i, uint8_t light) {
-	struct snapshot *ss= &(snapshots[i]);
+	struct Snapshot *ss= &(_snapshots[i]);
 	
-    ss->a = a;
-    ss->x = x;
-    ss->y = y;
+    ss->a = _a;
+    ss->x = _x;
+    ss->y = _y;
 	if (!light)  {
-		ss->p = p;
-		ss->pc = pc;
+		ss->p = _p;
+		ss->pc = _pc;
 		
 		// songs like: ParanoiaComplex, Another_Feekzoid_Digi_Tune or Demi-Demo_4 currently need this..
 		// todo: check what goes wrong and fix the cause... 
-		ss->stackPtr = s;	
+		ss->stackPtr = _s;	
 		memCopyFromRAM(ss->stack, 0x0100, 0xff);	
 	}
 }
 
 void cpuRegRestore(uint8_t i, uint8_t light) {
-	struct snapshot *ss= &(snapshots[i]);
-    a = ss->a;
-    x = ss->x;
-    y = ss->y;
+	struct Snapshot *ss= &(_snapshots[i]);
+    _a = ss->a;
+    _x = ss->x;
+    _y = ss->y;
 	if (!light)  {
-		p = ss->p;
-		pc = ss->pc;
-		s = ss->stackPtr;	
+		_p = ss->p;
+		_pc = ss->pc;
+		_s = ss->stackPtr;	
 		memCopyToRAM(ss->stack, 0x0100, 0xff);
 	}
 }
@@ -161,7 +161,7 @@ static uint16_t isClass2(int32_t cmd) {
 	}
 }
 	
-static const int32_t opcodes[256]  = {
+static const int32_t _opcodes[256]  = {
 	brk,ora,l_a,slo,nop,ora,asl,slo,php,ora,asl,anc,nop,ora,asl,slo,
 	bpl,ora,c_a,slo,nop,ora,asl,slo,clc,ora,nop,slo,nop,ora,asl,slo,
 	jsr,and,jam,rla,bit,and,rol,rla,plp,and,rol,anc,bit,and,rol,rla,
@@ -180,7 +180,7 @@ static const int32_t opcodes[256]  = {
 	beq,sbc,jam,isb,nop,sbc,inc,isb,sed,sbc,nop,isb,nop,sbc,inc,isb
 };
 
-static const int32_t modes[256]  = {
+static const int32_t _modes[256]  = {
 	imp,idx,abs,idx,zpg,zpg,zpg,zpg,imp,imm,acc,imm,abs,abs,abs,abs,
 	rel,idy,abs,idy,zpx,zpx,zpx,zpx,imp,aby,imp,aby,abx,abx,abx,abx,
 	abs,idx,imp,idx,zpg,zpg,zpg,zpg,imp,imm,acc,imm,abs,abs,abs,abs,
@@ -200,7 +200,7 @@ static const int32_t modes[256]  = {
 };
 
 // cycles per operation (adjustments apply)
-static const int32_t opbaseFrameCycles[256] = {
+static const int32_t _opbaseFrameCycles[256] = {
 	7,6,4,8,3,3,5,5,3,2,2,2,4,4,6,6,
 	2,5,4,8,4,4,6,6,2,4,2,7,4,4,7,7,
 	6,6,0,8,3,3,5,5,4,2,2,2,4,4,6,6,
@@ -220,8 +220,8 @@ static const int32_t opbaseFrameCycles[256] = {
 };
 
 // ----------------------------------------------- globale Faulheitsvariablen
-static uint8_t bval;
-static uint16_t wval;
+static uint8_t _bval;
+static uint16_t _wval;
 
 static uint8_t getaddr(uint8_t opc, int32_t mode)
 {
@@ -232,58 +232,58 @@ static uint8_t getaddr(uint8_t opc, int32_t mode)
         case imp:
             return 0;
         case imm:
-            return memGet(pc++);
+            return memGet(_pc++);
         case abs:
-            ad=memGet(pc++);
-            ad|=memGet(pc++)<<8;
+            ad=memGet(_pc++);
+            ad|=memGet(_pc++)<<8;
             return memGet(ad);
         case abx:
         case aby:			
-            ad=memGet(pc++);
-            ad|=memGet(pc++)<<8;
-            ad2=ad +(mode==abx?x:y);
+            ad=memGet(_pc++);
+            ad|=memGet(_pc++)<<8;
+            ad2=ad +(mode==abx?_x:_y);
 
-			if (isClass2(opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00))) {
+			if (isClass2(_opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00))) {
 				// page boundary crossed
-				cycles++;
-				totalCycles++;
+				_cycles++;
+				_totalCycles++;
 			}
 				
             return memGet(ad2);
         case zpg:
-			ad=memGet(pc++);
+			ad=memGet(_pc++);
             return memGet(ad);
         case zpx:
-            ad=memGet(pc++);
-            ad+=x;
+            ad=memGet(_pc++);
+            ad+=_x;
             return memGet(ad&0xff);
         case zpy:
-            ad=memGet(pc++);
-            ad+=y;
+            ad=memGet(_pc++);
+            ad+=_y;
             return memGet(ad&0xff);
         case idx:
 			// indexed indirect, e.g. LDA ($10,X)
-            ad=memGet(pc++);
-            ad+=x;
+            ad=memGet(_pc++);
+            ad+=_x;
             ad2=memGet(ad&0xff);
             ad++;
             ad2|=memGet(ad&0xff)<<8;
             return memGet(ad2);
         case idy:
 			// indirect indexed, e.g. LDA ($20),Y
-            ad=memGet(pc++);
+            ad=memGet(_pc++);
             ad2=memGet(ad);
             ad2|=memGet((ad+1)&0xff)<<8;
-            ad=ad2+y;
+            ad=ad2+_y;
 			
-			if (isClass2(opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00)))	{
+			if (isClass2(_opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00)))	{
 				// page boundary crossed
-				cycles++;
-				totalCycles++;					
+				_cycles++;
+				_totalCycles++;					
 			}
             return memGet(ad);
         case acc:
-            return a;
+            return _a;
     }  
     return 0;
 }
@@ -296,21 +296,21 @@ static void setaddr(uint8_t opc, int32_t mode, uint8_t val)
     switch(mode)
     {
         case abs:
-            ad=memGet(pc-2);
-            ad|=memGet(pc-1)<<8;
+            ad=memGet(_pc-2);
+            ad|=memGet(_pc-1)<<8;
             memSet(ad,val);
             return;
         case abx:
         case aby:
-            ad=memGet(pc-2);
-            ad|=memGet(pc-1)<<8;
-	        ad2=ad +(mode==abx?x:y);
+            ad=memGet(_pc-2);
+            ad|=memGet(_pc-1)<<8;
+	        ad2=ad +(mode==abx?_x:_y);
             memSet(ad2,val);
             return;
         case idx:
 			// indexed indirect, e.g. LDA ($10,X)
-            ad=memGet(pc++);
-            ad+=x;
+            ad=memGet(_pc++);
+            ad+=_x;
             ad2=memGet(ad&0xff);
             ad++;
             ad2|=memGet(ad&0xff)<<8;
@@ -318,30 +318,30 @@ static void setaddr(uint8_t opc, int32_t mode, uint8_t val)
             return;
         case idy:
 			// indirect indexed, e.g. LDA ($20),Y
-            ad=memGet(pc++);
+            ad=memGet(_pc++);
             ad2=memGet(ad);
             ad2|=memGet((ad+1)&0xff)<<8;
-            ad=ad2+y;
+            ad=ad2+_y;
 			
-			if (isClass2(opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00))) {
+			if (isClass2(_opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00))) {
 				// page boundary crossed
-				cycles++;
-				totalCycles++;				
+				_cycles++;
+				_totalCycles++;				
 			}
 			memSet(ad,val);
             return;
         case zpg:
-            ad=memGet(pc-1);
+            ad=memGet(_pc-1);
             memSet(ad,val);
             return;
         case zpx:
         case zpy:
-            ad=memGet(pc-1);
-	        ad+=(mode==zpx?x:y);
+            ad=memGet(_pc-1);
+	        ad+=(mode==zpx?_x:_y);
             memSet(ad&0xff,val);
             return;
         case acc:
-            a=val;
+            _a=val;
             return;
     }
 }
@@ -352,41 +352,41 @@ static void putaddr(uint8_t opc, int32_t mode, uint8_t val)
     switch(mode)
     {
         case abs:
-            ad=memGet(pc++);
-            ad|=memGet(pc++)<<8;
+            ad=memGet(_pc++);
+            ad|=memGet(_pc++)<<8;
             memSet(ad,val);
             return;
         case abx:
         case aby:
-            ad=memGet(pc++);
-            ad|=memGet(pc++)<<8;				
-            ad2=ad +(mode==abx?x:y);
+            ad=memGet(_pc++);
+            ad|=memGet(_pc++)<<8;				
+            ad2=ad +(mode==abx?_x:_y);
 
-			if (isClass2(opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00))) {
+			if (isClass2(_opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00))) {
 				// page boundary crossed
-				cycles++;
-				totalCycles++;
+				_cycles++;
+				_totalCycles++;
 			}
 				
             memSet(ad2,val);
             return;
         case zpg:
-            ad=memGet(pc++);
+            ad=memGet(_pc++);
             memSet(ad,val);
             return;
         case zpx:
-            ad=memGet(pc++);
-            ad+=x;
+            ad=memGet(_pc++);
+            ad+=_x;
             memSet(ad&0xff,val);
             return;
         case zpy:
-            ad=memGet(pc++);
-            ad+=y;
+            ad=memGet(_pc++);
+            ad+=_y;
             memSet(ad&0xff,val);
             return;
         case idx:
-            ad=memGet(pc++);
-            ad+=x;
+            ad=memGet(_pc++);
+            ad+=_x;
             ad2=memGet(ad&0xff);
             ad++;
             ad2|=memGet(ad&0xff)<<8;
@@ -394,76 +394,76 @@ static void putaddr(uint8_t opc, int32_t mode, uint8_t val)
             return;
         case idy:
 			// no cycle adjustment needed here.. all relevant cases are handled in "getaddr"
-            ad=memGet(pc++);
+            ad=memGet(_pc++);
             ad2=memGet(ad);
             ad2|=memGet((ad+1)&0xff)<<8;
-            ad=ad2+y;
+            ad=ad2+_y;
             memSet(ad,val);
             return;
         case acc:
-            a=val;
+            _a=val;
             return;
     }
 }
 
 static void setflags(int32_t flag, int32_t cond)
 {
-    if (cond) p|=flag;
-    else p&=~flag;
+    if (cond) _p|=flag;
+    else _p&=~flag;
 }
 
 static void push(uint8_t val)
 {
-    memSet(0x100+s,val);	
-	s= (s-1)&0xff;			// real stack just wraps around...
+    memSet(0x100+_s,val);	
+	_s= (_s-1)&0xff;			// real stack just wraps around...
 }
 
 static uint8_t pop(void)
 {
-	s= (s+1)&0xff;			// real stack just wraps around...	
-    return memGet(0x100+s);	// pos is now the new first free element..
+	_s= (_s+1)&0xff;			// real stack just wraps around...	
+    return memGet(0x100+_s);	// pos is now the new first free element..
 }
 
 static void branch(uint8_t opc, int32_t flag)
 {
     int8_t dist;
     dist=(int8_t)getaddr(opc, imm);
-    wval=pc+dist;
+    _wval=_pc+dist;
     if (flag) {
-		uint8_t diff= ((pc&0x100)!=(wval&0x100))?2:1;
-    	cycles+= diff; // + 1 if branch occurs to same page/ + 2 if branch occurs to different page
-		totalCycles+= diff;
-		pc=wval; 
+		uint8_t diff= ((_pc&0x100)!=(_wval&0x100))?2:1;
+    	_cycles+= diff; // + 1 if branch occurs to same page/ + 2 if branch occurs to different page
+		_totalCycles+= diff;
+		_pc=_wval; 
 	}
 }
 
 void cpuInit(void)
 {
-	pc= 0;
-	a= x= y= s= p= 0;
-	bval= 0;
-	wval= 0;
+	_pc= 0;
+	_a= _x= _y= _s= _p= 0;
+	_bval= 0;
+	_wval= 0;
 	
 	// status
-	cycles= 0;
-	totalCycles= 0;
+	_cycles= 0;
+	_totalCycles= 0;
 
-	fakeCountD012= 0;
-	fakeLoopD012= 0;	
+	_fakeCountD012= 0;
+	_fakeLoopD012= 0;	
 }
 
 void cpuRegReset(void)
 {
-    a=x=y=0;
-    p=0;
-    s=255; 
-    pc= 0;
+    _a=_x=_y=0;
+    _p=0;
+    _s=255; 
+    _pc= 0;
 }
 
 void cpuReset(uint16_t npc, uint8_t na) {
 	cpuRegReset();
-	a=na;
-	pc=npc;	
+	_a=na;
+	_pc=npc;	
 	
 	push(0);
 	push(0);
@@ -472,142 +472,142 @@ void cpuReset(uint16_t npc, uint8_t na) {
 // KNOWN LIMITATION: flag handling in BCD mode is not implemented (see http://www.oxyron.de/html/opcodes02.html)
 void cpuParse(void)
 {
-    uint8_t opc=memGet(pc++);
+    uint8_t opc=memGet(_pc++);
 	
-    int32_t cmd=opcodes[opc];
-    int32_t mode=modes[opc];
+    int32_t cmd=_opcodes[opc];
+    int32_t mode=_modes[opc];
 	
-	uint8_t diff= opbaseFrameCycles[opc];	// see adjustments in "branch", "putaddr" and "getaddr"
-	cycles += diff;
-	totalCycles += diff;
+	uint8_t diff= _opbaseFrameCycles[opc];	// see adjustments in "branch", "putaddr" and "getaddr"
+	_cycles += diff;
+	_totalCycles += diff;
     
 	int32_t c;  
     switch (cmd)
     {
         case adc: {
-			uint8_t in1= a;
+			uint8_t in1= _a;
 			uint8_t in2= getaddr(opc, mode);
 			
 			// note: The carry flag is used as the carry-in (bit 0) for the operation, and the 
 			// resulting carry-out (bit 8) value is stored in the carry flag.
-            wval=(uint16_t)in1+in2+((p&FLAG_C)?1:0);	// "carry-in"
-            setflags(FLAG_C, wval&0x100);
-            a=(uint8_t)wval;
-            setflags(FLAG_Z, !a);
-            setflags(FLAG_N, a&0x80);
+            _wval=(uint16_t)in1+in2+((_p&FLAG_C)?1:0);	// "carry-in"
+            setflags(FLAG_C, _wval&0x100);
+            _a=(uint8_t)_wval;
+            setflags(FLAG_Z, !_a);
+            setflags(FLAG_N, _a&0x80);
 			
 			// calc overflow flag (http://www.righto.com/2012/12/the-6502-overflow-flag-explained.html)
 			// also see http://www.6502.org/tutorials/vflag.html
-			setflags(FLAG_V, (~(in1 ^ in2))&(in1 ^ a)&0x80);
+			setflags(FLAG_V, (~(in1 ^ in2))&(in1 ^ _a)&0x80);
 			}
             break;
 /*	causes more problems in that song than it solves.. 
 		case alr: 		// used in Raveloop14_xm.sid
 			//	ALR #{imm} = AND #{imm} + LSR
-            bval=getaddr(opc, mode);
-			a= a&bval;
+            _bval=getaddr(opc, mode);
+			_a= _a&_bval;
 
-            setflags(FLAG_C,a&1);
-            a>>=1;
+            setflags(FLAG_C,_a&1);
+            _a>>=1;
 			
-            setflags(FLAG_Z, !a);
-            setflags(FLAG_N, a&0x80);
+            setflags(FLAG_Z, !_a);
+            setflags(FLAG_N, _a&0x80);
 */
         case anc:	// used by Axelf.sid (Crowther), Whats_Your_Lame_Excuse.sid
-            bval=getaddr(opc, mode);
-			a= a&bval;
+            _bval=getaddr(opc, mode);
+			_a= _a&_bval;
 			
 			// http://codebase64.org/doku.php?id=base:some_words_about_the_anc_opcode
-            setflags(FLAG_C, a&0x80);
+            setflags(FLAG_C, _a&0x80);
 			
 			// supposedly also sets these (http://www.oxyron.de/html/opcodes02.html)
-            setflags(FLAG_Z, !a);
-            setflags(FLAG_N, a&0x80);
+            setflags(FLAG_Z, !_a);
+            setflags(FLAG_N, _a&0x80);
             break;
         case and:
-            bval=getaddr(opc, mode);
-            a&=bval;
-            setflags(FLAG_Z, !a);
-            setflags(FLAG_N, a&0x80);
+            _bval=getaddr(opc, mode);
+            _a&=_bval;
+            setflags(FLAG_Z, !_a);
+            setflags(FLAG_N, _a&0x80);
             break;
         case arr: {		// Whats_Your_Lame_Excurse.sid uses this. sigh "the crappier the song...."
 			// AND
-            bval=getaddr(opc, mode);
-            a&=bval;
+            _bval=getaddr(opc, mode);
+            _a&=_bval;
 			
 			// set C+V based on this intermediate state of bits 6+7 (before ROR)
-			uint8_t bit7= !!(a&0x80);
-			uint8_t bit6= !!(a&0x40);
+			uint8_t bit7= !!(_a&0x80);
+			uint8_t bit6= !!(_a&0x40);
 
-            c=!!(p&FLAG_C);
+            c=!!(_p&FLAG_C);
 			
 			setflags(FLAG_V,bit7^bit6);
             setflags(FLAG_C,bit7);
 			
-			a ^= (-c ^ a) & (1UL << 7);	// "exchange" bit 7 with carry
+			_a ^= (-c ^ _a) & (1UL << 7);	// "exchange" bit 7 with carry
 			
 			// ROR - C+V not affected here
-            a>>=1;
+            _a>>=1;
     		
-            setflags(FLAG_N,a&0x80);
-            setflags(FLAG_Z,!a);
+            setflags(FLAG_N,_a&0x80);
+            setflags(FLAG_Z,!_a);
 			}			
             break;
         case asl:
-            wval=getaddr(opc, mode);
-            wval<<=1;
-            setaddr(opc, mode,(uint8_t)wval);
-            setflags(FLAG_Z,!(wval&0xff));
-            setflags(FLAG_N,wval&0x80);
-            setflags(FLAG_C,wval&0x100);
+            _wval=getaddr(opc, mode);
+            _wval<<=1;
+            setaddr(opc, mode,(uint8_t)_wval);
+            setflags(FLAG_Z,!(_wval&0xff));
+            setflags(FLAG_N,_wval&0x80);
+            setflags(FLAG_C,_wval&0x100);
             break;
         case bcc:
-            branch(opc, !(p&FLAG_C));
+            branch(opc, !(_p&FLAG_C));
             break;
         case bcs:
-            branch(opc, p&FLAG_C);
+            branch(opc, _p&FLAG_C);
             break;
         case bne:
-            branch(opc, !(p&FLAG_Z));
+            branch(opc, !(_p&FLAG_Z));
             break;
         case beq:
-            branch(opc, p&FLAG_Z);
+            branch(opc, _p&FLAG_Z);
             break;
         case bpl:
-            branch(opc, !(p&FLAG_N));
+            branch(opc, !(_p&FLAG_N));
             break;
         case bmi:
-            branch(opc, p&FLAG_N);
+            branch(opc, _p&FLAG_N);
             break;
         case bvc:
-            branch(opc, !(p&FLAG_V));
+            branch(opc, !(_p&FLAG_V));
             break;
         case bvs:
-            branch(opc, p&FLAG_V);
+            branch(opc, _p&FLAG_V);
             break;
         case bit:
-            bval=getaddr(opc, mode);
-            setflags(FLAG_Z,!(a&bval));
-            setflags(FLAG_N,bval&0x80);
-            setflags(FLAG_V,bval&0x40);	// bit 6
+            _bval=getaddr(opc, mode);
+            setflags(FLAG_Z,!(_a&_bval));
+            setflags(FLAG_N,_bval&0x80);
+            setflags(FLAG_V,_bval&0x40);	// bit 6
             break;
         case brk:
-			pc= 0; // code probably called non existent ROM routine.. 
+			_pc= 0; // code probably called non existent ROM routine.. 
 			
 			/* proper impl would look like this:
 
-			// pc has already been incremented by 1 (see above) 
-			// (return address to be stored on the stack is original pc+2 )
-			push((pc+1)>>8);
-            push((pc+1));
-            push(p);
+			// _pc has already been incremented by 1 (see above) 
+			// (return address to be stored on the stack is original _pc+2 )
+			push((_pc+1)>>8);
+            push((_pc+1));
+            push(_p);
 			
 			if (cpuGetProgramMode() == NMI_OFFSET_MASK) {
-				pc=memGet(0xfffa);
-				pc|=memGet(0xfffb)<<8;
+				_pc=memGet(0xfffa);
+				_pc|=memGet(0xfffb)<<8;
  			} else {
-				pc=memGet(0xfffe);
-				pc|=memGet(0xffff)<<8;
+				_pc=memGet(0xfffe);
+				_pc|=memGet(0xffff)<<8;
  			}
             setflags(FLAG_I,1);
             setflags(FLAG_B,1);
@@ -626,300 +626,300 @@ void cpuParse(void)
             setflags(FLAG_V,0);
             break;
         case cmp:
-            bval=getaddr(opc, mode);
-            wval=(uint16_t)a-bval;
-            setflags(FLAG_Z,!wval);		// a == bval
-            setflags(FLAG_N,wval&0x80);	// a < bval
-            setflags(FLAG_C,a>=bval);
+            _bval=getaddr(opc, mode);
+            _wval=(uint16_t)_a-_bval;
+            setflags(FLAG_Z,!_wval);		// _a == _bval
+            setflags(FLAG_N,_wval&0x80);	// _a < _bval
+            setflags(FLAG_C,_a>=_bval);
             break;
         case cpx:
-            bval=getaddr(opc, mode);
-            wval=(uint16_t)x-bval;
-            setflags(FLAG_Z,!wval);
-            setflags(FLAG_N,wval&0x80);      
-            setflags(FLAG_C,x>=bval);
+            _bval=getaddr(opc, mode);
+            _wval=(uint16_t)_x-_bval;
+            setflags(FLAG_Z,!_wval);
+            setflags(FLAG_N,_wval&0x80);      
+            setflags(FLAG_C,_x>=_bval);
             break;
         case cpy:
-            bval=getaddr(opc,mode);
-            wval=(uint16_t)y-bval;
-            setflags(FLAG_Z,!wval);
-            setflags(FLAG_N,wval&0x80);      
-            setflags(FLAG_C,y>=bval);
+            _bval=getaddr(opc,mode);
+            _wval=(uint16_t)_y-_bval;
+            setflags(FLAG_Z,!_wval);
+            setflags(FLAG_N,_wval&0x80);      
+            setflags(FLAG_C,_y>=_bval);
             break;
         case dcp:		// used by: Clique_Baby.sid, Musik_Run_Stop.sid
-            bval=getaddr(opc, mode);
+            _bval=getaddr(opc, mode);
 			// dec
-            bval--;
-            setaddr(opc,mode,bval);
+            _bval--;
+            setaddr(opc,mode,_bval);
 			// cmp
-            wval=(uint16_t)a-bval;
-            setflags(FLAG_Z,!wval);
-            setflags(FLAG_N,wval&0x80);
-            setflags(FLAG_C,a>=bval);
+            _wval=(uint16_t)_a-_bval;
+            setflags(FLAG_Z,!_wval);
+            setflags(FLAG_N,_wval&0x80);
+            setflags(FLAG_C,_a>=_bval);
             break;
         case dec:
-            bval=getaddr(opc, mode);
-            bval--;
-            setaddr(opc,mode,bval);
-            setflags(FLAG_Z,!bval);
-            setflags(FLAG_N,bval&0x80);
+            _bval=getaddr(opc, mode);
+            _bval--;
+            setaddr(opc,mode,_bval);
+            setflags(FLAG_Z,!_bval);
+            setflags(FLAG_N,_bval&0x80);
             break;
         case dex:
-            x--;
-            setflags(FLAG_Z,!x);
-            setflags(FLAG_N,x&0x80);
+            _x--;
+            setflags(FLAG_Z,!_x);
+            setflags(FLAG_N,_x&0x80);
             break;
         case dey:
-            y--;
-            setflags(FLAG_Z,!y);
-            setflags(FLAG_N,y&0x80);
+            _y--;
+            setflags(FLAG_Z,!_y);
+            setflags(FLAG_N,_y&0x80);
             break;
         case eor:
-            bval=getaddr(opc, mode);
-            a^=bval;
-            setflags(FLAG_Z,!a);
-            setflags(FLAG_N,a&0x80);
+            _bval=getaddr(opc, mode);
+            _a^=_bval;
+            setflags(FLAG_Z,!_a);
+            setflags(FLAG_N,_a&0x80);
             break;
         case inc:
-            bval=getaddr(opc, mode);
-            bval++;
-            setaddr(opc,mode,bval);
-            setflags(FLAG_Z,!bval);
-            setflags(FLAG_N,bval&0x80);
+            _bval=getaddr(opc, mode);
+            _bval++;
+            setaddr(opc,mode,_bval);
+            setflags(FLAG_Z,!_bval);
+            setflags(FLAG_N,_bval&0x80);
             break;
         case inx:
-            x++;
-            setflags(FLAG_Z,!x);
-            setflags(FLAG_N,x&0x80);
+            _x++;
+            setflags(FLAG_Z,!_x);
+            setflags(FLAG_N,_x&0x80);
             break;
         case iny:
-            y++;
-            setflags(FLAG_Z,!y);
-            setflags(FLAG_N,y&0x80);
+            _y++;
+            setflags(FLAG_Z,!_y);
+            setflags(FLAG_N,_y&0x80);
             break;
         case isb: {
 			// inc
-            bval=getaddr(opc, mode);
-            bval++;
-            setaddr(opc,mode,bval);
-            setflags(FLAG_Z,!bval);
-            setflags(FLAG_N,bval&0x80);
+            _bval=getaddr(opc, mode);
+            _bval++;
+            setaddr(opc,mode,_bval);
+            setflags(FLAG_Z,!_bval);
+            setflags(FLAG_N,_bval&0x80);
 
 			// + sbc			
-			uint8_t in1= a;
-			uint8_t in2= bval;
+			uint8_t in1= _a;
+			uint8_t in2= _bval;
 			
-            wval=(uint16_t)in1+in2+((p&FLAG_C)?1:0);
-            setflags(FLAG_C, wval&0x100);
-            a=(uint8_t)wval;
-            setflags(FLAG_Z, !a);
-            setflags(FLAG_N, a&0x80);
+            _wval=(uint16_t)in1+in2+((_p&FLAG_C)?1:0);
+            setflags(FLAG_C, _wval&0x100);
+            _a=(uint8_t)_wval;
+            setflags(FLAG_Z, !_a);
+            setflags(FLAG_N, _a&0x80);
 			
-			setflags(FLAG_V, (~(in1 ^ in2))&(in1 ^ a)&0x80);
+			setflags(FLAG_V, (~(in1 ^ in2))&(in1 ^ _a)&0x80);
             }
 			break;
 		case jam:	// this op would have crashed the C64
-		    pc=0;           // just quit the emulation
+		    _pc=0;           // just quit the emulation
             break;
         case jmp:
-            wval=memGet(pc++);
-            wval|=memGet(pc++)<<8;
+            _wval=memGet(_pc++);
+            _wval|=memGet(_pc++)<<8;
             switch (mode) {
                 case abs:
-					if ((wval==pc-3) && (cpuGetProgramMode() == MAIN_OFFSET_MASK)) {
-						pc= 0;	// main loop would steal cycles from NMI/IRQ which it normally would not..
+					if ((_wval==_pc-3) && (cpuGetProgramMode() == MAIN_OFFSET_MASK)) {
+						_pc= 0;	// main loop would steal cycles from NMI/IRQ which it normally would not..
 					} else {
-						pc=wval;
+						_pc=_wval;
 					}
                     break;
                 case ind:
 					// 6502 bug: JMP ($12FF) will fetch the low-byte from $12FF and the high-byte from $1200
-                    pc=memGet(wval);
-                    pc|=memGet((wval==0xff) ? 0 : wval+1)<<8;
+                    _pc=memGet(_wval);
+                    _pc|=memGet((_wval==0xff) ? 0 : _wval+1)<<8;
                     break;
             }
             break;
         case jsr:
-			// pc has already been incremented by 1 (see above) 
-			// (return address to be stored on the stack is original pc+2 )
-            push((pc+1)>>8);
-            push((pc+1));
-            wval=memGet(pc++);
-            wval|=memGet(pc++)<<8;
-            pc=wval;
+			// _pc has already been incremented by 1 (see above) 
+			// (return address to be stored on the stack is original _pc+2 )
+            push((_pc+1)>>8);
+            push((_pc+1));
+            _wval=memGet(_pc++);
+            _wval|=memGet(_pc++)<<8;
+            _pc=_wval;
             break;
 		case lax:
 			// e.g. Vicious_SID_2-15638Hz.sid
-            a=getaddr(opc, mode);
-			x= a;
-            setflags(FLAG_Z,!a);
-            setflags(FLAG_N,a&0x80);
+            _a=getaddr(opc, mode);
+			_x= _a;
+            setflags(FLAG_Z,!_a);
+            setflags(FLAG_N,_a&0x80);
             break;
 		case lxa: 	// Whats_Your_Lame_Excuse.sid - LOL only real dumbshit player uses this op..
-            bval=getaddr(opc, mode);
-			a|= 0xff;	// roulette what the specific CPU uses here
-			a&= bval;
+            _bval=getaddr(opc, mode);
+			_a|= 0xff;	// roulette what the specific CPU uses here
+			_a&= _bval;
 			
-			x= a;
-            setflags(FLAG_Z,!a);
-            setflags(FLAG_N,a&0x80);
+			_x= _a;
+            setflags(FLAG_Z,!_a);
+            setflags(FLAG_N,_a&0x80);
             break;				
         case lda:
-            a=getaddr(opc, mode);
-            setflags(FLAG_Z,!a);
-            setflags(FLAG_N,a&0x80);
+            _a=getaddr(opc, mode);
+            setflags(FLAG_Z,!_a);
+            setflags(FLAG_N,_a&0x80);
             break;
         case ldx:
-            x=getaddr(opc, mode);
-            setflags(FLAG_Z,!x);
-            setflags(FLAG_N,x&0x80);
+            _x=getaddr(opc, mode);
+            setflags(FLAG_Z,!_x);
+            setflags(FLAG_N,_x&0x80);
             break;
         case ldy:
-            y=getaddr(opc, mode);
-            setflags(FLAG_Z,!y);
-            setflags(FLAG_N,y&0x80);
+            _y=getaddr(opc, mode);
+            setflags(FLAG_Z,!_y);
+            setflags(FLAG_N,_y&0x80);
             break;
         case lsr:      
-            bval=getaddr(opc, mode); 
-			wval=(uint8_t)bval;
-            wval>>=1;
-            setaddr(opc,mode,(uint8_t)wval);
-            setflags(FLAG_Z,!wval);
-            setflags(FLAG_N,wval&0x80);
-            setflags(FLAG_C,bval&1);
+            _bval=getaddr(opc, mode); 
+			_wval=(uint8_t)_bval;
+            _wval>>=1;
+            setaddr(opc,mode,(uint8_t)_wval);
+            setflags(FLAG_Z,!_wval);
+            setflags(FLAG_N,_wval&0x80);
+            setflags(FLAG_C,_bval&1);
             break;
         case nop:
 			getaddr(opc, mode);	 // make sure the PC is advanced correctly
             break;
         case ora:
-            bval=getaddr(opc, mode);
-            a|=bval;
-            setflags(FLAG_Z,!a);
-            setflags(FLAG_N,a&0x80);
+            _bval=getaddr(opc, mode);
+            _a|=_bval;
+            setflags(FLAG_Z,!_a);
+            setflags(FLAG_N,_a&0x80);
             break;
         case pha:
-            push(a);
+            push(_a);
             break;
         case php:
-            push(p);
+            push(_p);
             break;
         case pla:
-            a=pop();
-            setflags(FLAG_Z,!a);
-            setflags(FLAG_N,a&0x80);
+            _a=pop();
+            setflags(FLAG_Z,!_a);
+            setflags(FLAG_N,_a&0x80);
             break;
         case plp:
-            p=pop();
+            _p=pop();
             break;
         case rla:				// see Spasmolytic_part_6.sid
 			// rol
-            bval=getaddr(opc, mode);
-            c=!!(p&FLAG_C);
-            setflags(FLAG_C,bval&0x80);
-            bval<<=1;
-            bval|=c;
-            setaddr(opc,mode,bval);
+            _bval=getaddr(opc, mode);
+            c=!!(_p&FLAG_C);
+            setflags(FLAG_C,_bval&0x80);
+            _bval<<=1;
+            _bval|=c;
+            setaddr(opc,mode,_bval);
 
 			// + and
-            a&=bval;
-            setflags(FLAG_Z, !a);
-            setflags(FLAG_N, a&0x80);
+            _a&=_bval;
+            setflags(FLAG_Z, !_a);
+            setflags(FLAG_N, _a&0x80);
             break;
         case rol:
-            bval=getaddr(opc, mode);
-            c=!!(p&FLAG_C);
-            setflags(FLAG_C,bval&0x80);
-            bval<<=1;
-            bval|=c;
-            setaddr(opc,mode,bval);
-            setflags(FLAG_N,bval&0x80);
-            setflags(FLAG_Z,!bval);
+            _bval=getaddr(opc, mode);
+            c=!!(_p&FLAG_C);
+            setflags(FLAG_C,_bval&0x80);
+            _bval<<=1;
+            _bval|=c;
+            setaddr(opc,mode,_bval);
+            setflags(FLAG_N,_bval&0x80);
+            setflags(FLAG_Z,!_bval);
             break;
         case ror:
-            bval=getaddr(opc, mode);
-            c=!!(p&FLAG_C);
-            setflags(FLAG_C,bval&1);
-            bval>>=1;
-            bval|= 0x80*c;
-            setaddr(opc,mode,bval);
-            setflags(FLAG_N,bval&0x80);
-            setflags(FLAG_Z,!bval);
+            _bval=getaddr(opc, mode);
+            c=!!(_p&FLAG_C);
+            setflags(FLAG_C,_bval&1);
+            _bval>>=1;
+            _bval|= 0x80*c;
+            setaddr(opc,mode,_bval);
+            setflags(FLAG_N,_bval&0x80);
+            setflags(FLAG_Z,!_bval);
             break;
         case rra:
 			// ror
-            bval=getaddr(opc, mode);
-            c=!!(p&FLAG_C);
-            setflags(FLAG_C,bval&1);
-            bval>>=1;
-            bval|=0x80*c;
-            setaddr(opc,mode,bval);
+            _bval=getaddr(opc, mode);
+            c=!!(_p&FLAG_C);
+            setflags(FLAG_C,_bval&1);
+            _bval>>=1;
+            _bval|=0x80*c;
+            setaddr(opc,mode,_bval);
 
 			// + adc
-			uint8_t in1= a;
-			uint8_t in2= bval;
+			uint8_t in1= _a;
+			uint8_t in2= _bval;
 			
-            wval=(uint16_t)in1+in2+((p&FLAG_C)?1:0);
-            setflags(FLAG_C, wval&0x100);
-            a=(uint8_t)wval;
-            setflags(FLAG_Z, !a);
-            setflags(FLAG_N, a&0x80);
+            _wval=(uint16_t)in1+in2+((_p&FLAG_C)?1:0);
+            setflags(FLAG_C, _wval&0x100);
+            _a=(uint8_t)_wval;
+            setflags(FLAG_Z, !_a);
+            setflags(FLAG_N, _a&0x80);
 			
-			setflags(FLAG_V, (~(in1 ^ in2))&(in1 ^ a)&0x80);
+			setflags(FLAG_V, (~(in1 ^ in2))&(in1 ^ _a)&0x80);
             break;
         case rti:
 			// timing hack: some optimized progs use JMP to an RTI that is placed such that
 			// the nearby interrupt status register is implicitly read - automatically  
 			// acknowledging the interrupt without having to explicitly read the register.
-			switch(pc) {
+			switch(_pc) {
 				case 0xdc0d:
 				case 0xdd0d:
-					memGet(pc);
+					memGet(_pc);
 					break;
 			}
 
-			p=pop();                        
-            wval=pop();
-            wval|=pop()<<8;
-            pc=wval;	// not like 'rts'! correct address is expected here!
+			_p=pop();                        
+            _wval=pop();
+            _wval|=pop()<<8;
+            _pc=_wval;	// not like 'rts'! correct address is expected here!
 			
 			// todo: if interrupts where to be handled correctly then we'd need to 
 			// clear interrupt flag here (and set it when NMI is invoked...)
             break;
         case rts:
-            wval=pop();
-            wval|=pop()<<8;
-			pc=wval+1;
+            _wval=pop();
+            _wval|=pop()<<8;
+			_pc=_wval+1;
             break;
         case sbc:    {
-            bval=getaddr(opc, mode)^0xff;
+            _bval=getaddr(opc, mode)^0xff;
 			
-			uint8_t in1= a;
-			uint8_t in2= bval;
+			uint8_t in1= _a;
+			uint8_t in2= _bval;
 						
-            wval=(uint16_t)in1+in2+((p&FLAG_C)?1:0);
-            setflags(FLAG_C, wval&0x100);
-            a=(uint8_t)wval;
-            setflags(FLAG_Z, !a);
-            setflags(FLAG_N, a&0x80);
+            _wval=(uint16_t)in1+in2+((_p&FLAG_C)?1:0);
+            setflags(FLAG_C, _wval&0x100);
+            _a=(uint8_t)_wval;
+            setflags(FLAG_Z, !_a);
+            setflags(FLAG_N, _a&0x80);
 			
-			setflags(FLAG_V, (~(in1 ^ in2))&(in1 ^ a)&0x80);
+			setflags(FLAG_V, (~(in1 ^ in2))&(in1 ^ _a)&0x80);
 			}
             break;
         case sax:				// e.g. Vicious_SID_2-15638Hz.sid
 			getaddr(opc, mode);	 // make sure the PC is advanced correctly
-            bval=a&x;
-			setaddr(opc,mode,bval);
+            _bval=_a&_x;
+			setaddr(opc,mode,_bval);
             break;
 		case sbx:	// used in Artefacts.sid, Whats_Your_Lame_Excuse.sid	
 			// affects N Z and C (like CMP)
-			bval=getaddr(opc, mode);
+			_bval=getaddr(opc, mode);
 			
-            setflags(FLAG_C,(x&a)>=bval);
+            setflags(FLAG_C,(_x&_a)>=_bval);
 
-			x=(x&a)-bval;
+			_x=(_x&_a)-_bval;
 
-            setflags(FLAG_Z,!x);		// a == bval
-            setflags(FLAG_N,x&0x80);	// a < bval		
+            setflags(FLAG_Z,!_x);		// _a == _bval
+            setflags(FLAG_N,_x&0x80);	// _a < _bval		
 			break;
         case sec:
             setflags(FLAG_C,1);
@@ -932,77 +932,77 @@ void cpuParse(void)
             break;
         case slo:			// see Spasmolytic_part_6.sid
 			// asl
-            wval=getaddr(opc, mode);
-            wval<<=1;
-            setaddr(opc,mode,(uint8_t)wval);
-            setflags(FLAG_Z,!wval);
-            setflags(FLAG_N,wval&0x80);
-            setflags(FLAG_C,wval&0x100);
+            _wval=getaddr(opc, mode);
+            _wval<<=1;
+            setaddr(opc,mode,(uint8_t)_wval);
+            setflags(FLAG_Z,!_wval);
+            setflags(FLAG_N,_wval&0x80);
+            setflags(FLAG_C,_wval&0x100);
 			// + ora
-            bval=wval & 0xff;
-            a|=bval;
-            setflags(FLAG_Z,!a);
-            setflags(FLAG_N,a&0x80);			
+            _bval=_wval & 0xff;
+            _a|=_bval;
+            setflags(FLAG_Z,!_a);
+            setflags(FLAG_N,_a&0x80);			
             break;
         case sre:      		// see Spasmolytic_part_6.sid
 			// lsr
-            bval=getaddr(opc, mode); 
-			wval=(uint8_t)bval;
-            wval>>=1;
-            setaddr(opc,mode,(uint8_t)wval);
-            setflags(FLAG_Z,!wval);
-            setflags(FLAG_N,wval&0x80);
-            setflags(FLAG_C,bval&1);
+            _bval=getaddr(opc, mode); 
+			_wval=(uint8_t)_bval;
+            _wval>>=1;
+            setaddr(opc,mode,(uint8_t)_wval);
+            setflags(FLAG_Z,!_wval);
+            setflags(FLAG_N,_wval&0x80);
+            setflags(FLAG_C,_bval&1);
 			// + eor
-            bval=wval & 0xff;
-            a^=bval;
-            setflags(FLAG_Z,!a);
-            setflags(FLAG_N,a&0x80);
+            _bval=_wval & 0xff;
+            _a^=_bval;
+            setflags(FLAG_Z,!_a);
+            setflags(FLAG_N,_a&0x80);
             break;
         case sta:
-            putaddr(opc,mode,a);
+            putaddr(opc,mode,_a);
             break;
         case stx:
-            putaddr(opc,mode,x);
+            putaddr(opc,mode,_x);
             break;
         case sty:
-            putaddr(opc,mode,y);
+            putaddr(opc,mode,_y);
             break;
         case tax:
-            x=a;
-            setflags(FLAG_Z, !x);
-            setflags(FLAG_N, x&0x80);
+            _x=_a;
+            setflags(FLAG_Z, !_x);
+            setflags(FLAG_N, _x&0x80);
             break;
         case tay:
-            y=a;
-            setflags(FLAG_Z, !y);
-            setflags(FLAG_N, y&0x80);
+            _y=_a;
+            setflags(FLAG_Z, !_y);
+            setflags(FLAG_N, _y&0x80);
             break;
         case tsx:
-			x=s;
-            setflags(FLAG_Z, !x);
-            setflags(FLAG_N, x&0x80);
+			_x=_s;
+            setflags(FLAG_Z, !_x);
+            setflags(FLAG_N, _x&0x80);
             break;
         case txa:
-            a=x;
-            setflags(FLAG_Z, !a);
-            setflags(FLAG_N, a&0x80);
+            _a=_x;
+            setflags(FLAG_Z, !_a);
+            setflags(FLAG_N, _a&0x80);
             break;
         case txs:
-            s=x;
+            _s=_x;
             break;
         case tya:
-            a=y;
-            setflags(FLAG_Z, !a);
-            setflags(FLAG_N, a&0x80);
+            _a=_y;
+            setflags(FLAG_Z, !_a);
+            setflags(FLAG_N, _a&0x80);
             break; 
 /* hard to think of a good reason why anybody would ever use this..
 		case shs:	// 	TAS						
-			s= a&x;
-			bval= (memGet(pc+1) + 1) & s;
+			_s= _a&_x;
+			_bval= (memGet(_pc+1) + 1) & _s;
 
 			getaddr(opc, mode);	 		// make sure the PC is advanced correctly
-			setaddr(opc,mode,bval);		// setaddr
+			setaddr(opc,mode,_bval);		// setaddr
 		
             break;
 */			
@@ -1017,19 +1017,19 @@ void cpuParse(void)
 			the countdown value and $99 which is unused each use of the op drives the 
 			countdown (hack only implemented for abs mode, i.e. 3 byte op)
 			*/
-            wval=memGet(pc++);	// countdown
-            memGet(pc++);  // unused			
-			bval= 0;
-			if (!fakeCountD012) {
-				fakeCountD012= wval & 0xff;
+            _wval=memGet(_pc++);	// countdown
+            memGet(_pc++);  // unused			
+			_bval= 0;
+			if (!_fakeCountD012) {
+				_fakeCountD012= _wval & 0xff;
 			} 
-			if (--fakeCountD012 == 0) {
-				bval= a;
+			if (--_fakeCountD012 == 0) {
+				_bval= _a;
 			}	
-            wval=(uint16_t)a-bval;
-            setflags(FLAG_Z,!wval);
-            setflags(FLAG_N,wval&0x80);
-            setflags(FLAG_C,a>=bval);
+            _wval=(uint16_t)_a-_bval;
+            setflags(FLAG_Z,!_wval);
+            setflags(FLAG_N,_wval&0x80);
+            setflags(FLAG_C,_a>=_bval);
             break;			
         case l_a:
 			/*
@@ -1048,28 +1048,28 @@ void cpuParse(void)
 			
 			only implemented for abs mode, i.e. 3 byte op. also see "c_a"
 			*/
-            bval=memGet(pc++);	// countdown
-            wval=memGet(pc++);  // success result
+            _bval=memGet(_pc++);	// countdown
+            _wval=memGet(_pc++);  // success result
 			
-			a= 0;
-			if (!fakeCountD012 && !fakeLoopD012) {
-				fakeCountD012= bval;
-				fakeLoopD012= 40;	// slow down more
+			_a= 0;
+			if (!_fakeCountD012 && !_fakeLoopD012) {
+				_fakeCountD012= _bval;
+				_fakeLoopD012= 40;	// slow down more
 			}
-			if (--fakeCountD012 == 0) {
-					fakeCountD012= bval;
-				if (--fakeLoopD012 == 0) {
-					a= wval;
-					fakeLoopD012= 40;	// slow down more
+			if (--_fakeCountD012 == 0) {
+					_fakeCountD012= _bval;
+				if (--_fakeLoopD012 == 0) {
+					_a= _wval;
+					_fakeLoopD012= 40;	// slow down more
 				}
 			}			
-            setflags(FLAG_Z,!a);
-            setflags(FLAG_N,a&0x80);
+            setflags(FLAG_Z,!_a);
+            setflags(FLAG_N,_a&0x80);
             break;
 			
 		default:			
 #ifdef DEBUG
-			fprintf(stderr, "op code not implemented: %d at %d\n", opc, pc);
+			fprintf(stderr, "op code not implemented: %d at %d\n", opc, _pc);
 #endif
 			getaddr(opc, mode);	 // at least make sure the PC is advanced correctly (potentially used in timing)
     }
@@ -1084,11 +1084,11 @@ void cpuResetToIrq(uint16_t npc) {
 	
 	push(0);	// addr high
 	push(0);	// addr low
-	push(p);	// processor status (processor would do this in case of interrupt...)	
+	push(_p);	// processor status (processor would do this in case of interrupt...)	
 	
-	// only set pc and keep current stackpointer and registers in case player directly passes 
+	// only set _pc and keep current stackpointer and registers in case player directly passes 
 	// them between calls (see Look_sharp.sid)
-	pc= npc;	
+	_pc= npc;	
 }
 
 
