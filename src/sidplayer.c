@@ -693,4 +693,9 @@ static uint16_t EMSCRIPTEN_KEEPALIVE getRegisterSID(uint16_t reg) {
 	return  memReadIO(0xd400 + reg);
 }
 
+static uint16_t getRAM(uint16_t addr) __attribute__((noinline));
+static uint16_t EMSCRIPTEN_KEEPALIVE getRAM(uint16_t addr) {
+	return  memReadRAM(addr);
+}
+
 

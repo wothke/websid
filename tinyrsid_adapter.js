@@ -34,10 +34,29 @@ SIDBackendAdapter = (function(){ var $this = function () {
 			var len= this.Module.ccall('getSoundBufferLen', 'number');
 			return len;
 		},
+		printMemDump: function(name, startAddr, endAddr) {	// util for debugging
+			var text= "const unsigned char "+name+"[] =\n{\n";
+			var line= "";
+			var j= 0;
+			for (var i= 0; i<(endAddr-startAddr+1); i++) {
+				var d= this.Module.ccall('getRAM', 'number', ['number'], [startAddr+i]);
+				line += "0x"+(("00" + d.toString(16)).substr(-2).toUpperCase())+", ";
+				if (j  == 11) {						
+					text+= (line + "\n");
+					line= "";
+					j= 0;
+				}else {
+					j++;
+				}
+			}		
+			text+= (j?(line+"\n"):"")+"}\n";
+			console.log(text);
+		},
 		computeAudioSamples: function() {
 			var len= this.Module.ccall('computeAudioSamples', 'number');
-			if (len <= 0) return 1; // >0 means "end song"
-			
+			if (len <= 0) {			
+				return 1; // >0 means "end song"
+			}		
 			return 0;	
 		},
 		getPathAndFilename: function(filename) {
