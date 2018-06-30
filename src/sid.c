@@ -54,8 +54,6 @@
 //#define USE_DIGIFILTER	// as long as samples are not perfectly timed, this will introduce additional distortions (no point in wasting the extra cycles..)
 //#define USE_JS_MATH		// doesn't make any difference
 
-#define WAVE_DATA_TYPE uint16_t
-
 
 // SID register definition
 struct MosSid {
@@ -66,8 +64,6 @@ struct MosSid {
 	double cycleOverflow;
 	double cyclesPerSample;
 	
-	uint16_t  multiplicator;				// XXX precision might be an issue here..
-
 	uint8_t voiceEnableMask;	// allows to mute certain voices (3 low bits mask)
 
     struct Voice {
@@ -79,7 +75,7 @@ struct MosSid {
 		
 		// add-ons snatched from Hermit's implementation
 		double prevWavData;					// combined waveform handling
-		WAVE_DATA_TYPE prevWaveFormOut;		// floating DAC handling
+		uint16_t prevWaveFormOut;		// floating DAC handling
     } voices[3];
 	
 	// filter
@@ -97,6 +93,7 @@ struct MosSid {
 	// Hermit's precalculated "combined waveforms" 
 	double TriSaw_8580[4096];
 	double PulseSaw_8580[4096];
+	double PulseTri_8580[4096];			// Hermit's use of PulseSaw_8580 does not convince in Last_Ninja
 	double PulseTriSaw_8580[4096];
 };
 
@@ -134,7 +131,7 @@ static void simStartOscillatorVoice3(uint8_t voice, uint8_t val) {
 		_osc3sim.counter= 0; 
 		
 		// for some reason the playback is slightly slower than in ACID64
-		_osc3sim.multiplicator= _sid.multiplicator * envNumberOfSamplesPerCall() / envCyclesPerScreen();
+		_osc3sim.multiplicator= round(_sid.cyclesPerSample * envNumberOfSamplesPerCall() / envCyclesPerScreen());
 	}
 }
 static uint32_t simOsc3Counter() {
@@ -143,7 +140,7 @@ static uint32_t simOsc3Counter() {
 	_osc3sim.baseCycles= cpuTotalCycles();
 
 	uint32_t f= ((uint32_t)_sid.voices[2].freq) * _osc3sim.multiplicator * diff;		
-	_osc3sim.counter= (_osc3sim.counter + f) & 0xfffffff;
+	_osc3sim.counter= (_osc3sim.counter + f) & 0xffffff;
 	return _osc3sim.counter;
 }
 
@@ -151,12 +148,12 @@ static uint8_t simReadSawtoothD41B() {
 	// simulate sawtooth voice 3 oscillator level based on elapsed time	
 	// (handle busy polling for sid oscillator3 - e.g. Ring_Ring_Ring.sid)
 
-	return (uint8_t) (simOsc3Counter() >> 20);
+	return (uint8_t) (simOsc3Counter() >> 16);
 }
 
 static uint8_t simReadPulsedD41B() {
 	// simulate pulse voice 3 oscillator level based on elapsed time	
-	uint32_t p= (((uint32_t)_sid.voices[2].pulse) & 0xfff) << 16;
+	uint32_t p= (((uint32_t)_sid.voices[2].pulse) & 0xfff) << 12;
 	return (simOsc3Counter() > p) ? 0 : 1;
 }
 
@@ -188,10 +185,10 @@ struct SidOscillator {
     uint32_t decay;		// for 255 steps
     uint32_t sustain;
     uint32_t release;
-    uint32_t counter;		// 28-bit is legacy from TinySID (todo: reduce to 24-bit)
+    uint32_t counter;		// 24-bit as in the original
 	
 	// hard sync handling
-    uint32_t prevCounter;		// 28-bit
+    uint32_t prevCounter;		// 24-bit
 	uint8_t msbRising;
 
 	// updated envelope generation based on findings from reSID team
@@ -206,8 +203,7 @@ struct SidOscillator {
     uint8_t noiseout;
 	
 	// detection of ADSR-bug conditions
-	uint32_t adsrBugTriggerTime;
-	uint32_t adsrBugFrameCount;
+//	uint32_t adsrBugFrameCount;
 };
 
 // internal filter def
@@ -270,10 +266,6 @@ void sidSetMute(uint8_t voice, uint8_t value) {
 		_sid.voiceEnableMask |= (1 << voice);	// enable voice
 }
 
-// util related to envelope generator LFSR counter
-static int32_t clocksToSamples(int32_t clocks) {
-	return round(((float)clocks)/_sid.cyclesPerSample)+1;	//XXX +1?
-}
 
 /*
 * check if LFSR threshold was reached 
@@ -302,7 +294,7 @@ static void simOneEnvelopeCycle(uint8_t voice) {
 	phase is handled in sidPoke() so there is no need to handle that here)
 
 	advance envelope LFSR counter (originally this would be a 15-bit cycle counter.. but we 
-	may be counting samples here)
+	are counting samples here)
 
 	ADSR bug scenario: normally the maximum thresholds used for the original 15-bit counter 
 	would have been around 0x7a13 (i.e. somewhat below the 7fff range that can be handled by 
@@ -310,7 +302,7 @@ static void simOneEnvelopeCycle(uint8_t voice) {
 	the counter keeps counting until it again reaches the threshold after a wrap-around.. 
 	(see sidPoke() for specific ADSR-bug handling)
 	*/
-	if (++_osc[voice].currentLFSR == _sid.env.limitLFSR) {
+	if (++_osc[voice].currentLFSR >= _sid.env.limitLFSR) {
 		_osc[voice].currentLFSR= 0;
 	}
 	
@@ -381,7 +373,7 @@ static void simOneEnvelopeCycle(uint8_t voice) {
 // Hermit's impl to calculate combined waveforms (check his jsSID-0.9.1-tech_comments in commented jsSID.js for background info): 
 // I did not thoroughly check how well this really works (it works well enough for Kentilla and Clique_Baby apparently has to sound as shitty as it does)
 
-static WAVE_DATA_TYPE combinedWF(uint8_t channel, double *wfarray, uint16_t index, uint8_t differ6581) { //on 6581 most combined waveforms are essentially halved 8580-like waves
+static uint16_t combinedWF(uint8_t channel, double *wfarray, uint16_t index, uint8_t differ6581) { //on 6581 most combined waveforms are essentially halved 8580-like waves
 	if (differ6581 && _sid.isModel6581) index &= 0x7FF;
 	double combiwf = (wfarray[index] + _sid.voices[channel].prevWavData) / 2;
 	_sid.voices[channel].prevWavData = wfarray[index];
@@ -408,8 +400,7 @@ static void createCombinedWF(double *wfarray, double bitmul, double bitstrength,
 #include <emscripten.h>
 
 static double jsPow(double a, double b) {
-	// tests suggest that the 2 impls are actually equivalent.. these do not seem to be 
-	// the cause of the filter issues..
+	// tests suggest that the 2 impls are actually equivalent.. just for comparison
 #ifdef USE_JS_MATH	
 	return EM_ASM_DOUBLE({
 			return Math.pow($0, $1);
@@ -448,11 +439,9 @@ static double runFilter(double in, double output, double *prevbandpass, double *
 	//	 The phases of lowpass and highpass outputs are inverted compared to the input, but bandpass IS in phase with the input signal.
 	//	 The 8580 cutoff frequency control-curve is ideal, while the 6581 has a threshold, and below it outputs a constant lowpass frequency."
 	
-	// The ugly effect on Vortex's digi channel suggests that this filter impl might be flawed.. (and with 
-	// the above direct use of the respective JavaScript math functions this impl should be identical to
-	// Hermit's original JavaScript code..) interestingly respective artefacts do not seem to occur during regular 
-	// voice data filtering so maybe it is "normal" behavior for this kind of input data?
-		
+	// Filter creates/amplifies ugly effect on Vortex's digi channel - the root cause might be a flawed timing of the emulation
+	// causing the first samples (of each frame) of that song to be rendered somewhat off.. and the filter probably just
+	// amplifies that error
 	double tmp = in + (*prevbandpass) * resonance + (*prevlowpass);
 			
 	if (_filter.hiEna) { output -= tmp;} 
@@ -518,39 +507,61 @@ void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 
 #define isTestBit(voice) _osc[voice].wave&TEST_BITMASK
 
+static uint8_t getPreviousVoice(uint8_t voice) {
+	return voice ? voice-1 : 2;
+}
 
-static WAVE_DATA_TYPE createTriangleOutput(uint8_t voice, uint32_t ringMSB) {
-	// ringMSB is for 28-bit!
-	uint32_t tmp = _osc[voice].counter ^ ringMSB;	// 28-bit
-    uint32_t wfout = (tmp ^ (tmp & 0x8000000 ? 0xFFFFFFF : 0)) >> 11;
+static uint8_t getNextVoice(uint8_t voice) {
+	return (voice == 2) ? 0 : voice+1;
+}
+
+static uint32_t getRingModCounter(uint8_t voice) {
+	// Bob Yannes: "Ring Modulation was accomplished by substituting the accumulator MSB of an oscillator 
+	// in the EXOR function of the triangle waveform generator with the accumulator MSB of the 
+	// previous oscillator. That is why the triangle waveform must be selected to use Ring Modulation."
+	
+	if (_osc[voice].wave & RING_BITMASK) {
+		// wtf does he mean? (1) substitute MSB before using it in some EXOR logic OR (2) substitute it 
+		// using EXOR?
+		
+		uint8_t srcVoice = getPreviousVoice(voice);  
+//		return (_osc[voice].counter & 0x7fffff) | (_osc[srcVoice].counter & 0x800000);	// (1)	
+		return _osc[voice].counter ^ (_osc[srcVoice].counter & 0x800000);				// (2) judging by the sound of R1D1.sid, this is it..
+	} else {
+		return _osc[voice].counter;		
+	}
+}
+
+static uint16_t createTriangleOutput(uint8_t voice) {
+	uint32_t tmp = getRingModCounter(voice);
+    uint32_t wfout = (tmp ^ (tmp & 0x800000 ? 0xFFFFFF : 0)) >> 7;
 	return wfout & 0xFFFF;
 }			
-static WAVE_DATA_TYPE createSawOutput(uint8_t voice) {	// test with Alien or Kawasaki_Synthesizer_Demo
-	// Hermit's "anti-aliasing" (note: this impl is based on 28-bit counter where Hermit uses 24-bit)
-	uint32_t wfout = _osc[voice].counter >> 12;	// top 16-bits
-	double step = ((double)_osc[voice].freqS) / 0x12000000;
+static uint16_t createSawOutput(uint8_t voice) {	// test with Alien or Kawasaki_Synthesizer_Demo
+	// Hermit's "anti-aliasing"
+	uint32_t wfout = _osc[voice].counter >> 8;	// top 16-bits
+	double step = ((double)_osc[voice].freqS) / 0x1200000;
 	wfout += round(wfout * step);
 	if (wfout > 0xFFFF) wfout = 0xFFFF - round (((double)(wfout - 0x10000)) / step);
 	return wfout;
 }
 
 static void calcPulseBase(uint8_t voice, uint32_t *tmp, uint32_t *pw) {
-	// based on Hermit's impl (note: this impl is based on 28-bit counter where Hermit uses 24-bit)
-	(*pw) = _osc[voice].pulse >> 12;	// 16 MSB pulse needed (but we have 28)
-	(*tmp) = _osc[voice].freqS >> 13;	// 15 MSB needed: our freq is for 28bit counter - not 24bit as in Hermit's impl
+	// based on Hermit's impl
+	(*pw) = _osc[voice].pulse;
+	(*tmp) = _osc[voice].freqS >> 9;	// 15 MSB needed
 	
 	if (0 < (*pw) && (*pw) < (*tmp)) { (*pw) = (*tmp); }
 	(*tmp) ^= 0xFFFF;
 	if ((*pw) > (*tmp)) (*pw) = (*tmp);
-	(*tmp) = _osc[voice].counter >> 12;			// 16 MSB needed: 28bits not 24
+	(*tmp) = _osc[voice].counter >> 8;			// 16 MSB needed
 }
 
-
-static WAVE_DATA_TYPE createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// elementary pulse
+static uint16_t createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// elementary pulse
 	if (isTestBit(voice)) return 0xFFFF;	// pulse start position
 	
 	// Hermit's "anti-aliasing"
-	double step = 256.0 / (_osc[voice].freqS >> 20); //simple pulse, most often used waveform, make it sound as clean as possible without oversampling
+	double step = 256.0 / (_osc[voice].freqS >> 16); //simple pulse, most often used waveform, make it sound as clean as possible without oversampling
 
 	int32_t wfout;
 	if (tmp < pw) {
@@ -568,14 +579,14 @@ static WAVE_DATA_TYPE createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw
 	} //falling edge
 	return wfout;
 }	
-static WAVE_DATA_TYPE createNoiseOutput(uint8_t voice) {
+static uint16_t createNoiseOutput(uint8_t voice) {
 	// generate noise waveform exactly as the SID does.
 	
 	// "random values are output through the waveform generator according to the 
 	// frequency setting" (http://www.ffd2.com/fridge/blahtune/SID.primer)
 	
 	// testcase for calibration: see Hermit's noisewfsweep.sid
-	uint32_t p= _osc[voice].counter>>24;		//  top 4-bit seem to be about right.. (didn't find specific specs unfortunately..)
+	uint32_t p= _osc[voice].counter>>20;		//  top 4-bit seem to be about right.. (didn't find specific specs unfortunately..)
 	if (_osc[voice].noisepos != p) {
 		_osc[voice].noisepos = p;
 		
@@ -611,7 +622,7 @@ static void syncRegisterCache() {
 	struct EnvGenerator *env= &(_sid.env);
 
     for (uint8_t voice=0;voice<3;voice++) {
-        _osc[voice].pulse   = (_sid.voices[voice].pulse & 0xfff) << 16;
+        _osc[voice].pulse   = (_sid.voices[voice].pulse & 0xfff) << 4;	// // 16 MSB pulse needed
         _osc[voice].filter  = getBit(_sid.resFtv, voice);
 		// threshold to be reached before incrementing volume
         _osc[voice].attack  = env->counterPeriod[_sid.voices[voice].ad >> 4];
@@ -621,8 +632,8 @@ static void syncRegisterCache() {
         _osc[voice].release = env->counterPeriod[_sid.voices[voice].sr & 0xf];
         _osc[voice].wave    = _sid.voices[voice].wave;
 
-        _osc[voice].freqS    = ((uint32_t)_sid.voices[voice].freq) * _sid.multiplicator;	// per 1-sample interval (e.g. ~22 cycles)
-        _osc[voice].freqC    = ((uint32_t)_sid.voices[voice].freq) <<4;
+        _osc[voice].freqS    = round(_sid.cyclesPerSample * _sid.voices[voice].freq);	// per 1-sample interval (e.g. ~22 cycles)
+        _osc[voice].freqC    = ((uint32_t)_sid.voices[voice].freq);
 		
     }
 #ifdef USE_FILTER
@@ -634,19 +645,16 @@ static void syncRegisterCache() {
 #endif  
 }
 
-static uint8_t getPreviousVoice(uint8_t voice) {
-	return voice ? voice-1 : 2;
-}
-
-static uint8_t getNextVoice(uint8_t voice) {
-	return (voice == 2) ? 0 : voice+1;
-}
 
 static void syncOscillator(uint8_t voice) {
 	// Hard Sync is accomplished by clearing the accumulator of an Oscillator  
 	// based on the accumulator MSB of the previous oscillator.
 
-	// tests for hard sync:  Ben Daglish's Wilderness music from The Last Ninja  (https://www.youtube.com/watch?v=AbBENI8sHFE) 
+	// tests for hard sync:  Ben Daglish's Wilderness music from The Last Ninja  
+	// (https://www.youtube.com/watch?v=AbBENI8sHFE) .. seems to be used on voice 2 early on..
+	// for some reason the instrument that starts on voice 1 at about 45 secs (come combined waveform?)
+	// does not sound as crisp as it should.. (neither in Hermit's player)
+		
 	// intro noise in Martin Galway's Roland's Rat Race (https://www.youtube.com/watch?v=Zc91S1lrU1I) music.
 	
 	// the below logic is from the "previous oscillator" perspective
@@ -697,11 +705,12 @@ static void advanceOscillators() {
 				_osc[voice].noiseval = 0x7ffff8;
 			} else {
 				// update wave counter
-				_osc[voice].counter = (_osc[voice].counter + _osc[voice].freqC) & 0xFFFFFFF;				
+				_osc[voice].counter = (_osc[voice].counter + _osc[voice].freqC) & 0xFFFFFF;				
 			}
 
 			// base for hard sync
-			_osc[voice].msbRising = !(_osc[voice].prevCounter & 0x8000000) && (_osc[voice].counter & 0x8000000);
+			_osc[voice].msbRising = (_osc[voice].counter & 0x800000) > (_osc[voice].prevCounter & 0x800000);
+// old	_osc[voice].msbRising = !(_osc[voice].prevCounter & 0x800000) && (_osc[voice].counter & 0x800000);
 		}
 		
 		// handle oscillator HARD SYNC (quality wise it isn't worth the trouble to use this correct impl..)
@@ -711,17 +720,6 @@ static void advanceOscillators() {
 	}
 }
 
-static uint32_t getRingMSB(uint8_t voice) {
-	uint32_t ringMSB= 0;
-
-	// handle ring modulation
-	uint8_t srcVoice = getPreviousVoice(voice);  
-	uint8_t ctrl= _osc[voice].wave;
-	if ((ctrl & RING_BITMASK) && (_osc[srcVoice].counter < 0x8000000)) {
-		ringMSB= 0x8000000;
-	}
-	return 	ringMSB;			
-}
 /* 
 * Render a buffer of n samples using the current SID register contents.
 *
@@ -737,6 +735,7 @@ static uint32_t getRingMSB(uint8_t voice) {
 * sample or better per cycle basis. But that would mean that the currently used "predictive" emulation 
 * logic would need to be completely replaced..  and so far that does not seem to be worth the trouble.
 */
+
 void sidSynthRender (int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {	
 	/*
 	note: TEST (Bit 3): The TEST bit, when set to one, resets and locks oscillator 1 at zero 
@@ -760,21 +759,16 @@ void sidSynthRender (int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {
 		         filtered) from the osc/eg sections
 		*/
 		for (uint8_t voice=0; voice<3; voice++) {
-			uint32_t ringMSB=	getRingMSB(voice);
-			uint8_t ctrl=		_osc[voice].wave;
+			uint8_t ctrl= _osc[voice].wave;
 						
-						
-			// generate waveforms with really simple algorithms (note: correctly "Saw/Triangle should start from 0, 
-			// Pulse should start from FF" )
-
-			uint16_t outv=0xFFFF;
+			uint16_t outv= 0xFFFF;
 			uint8_t voiceMute= !((0x1 << voice) & _sid.voiceEnableMask);
 			
 			if (!voiceMute) {
 				int8_t combined= 0;
 				
 				// use special handling for certain combined waveforms				
-				WAVE_DATA_TYPE plsout;
+				uint16_t plsout;
 				if ((ctrl & PULSE_BITMASK)) {
 					uint32_t tmp, pw;	// 16 bits used
 					calcPulseBase(voice, &tmp, &pw);
@@ -789,23 +783,26 @@ void sidSynthRender (int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {
 						if ((ctrl & TRI_BITMASK) && ++combined)  {
 							if (ctrl & SAW_BITMASK) {	// PULSE & TRIANGLE & SAW	- like in Lenore.sid
 								outv = plsout ? combinedWF(voice, _sid.PulseTriSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
-							} else { // PULSE & TRIANGLE - like in Kentilla, Convincing, Clique_Baby, etc
-								tmp = _osc[voice].counter ^ (ctrl & RING_BITMASK ? ringMSB : 0);
-								outv = plsout ? combinedWF(voice, _sid.PulseSaw_8580, (tmp ^ (tmp & 0x8000000 ? 0xFFFFFFF : 0)) >> 15, 0) : 0;	// either on or off						
+							} else { // PULSE & TRIANGLE - like in Kentilla, Convincing, Clique_Baby, etc							
+								// a good test is Last_Ninja:6 voice 1 at 35secs; here Hermit's original PulseSaw settings seem to 
+								// be lacking here... the respective sound has none of the crispness nor volume of the original
+								
+								tmp = getRingModCounter(voice); 
+								outv = plsout ? combinedWF(voice, _sid.PulseTri_8580, (tmp ^ (tmp & 0x800000 ? 0xFFFFFF : 0)) >> 11, 0) : 0;	// either on or off						
 							}				
 						} else if ((ctrl & SAW_BITMASK) && ++combined)  {	// PULSE & SAW - like in Defiler.sid
 							outv = plsout ? combinedWF(voice, _sid.PulseSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
 						}
 					}
 				} else if ((ctrl & TRI_BITMASK) && (ctrl & SAW_BITMASK) && ++combined) {		// TRIANGLE & SAW - like in Garden_Party.sid
-					uint32_t tmp = _osc[voice].counter >> 16;	// have 4 more bits than Hermit
+					uint32_t tmp = _osc[voice].counter >> 12;
 					outv = combinedWF(voice, _sid.TriSaw_8580, tmp, 1);	// tmp 12 MSB
 				} 
 				if (!combined) {
 					/* for the rest mix the oscillators with an AND operation as stated in
 						the SID's reference manual - even if this is quite wrong. */
 				
-					if (ctrl & TRI_BITMASK)  outv &= createTriangleOutput(voice, ringMSB);					
+					if (ctrl & TRI_BITMASK)  outv &= createTriangleOutput(voice);					
 					if (ctrl & SAW_BITMASK)  outv &= createSawOutput(voice);
 					if (ctrl & PULSE_BITMASK) outv &= plsout;
 					if (ctrl & NOISE_BITMASK)  outv &= createNoiseOutput(voice);
@@ -898,7 +895,7 @@ void sidSynthRender (int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {
 * Information about how *exactly* the original envolope generator works is still somewhat 
 * sketchy (e.g. see links here: https://sourceforge.net/p/sidplay-residfp/wiki/Links/)
 * The way it is implemented in resid (and here as well) is NOT necessarily "100% correct" but 
-* it seems to be an adequate approximation. The infamous ADSR-bug seems to be good illustration
+* it seems to be an adequate approximation. The infamous ADSR-bug seems to be a good illustration
 * of an area that is still not 100% understood - eventhough there are fairly good theories 
 * what is causing the bug and when it is likely to strike (see link above).
 *
@@ -952,25 +949,58 @@ static uint16_t getCurrentThreshold(uint8_t voice) {
 	return threshold;
 }
 
-static void simGateAdsrBug(uint8_t voice, uint16_t newRate) {
-	if (_osc[voice].adsrBugFrameCount == rsidGetFrameCount()) {
+// util for envelope generator LFSR counter
+static int32_t clocksToSamples(int32_t clocks) {
+	return round(((float)clocks)/_sid.cyclesPerSample);
+}
+
+static void simGateAdsrBug(uint8_t voice, uint8_t scenario, uint16_t newRate) {
+//	if (_osc[voice].adsrBugFrameCount == rsidGetFrameCount()) {		// FIXME what's the test case here? when was this used?
 		uint16_t oldThreshold= getCurrentThreshold(voice);
 		uint16_t newThreshold= _sid.env.counterPeriod[newRate];
+
+		// problem/limitation of the current impl is that the internal SID state ISN'T updated in sync with
+		// the CPU emulation, i.e. first the CPU is emulated for some interval (e.g. an IRQ) and then afterwards
+		// the SID emulation is run for that same interval: i.e. the CPU emulation DOESN'T see the current/up-to-date
+		// state of the SID and vice-versa the SID emulation does not see CPU induced changes at the correct time.
+		// in the ADSR-bug context this means:
 		
-		if (oldThreshold > newThreshold ) {
-			// only reduction may lead to overflow
-			
-			uint32_t elapsed = clocksToSamples(cpuCycles() - _osc[voice].adsrBugTriggerTime);
-			uint16_t lsfr = elapsed % oldThreshold;	// not correct (ignores lsfr start state)
-			
-			if (lsfr > newThreshold ) {	
-				// ADSR BUG activated
-				_osc[voice].currentLFSR= newThreshold;	// force overflow
+		// problem 1: _osc[voice].currentLFSR only reflects the state at the end of the last sid output renderung
+		// but to correctly detect the bug the up-to-date counter is needed here. Workaround: supposing this here 
+		// happends from an IRQ (the 80% case) then the previous SID rendering covered the time just up to the IRQ 
+		// call and cpuCycles() measured the cycles that have since passend within the IRQ.
+		// (note: cpuCycles() refers to the local context, i.e. it is reset for each new IRQ, etc.) 
+		
+		// problem 2: (correctly) the ADSR bug will occur "elapsed" (see var below) samples into the next SID output 
+		// rendering, i.e. NOT right from the start. Before that the old counter would still be used. The overflow 
+		// at that point would mean that a total of "limitLFSR-(currentLFSR-newThreshold)" increment steps would 
+		// *then* be needed to reach the newThreshold, i.e. the "elapsed" time here would be relevant as a "correct 
+		// timing" offset.
+
+		
+		if (oldThreshold > newThreshold ) {	// only a reduction may lead to an overflow
+
+			uint32_t elapsed = clocksToSamples(cpuCycles());
+			uint16_t simLSFR = (_osc[voice].currentLFSR + elapsed) % _sid.env.limitLFSR;	// forward looking position of the counter
+						
+			if (simLSFR >= newThreshold ) {		// ADSR BUG activated!
+				// by setting currentLFSR to something equal or higher than newThreshold it is forced into "overflow territory"):
+				
+				// try to trigger bug for correct "overall duration" (see problem 2): when set to newThreshold then 
+				// the maximum of _sid.env.limitLFSR steps would be needed to get out of the bug, any higher value will still 
+				// tigger the bug but reduce the steps needed to get out of it..
+				
+				if (scenario != 2) {	// hack: todo investigate why this 
+					_osc[voice].currentLFSR= simLSFR;	// this should be the correctly reduced bug time: newThreshold+(simLSFR-newThreshold)
+				} else {
+					// testcase: Eskimonika - without any bug handling the song sounds "ok" and respective bug handling rather
+					//                        for scenario==2 seems to mess up the result.. (seems to be a good test for "false positive")
+				}
 			}		
 		}
-	}	
-	_osc[voice].adsrBugTriggerTime= cpuCycles();
-	_osc[voice].adsrBugFrameCount= rsidGetFrameCount();				
+//	}	
+	
+//	_osc[voice].adsrBugFrameCount= rsidGetFrameCount();				
 }
 
 static void handleAdsrBug(uint8_t voice, uint8_t reg, uint8_t val) {
@@ -982,24 +1012,24 @@ static void handleAdsrBug(uint8_t voice, uint8_t reg, uint8_t val) {
 		uint8_t oldGate= _sid.voices[voice].wave & 0x1;
 		uint8_t newGate= val & 0x01;
 		if (!oldGate && newGate) {
-			simGateAdsrBug(voice, _sid.voices[voice].ad >> 4);	// switch to 'attack'
+			simGateAdsrBug(voice, 0, _sid.voices[voice].ad >> 4);	// switch to 'attack'
 		}
 		else if (oldGate && !newGate) {
-			simGateAdsrBug(voice, _sid.voices[voice].sr & 0xf);	// switch to release
+			simGateAdsrBug(voice, 1, _sid.voices[voice].sr & 0xf);	// switch to release
 		}
 		break;
 	}
 	case 5: { // new AD
 		// scenario 1
 		if (_osc[voice].envphase != Release) {
-			simGateAdsrBug(voice, val >> 4);
+			simGateAdsrBug(voice, 2, val >> 4);
 		}
 		break;
 	}
 	case 6: { // new SR
 		// scenario 1
 		if (_osc[voice].envphase == Release) {
-			simGateAdsrBug(voice, val & 0xf);
+			simGateAdsrBug(voice, 3, val & 0xf);
 		}
 		break;
 	}
@@ -1084,13 +1114,14 @@ static void resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 
     createCombinedWF(_sid.TriSaw_8580, 0.8, 2.4, 0.64); //precalculate combined waveform
     createCombinedWF(_sid.PulseSaw_8580, 1.4, 1.9, 0.68);
-    createCombinedWF(_sid.PulseTriSaw_8580, 0.8, 2.5, 0.64);
+	createCombinedWF(_sid.PulseTriSaw_8580, 0.8, 2.5, 0.64);
+	// far from "correct" but at least a bit better than Hermit's use of PulseSaw_8580 (see Last_Ninja)
+    createCombinedWF(_sid.PulseTri_8580, 0.8, 1.5, 0.38);	// improved settings are welcome!
 
 	_sid.sampleRate = sampleRate;
 	
 	_sid.cycleOverflow = 0;
 	_sid.cyclesPerSample = ((double)envCyclesPerSec()) / sampleRate;
-	_sid.multiplicator = _sid.cyclesPerSample * 16; // accu uses 28 rather than 24 bits - therefore *16
 		
 	_sid.isModel6581= isModel6581;	
 	_sid.level_DC= isModel6581 ? 0x38 : 0x80;	// supposedly the DC level for respective chip model
@@ -1100,8 +1131,8 @@ static void resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 	// init "filter" structures
 	fillMem((uint8_t*)&_filter,0,sizeof(_filter));
 
-    _filter.cutoff_ratio_8580 = (-2.0) * 3.1415926535897932385 * (12500.0 / 256) / _sid.sampleRate,
-    _filter.cutoff_ratio_6581 = (-2.0) * 3.1415926535897932385 * (20000.0 / 256) / _sid.sampleRate;
+    _filter.cutoff_ratio_8580 = ((double)-2.0) * 3.1415926535897932385 * (12500.0 / 256) / _sid.sampleRate,
+    _filter.cutoff_ratio_6581 = ((double)-2.0) * 3.1415926535897932385 * (20000.0 / 256) / _sid.sampleRate;
 //	_filter.prevbandpass = 0;	// redundant
 //	_filter.prevlowpass = 0;	
 	
@@ -1113,9 +1144,8 @@ static void resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 		// above is set to 0
 		_osc[i].envphase= Release;
 		_osc[i].zeroLock= 1;
-		_osc[i].noiseval = 0xffffff;		
+		_osc[i].noiseval = 0x7ffff8;
 		
-//		_osc[i].adsrBugTriggerTime= 0;	// redundant
 //		_osc[i].adsrBugFrameCount= 0;
 	}
 }
@@ -1136,16 +1166,17 @@ static void resetEnvelopeGenerator(uint32_t sampleRate) {
 	
 	/* 
 	in regular SID, 15-bit LFSR counter counts cpu-clocks, our problem is the lack of 
-	cycle by cycle SID emulation (we only have a SID snapshot every 20ms to work with) 
+	cycle by cycle SID emulation (we only have a SID snapshot every ~20ms to work with) 
 	during rendering our computing granularity then is 'one sample' (not 'one cpu cycle'
 	- but around 20).. instead of still trying to simulate a 15-bit cycle-counter we 
-	may directly use a sample-counter instead (which also reduces rounding issues).
+	may directly use a sample-counter (which also reduces rounding issues).
 	*/
 	uint16_t i;
-	env->limitLFSR= round(((float)0x8000)/_sid.cyclesPerSample);	// original counter was 15-bit
+	env->limitLFSR= floor(((float)0x8000)/_sid.cyclesPerSample);	// original counter was 15-bit
 	for (i=0; i<16; i++) {
 		// counter must reach respective threshold before envelope value is incremented/decremented								
-		env->counterPeriod[i]= (int32_t)floor(((double)envCyclesPerSec())/(255*1000) * attackTimes[i] / _sid.cyclesPerSample)+1;	// in samples	
+		// note: attack times are in millis & there are 255 steps for envelope..
+		env->counterPeriod[i]= (int32_t)floor(((double)envCyclesPerSec())/(255*1000) * attackTimes[i] / _sid.cyclesPerSample)+1;	// in samples
 	}
 	// lookup table for decay rates
 	uint8_t from[] =  {93, 54, 26, 14,  6,  0};
