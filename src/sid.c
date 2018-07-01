@@ -175,8 +175,8 @@ typedef enum {
 
 // internal oscillator def
 struct SidOscillator {
-    uint32_t freqS;		// osc increment per second 
-    uint32_t freqC;		// osc increment per cycle
+    uint32_t freqIncSec;		// osc increment per second 
+    uint32_t freqIncCycle;		// osc increment per cycle
 	
     uint32_t pulse;
     uint8_t wave;
@@ -202,8 +202,9 @@ struct SidOscillator {
     uint32_t noiseval;
     uint8_t noiseout;
 	
-	// detection of ADSR-bug conditions
-//	uint32_t adsrBugFrameCount;
+	// ADSR bug detection 
+	uint16_t lastCycles;
+	uint16_t simLFSR;
 };
 
 // internal filter def
@@ -540,7 +541,7 @@ static uint16_t createTriangleOutput(uint8_t voice) {
 static uint16_t createSawOutput(uint8_t voice) {	// test with Alien or Kawasaki_Synthesizer_Demo
 	// Hermit's "anti-aliasing"
 	uint32_t wfout = _osc[voice].counter >> 8;	// top 16-bits
-	double step = ((double)_osc[voice].freqS) / 0x1200000;
+	double step = ((double)_osc[voice].freqIncSec) / 0x1200000;
 	wfout += round(wfout * step);
 	if (wfout > 0xFFFF) wfout = 0xFFFF - round (((double)(wfout - 0x10000)) / step);
 	return wfout;
@@ -549,7 +550,7 @@ static uint16_t createSawOutput(uint8_t voice) {	// test with Alien or Kawasaki_
 static void calcPulseBase(uint8_t voice, uint32_t *tmp, uint32_t *pw) {
 	// based on Hermit's impl
 	(*pw) = _osc[voice].pulse;
-	(*tmp) = _osc[voice].freqS >> 9;	// 15 MSB needed
+	(*tmp) = _osc[voice].freqIncSec >> 9;	// 15 MSB needed
 	
 	if (0 < (*pw) && (*pw) < (*tmp)) { (*pw) = (*tmp); }
 	(*tmp) ^= 0xFFFF;
@@ -561,7 +562,7 @@ static uint16_t createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	//
 	if (isTestBit(voice)) return 0xFFFF;	// pulse start position
 	
 	// Hermit's "anti-aliasing"
-	double step = 256.0 / (_osc[voice].freqS >> 16); //simple pulse, most often used waveform, make it sound as clean as possible without oversampling
+	double step = 256.0 / (_osc[voice].freqIncSec >> 16); //simple pulse, most often used waveform, make it sound as clean as possible without oversampling
 
 	int32_t wfout;
 	if (tmp < pw) {
@@ -632,8 +633,8 @@ static void syncRegisterCache() {
         _osc[voice].release = env->counterPeriod[_sid.voices[voice].sr & 0xf];
         _osc[voice].wave    = _sid.voices[voice].wave;
 
-        _osc[voice].freqS    = round(_sid.cyclesPerSample * _sid.voices[voice].freq);	// per 1-sample interval (e.g. ~22 cycles)
-        _osc[voice].freqC    = ((uint32_t)_sid.voices[voice].freq);
+        _osc[voice].freqIncSec    = round(_sid.cyclesPerSample * _sid.voices[voice].freq);	// per 1-sample interval (e.g. ~22 cycles)
+        _osc[voice].freqIncCycle    = ((uint32_t)_sid.voices[voice].freq);
 		
     }
 #ifdef USE_FILTER
@@ -659,7 +660,7 @@ static void syncOscillator(uint8_t voice) {
 	
 	// the below logic is from the "previous oscillator" perspective
 	
-	if (!_osc[voice].freqC) return;
+	if (!_osc[voice].freqIncCycle) return;
 	
 	uint8_t msbRising= _osc[voice].msbRising;				// base trigger condition
 	
@@ -705,7 +706,7 @@ static void advanceOscillators() {
 				_osc[voice].noiseval = 0x7ffff8;
 			} else {
 				// update wave counter
-				_osc[voice].counter = (_osc[voice].counter + _osc[voice].freqC) & 0xFFFFFF;				
+				_osc[voice].counter = (_osc[voice].counter + _osc[voice].freqIncCycle) & 0xFFFFFF;				
 			}
 
 			// base for hard sync
@@ -887,6 +888,9 @@ void sidSynthRender (int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {
 		int16_t out= finalSample;
 		*(buffer+bp)= out;
     }
+	
+	// temp variable used during ADSR-bug detection
+	for (int i= 0; i<3; i++) { _osc[i].lastCycles= 0; _osc[i].simLFSR= _osc[i].currentLFSR;}
 }
 
 /*
@@ -954,85 +958,93 @@ static int32_t clocksToSamples(int32_t clocks) {
 	return round(((float)clocks)/_sid.cyclesPerSample);
 }
 
-static void simGateAdsrBug(uint8_t voice, uint8_t scenario, uint16_t newRate) {
-//	if (_osc[voice].adsrBugFrameCount == rsidGetFrameCount()) {		// FIXME what's the test case here? when was this used?
-		uint16_t oldThreshold= getCurrentThreshold(voice);
-		uint16_t newThreshold= _sid.env.counterPeriod[newRate];
+/*
+	Note: the maximum ADSR-bug-condition duration is about 32k cycles/1.7 frames long, i.e. there are 
+	players that explicitily trigger the bug 2 frames in advance so they can then safely (without bug) 
+	start some new note 2 frames later. Therefore ADSR-bug handling must deal with multi-frame scenarios!
 
-		// problem/limitation of the current impl is that the internal SID state ISN'T updated in sync with
-		// the CPU emulation, i.e. first the CPU is emulated for some interval (e.g. an IRQ) and then afterwards
-		// the SID emulation is run for that same interval: i.e. the CPU emulation DOESN'T see the current/up-to-date
-		// state of the SID and vice-versa the SID emulation does not see CPU induced changes at the correct time.
-		// in the ADSR-bug context this means:
-		
-		// problem 1: _osc[voice].currentLFSR only reflects the state at the end of the last sid output renderung
-		// but to correctly detect the bug the up-to-date counter is needed here. Workaround: supposing this here 
-		// happends from an IRQ (the 80% case) then the previous SID rendering covered the time just up to the IRQ 
-		// call and cpuCycles() measured the cycles that have since passend within the IRQ.
-		// (note: cpuCycles() refers to the local context, i.e. it is reset for each new IRQ, etc.) 
-		
-		// problem 2: (correctly) the ADSR bug will occur "elapsed" (see var below) samples into the next SID output 
-		// rendering, i.e. NOT right from the start. Before that the old counter would still be used. The overflow 
-		// at that point would mean that a total of "limitLFSR-(currentLFSR-newThreshold)" increment steps would 
-		// *then* be needed to reach the newThreshold, i.e. the "elapsed" time here would be relevant as a "correct 
-		// timing" offset.
-
-		
-		if (oldThreshold > newThreshold ) {	// only a reduction may lead to an overflow
-
-			uint32_t elapsed = clocksToSamples(cpuCycles());
-			uint16_t simLSFR = (_osc[voice].currentLFSR + elapsed) % _sid.env.limitLFSR;	// forward looking position of the counter
-						
-			if (simLSFR >= newThreshold ) {		// ADSR BUG activated!
-				// by setting currentLFSR to something equal or higher than newThreshold it is forced into "overflow territory"):
-				
-				// try to trigger bug for correct "overall duration" (see problem 2): when set to newThreshold then 
-				// the maximum of _sid.env.limitLFSR steps would be needed to get out of the bug, any higher value will still 
-				// tigger the bug but reduce the steps needed to get out of it..
-				
-				if (scenario != 2) {	// hack: todo investigate why this 
-					_osc[voice].currentLFSR= simLSFR;	// this should be the correctly reduced bug time: newThreshold+(simLSFR-newThreshold)
-				} else {
-					// testcase: Eskimonika - without any bug handling the song sounds "ok" and respective bug handling rather
-					//                        for scenario==2 seems to mess up the result.. (seems to be a good test for "false positive")
-				}
-			}		
-		}
-//	}	
+	Problem/limitation of the current emu impl is that the internal SID state ISN'T updated in sync with
+	the CPU emulation, i.e. first the CPU is emulated for some interval (e.g. an IRQ) and then afterwards
+	the SID emulation is run for that same interval: i.e. the CPU emulation DOESN'T see the current/up-to-date
+	state of the SID - and vice-versa the SID emulation does not see CPU induced changes at the correct time.
 	
-//	_osc[voice].adsrBugFrameCount= rsidGetFrameCount();				
+	In the ADSR-bug context this means:
+
+	Problem 1: _osc[voice].simLFSR (initially) only reflects the state at the end of the last SID output renderung
+	but to correctly detect the bug the up-to-date counter is needed here. Workaround: supposing this here 
+	happends from an IRQ (the 95% case) then the previous SID rendering covered the time just up to the IRQ 
+	call and cpuCycles() measured the cycles that have since passend within the IRQ.
+	(note: cpuCycles() refers to the local context, i.e. it is reset for each new IRQ, etc.) 
+
+	Problem 2: (correctly) the ADSR bug will occur "elapsed" (see var below) samples into the next SID output 
+	rendering, i.e. NOT right from the start. Before that the old counter would still be used. The overflow 
+	at that point would mean that a total of "limitLFSR-(currentLFSR-newThreshold)" increment steps would 
+	*then* be needed to reach the newThreshold, i.e. the "elapsed" time here would be relevant as a "correct 
+	timing" offset.
+*/
+static void simGateAdsrBug(uint8_t voice, uint8_t scenario, uint16_t newRate) {
+	uint16_t oldThreshold= getCurrentThreshold(voice);
+	uint16_t newThreshold= _sid.env.counterPeriod[newRate];
+
+	// try to redundantly keep track of LFSR (obviously an ugly/error prone hack
+	// and the emu would be so much easier if just done on a cycle-by-cycle basis...)
+	
+	uint32_t elapsed = clocksToSamples(cpuCycles() - _osc[voice].lastCycles);	// prone to rounding issues too
+	uint16_t simLSFR = _osc[voice].simLFSR;
+	if (simLSFR < oldThreshold) {
+		simLSFR= (simLSFR + elapsed) % oldThreshold;	
+	} else {
+		// already in overflow.. so let it do the full circle
+	}
+	simLSFR= simLSFR % _sid.env.limitLFSR;
+	
+	_osc[voice].lastCycles= cpuCycles();	
+	_osc[voice].simLFSR = simLSFR;
+
+	if (oldThreshold > newThreshold ) {	// only a reduction may lead to an overflow
+		if (simLSFR >= newThreshold ) {		// ADSR BUG activated!
+			// by setting currentLFSR to something equal or higher than newThreshold it is forced into "overflow territory"):
+			
+			// try to trigger bug for correct "overall duration" (see problem 2): when set to newThreshold then 
+			// the maximum of _sid.env.limitLFSR steps would be needed to get out of the bug, any higher value will still 
+			// tigger the bug but reduce the steps needed to get out of it..
+			// (note: Eskimonika is a good test case for false positives..)
+			
+			_osc[voice].currentLFSR= simLSFR;	// this should be the correctly reduced bug time: newThreshold+(simLSFR-newThreshold)
+		}		
+	}
 }
 
 static void handleAdsrBug(uint8_t voice, uint8_t reg, uint8_t val) {
 	// example LMan - Confusion 2015 Remix.sid: updates threshold then switches to lower threshold via GATE
 	
 	switch (reg) {		
-	case 4: { // wave
-		// scenario 1
-		uint8_t oldGate= _sid.voices[voice].wave & 0x1;
-		uint8_t newGate= val & 0x01;
-		if (!oldGate && newGate) {
-			simGateAdsrBug(voice, 0, _sid.voices[voice].ad >> 4);	// switch to 'attack'
+		case 4: { // wave
+			// scenario 1
+			uint8_t oldGate= _sid.voices[voice].wave & 0x1;
+			uint8_t newGate= val & 0x01;
+			if (!oldGate && newGate) {
+				simGateAdsrBug(voice, 0, _sid.voices[voice].ad >> 4);	// switch to 'attack'
+			}
+			else if (oldGate && !newGate) {
+				simGateAdsrBug(voice, 1, _sid.voices[voice].sr & 0xf);	// switch to release
+			}
+			break;
 		}
-		else if (oldGate && !newGate) {
-			simGateAdsrBug(voice, 1, _sid.voices[voice].sr & 0xf);	// switch to release
+		case 5: { // new AD
+			// scenario 1
+			if (_osc[voice].envphase != Release) {
+				simGateAdsrBug(voice, 2, val >> 4);
+			}
+			break;
 		}
-		break;
-	}
-	case 5: { // new AD
-		// scenario 1
-		if (_osc[voice].envphase != Release) {
-			simGateAdsrBug(voice, 2, val >> 4);
+		case 6: { // new SR
+			// scenario 1
+			if (_osc[voice].envphase == Release) {
+				simGateAdsrBug(voice, 3, val & 0xf);
+			}
+			break;
 		}
-		break;
-	}
-	case 6: { // new SR
-		// scenario 1
-		if (_osc[voice].envphase == Release) {
-			simGateAdsrBug(voice, 3, val & 0xf);
-		}
-		break;
-	}
 	}
 }
 
@@ -1145,8 +1157,6 @@ static void resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 		_osc[i].envphase= Release;
 		_osc[i].zeroLock= 1;
 		_osc[i].noiseval = 0x7ffff8;
-		
-//		_osc[i].adsrBugFrameCount= 0;
 	}
 }
 
