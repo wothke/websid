@@ -331,9 +331,9 @@ static uint8_t handlePulseModulationDigi(uint8_t voice, uint8_t reg, uint8_t val
 
 static uint8_t handleIceGuysDigi(uint8_t voice, uint8_t reg, uint8_t value) {
 	/* 
-	would be nice to find a robost check for non Ice_Guys.sid 
+	would be nice to find a robust check for non Ice_Guys.sid 
 	scenarios (false positives) unfortunately I have not spottet it yet... 
-	(maybe a file specific hack would be in order to avoid any sideeffects)
+	(maybe a file specific hack would be in order to avoid any side effects)
 	*/
 	if ((reg == 4) && (cpuGetProgramMode() == NMI_OFFSET_MASK)
 			&& !(sidGetWave(voice)&0x8) && (sidGetAD(voice) == 0x0f)){	
@@ -514,7 +514,7 @@ static void handlePsidDigi(uint16_t addr, uint8_t value) {
 	}	
 }
 
-int32_t digiGenPsidSample(int32_t sIn)
+int16_t digiGenPsidSample(int32_t sIn)
 {
     static int32_t sample = 0;
 
@@ -570,7 +570,15 @@ int32_t digiGenPsidSample(int32_t sIn)
 			sample = (sample << 11) - 0x4000; 
         }
     }
-    return (sIn);
+	// Clipping
+	const int32_t clipValue = 32767;
+	if ( sIn < -clipValue ) {
+		sIn = -clipValue;
+	} else if ( sIn > clipValue ) {
+		sIn = clipValue;
+	}
+	
+    return ((int16_t)sIn);
 }
 
 uint16_t digiGetCount() {
@@ -621,15 +629,15 @@ void digiReset(uint8_t compatibility, uint8_t isModel6581) {
 
 	_currentDigi= isModel6581 ? 0x38 : 0x80;	// supposedly the DC level for respective chip model
 
-	fillMem( (uint8_t*)&_swallowPWM, 0, sizeof(_swallowPWM) ); 	
-    fillMem( (uint8_t*)&_digiTime, 0, sizeof(_digiTime) ); 
-    fillMem( (uint8_t*)&_digiVolume, 0, sizeof(_digiVolume) ); 
+	memset( (uint8_t*)&_swallowPWM, 0, sizeof(_swallowPWM) ); 	
+    memset( (uint8_t*)&_digiTime, 0, sizeof(_digiTime) ); 
+    memset( (uint8_t*)&_digiVolume, 0, sizeof(_digiVolume) ); 
 
 	_digiCount= 0;
 	_overflowDigiCount= 0;
 	_digiSource= MASK_DIGI_UNUSED;
-    fillMem( (uint8_t*)&_overflowDigiTime, 0, sizeof(_overflowDigiTime) ); 
-    fillMem( (uint8_t*)&_overflowDigiVolume, 0, sizeof(_overflowDigiVolume) ); 
+    memset( (uint8_t*)&_overflowDigiTime, 0, sizeof(_overflowDigiTime) ); 
+    memset( (uint8_t*)&_overflowDigiVolume, 0, sizeof(_overflowDigiVolume) ); 
 	
 	// PSID digi stuff
 	_sampleActive= _samplePosition= _sampleStart= _sampleEnd= _sampleRepeatStart= _fracPos= 
@@ -656,6 +664,8 @@ void digiReset(uint8_t compatibility, uint8_t isModel6581) {
 const uint8_t SAMPLE_DETECT_MIN= 10;	
 
 uint8_t digiDetectSample(uint16_t addr, uint8_t value) {
+	if (!((addr>=0xd400) && (addr<= 0xd41c))) return 0;	// only use regular SID
+	
 	if (envIsFilePSID() & _isC64compatible) return 0;	// for songs like MicroProse_Soccer_V1.sid tracks >5 (PSID digis must still be handled.. like Demi-Demo_4_PSID.sid)
 	
 	uint8_t reg= addr&0x1f;
@@ -716,11 +726,11 @@ uint16_t digiGetOverflowCount() {
 		memcpy(_digiVolume, _overflowDigiVolume, len);		
 		
 		// clear just in case..
-		fillMem(((uint8_t*)_digiTime)+len, 0, DIGI_BUF_SIZE-len);
-		fillMem(((uint8_t*)_digiVolume)+len, 0, DIGI_BUF_SIZE-len);
+		memset(((uint8_t*)_digiTime)+len, 0, DIGI_BUF_SIZE-len);
+		memset(((uint8_t*)_digiVolume)+len, 0, DIGI_BUF_SIZE-len);
 	} else {
-		fillMem((uint8_t*)_digiTime, 0, DIGI_BUF_SIZE);
-		fillMem((uint8_t*)_digiVolume, 0, DIGI_BUF_SIZE);
+		memset((uint8_t*)_digiTime, 0, DIGI_BUF_SIZE);
+		memset((uint8_t*)_digiVolume, 0, DIGI_BUF_SIZE);
 	}
 	_digiCount= _overflowDigiCount;
 	_overflowDigiCount= 0;	
@@ -841,7 +851,7 @@ static void sortDigiSamples() {
 
 static void fillDigi(uint8_t * digiBuffer, uint16_t startIdx, uint16_t endIdx, uint8_t digi) {
 	if (endIdx>=startIdx) {
-		fillMem( &digiBuffer[startIdx], digi, (endIdx-startIdx)+1 );
+		memset( &digiBuffer[startIdx], digi, (endIdx-startIdx)+1 );
 	}
 }
 

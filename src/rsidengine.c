@@ -60,8 +60,6 @@ static uint8_t _mainProgStatus= 0; 		// 0: completed 1: interrupted by cycleLimi
 
 static uint32_t _irqTimeout= 18000;		// will be reset anyway
 
-static int32_t _frameCount= 0;			// keeps track of current frame
-
 /*
 * snapshot of c64 memory right after loading.. 
 * it is restored before playing a new track..
@@ -398,14 +396,6 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 	}
 }
 
-uint32_t rsidGetFrameCount() {
-	return _frameCount;
-}
-
-static void incFrameCount() {
-	_frameCount++;
-}
-
 /*
 * @return 		1: if digi data available   0: if not
 */
@@ -416,7 +406,6 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 
 	ciaUpdateTOD(envCurrentSongSpeed());
 	
-	incFrameCount();
 	if (!envSidPlayAddr()) {
 		envSetPsidMode(0);	
 	}
@@ -445,9 +434,7 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 }
 
 void rsidReset(uint32_t sampleRate, uint8_t compatibility)
-{	
-	_frameCount= 0;
-	
+{		
 	cpuInit();
 
 	sidReset(sampleRate, envIsSID6581(), compatibility);

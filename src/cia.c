@@ -41,6 +41,9 @@
 
 #include "cia.h"
 
+#include <stdio.h>
+#include <string.h>
+
 #include "env.h"		// global env: envIsPSID()
 #include "memory.h"
 #include "cpu.h"		// cpuTotalCycles()
@@ -686,7 +689,7 @@ static void initMem(uint16_t addr, uint8_t value) {
 void ciaReset(uint32_t cyclesPerScreen, uint8_t isRsid, uint32_t f) {
 	_failMarker= f;
 
-	fillMem((uint8_t*)&_dcia,0,sizeof(_dcia));
+	memset((uint8_t*)&_dcia,0,sizeof(_dcia));
 
 	initMem(0xdc00, 0x10);	 	// fire botton NOT pressed (see Alter_Digi_Piece.sid)
 	initMem(0xdc01, 0xff);	 	// Master_Blaster_intro.sid/instantfunk.sid actually check this

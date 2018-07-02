@@ -186,10 +186,10 @@ void memResetKernelROM() {
 	
 	// use RTS as default ROM content: some songs actually try to call stuff, e.g. mountain march.sid, 
 	// Soundking_V1.sid(basic rom init routines: 0x1D50, 0x1D15, 0x1F5E), Voodoo_People_part_1.sid (0x1F81)
-    fillMem(&_kernal_rom[0], 0x60, KERNAL_SIZE);			// RTS by default 
+    memset(&_kernal_rom[0], 0x60, KERNAL_SIZE);			// RTS by default 
 	
     memcpy(&_kernal_rom[0x1f48], _irqHandlerFF48, 19);	// $ff48 irq routine
-    fillMem(&_kernal_rom[0x0a31], 0xea, 0x4d);			// $ea31 fill some NOPs	
+    memset(&_kernal_rom[0x0a31], 0xea, 0x4d);			// $ea31 fill some NOPs	
     memcpy(&_kernal_rom[0x0a7e], _irqHandlerEA7E, 9);	// $ea31 return sequence
     memcpy(&_kernal_rom[0x1e43], _nmiHandlerFE43, 4);	// $fe43 nmi handler
 	
@@ -201,7 +201,7 @@ void memResetKernelROM() {
 }
 
 void memResetRAM(uint8_t isPsid) {
-    fillMem(_memory, 0x0, sizeof(_memory));
+    memset(_memory, 0x0, sizeof(_memory));
 
 	_memory[0x0314]= 0x31;		// standard IRQ vector
 	_memory[0x0315]= 0xea;
@@ -218,7 +218,7 @@ void memResetRAM(uint8_t isPsid) {
 	}
 }
 void memResetIO(uint32_t cyclesPerScreen, uint8_t isRsid, uint32_t f) {
-    fillMem(&_io_area[0], 0x0, IO_AREA_SIZE);
+    memset(&_io_area[0], 0x0, IO_AREA_SIZE);
 
 	ciaReset(cyclesPerScreen, isRsid, f);
 		

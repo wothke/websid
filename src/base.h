@@ -11,8 +11,4 @@ typedef unsigned short uint16_t;
 typedef signed long int32_t;
 typedef unsigned long uint32_t;
 
-
-// replacement for memset (was needed for old Alchemy stuff)
-void fillMem(uint8_t *mem, int8_t val, uint32_t len);
-
 #endif

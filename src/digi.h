@@ -34,5 +34,5 @@ uint8_t digiRenderSamples(uint8_t * digiBuffer, uint32_t cyclesPerScreen, uint16
 void digiMergeSampleData(int8_t hasDigi, int16_t *sound_buffer, uint8_t *digi_buffer, uint32_t len);
 
 // utils for the handling of legacy PSID digis
-int32_t digiGenPsidSample(int32_t sIn);
+int16_t digiGenPsidSample(int32_t sIn);
 #endif
