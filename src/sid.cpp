@@ -664,7 +664,7 @@ void SID::poke(uint8_t reg, uint8_t val) {
 void SID::writeMem(uint16_t addr, uint8_t value) {
 	if (!digiDetectSample(addr, value)) {
 		poke(addr&0x1f, value);							
-		memWriteIO((addr&0xfc1f), value);		// FIXME check for other SID locations	
+		memWriteIO(addr, value);	// forget the mirroring stuff.. just messes with additional SIDs	
 	}
 }
 
