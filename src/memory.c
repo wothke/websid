@@ -94,7 +94,7 @@ static uint8_t isIoAreaVisible() {
 }
 
 uint8_t memReadIO(uint16_t addr) {
-	/* XXX FIXME nobody is using the mirrored mapping anyway.. and with multiple SID chips it is unnecessarily complicated..
+	/* nobody is using the mirrored mapping anyway.. and with multiple SID chips it is unnecessarily complicated..
 	if ((addr&0xfc00)==0xd400) {			
 		return _io_area[(addr&0xfc1f) - 0xd000];
 	}*/
@@ -218,14 +218,6 @@ void memResetRAM(uint8_t isPsid) {
 		memcpy(&_memory[0xe000], &_kernal_rom[0], 0x2000);
 	}
 }
-void memResetIO(uint32_t cyclesPerScreen, uint8_t isRsid, uint32_t f) {
+void memResetIO() {
     memset(&_io_area[0], 0x0, IO_AREA_SIZE);
-
-	
-	// XXX FIXME what's that stuff to do here??
-	ciaReset(cyclesPerScreen, isRsid, f);
-		
-	vicReset(isRsid, f);
-
-	sidResetIO();
 }

@@ -195,7 +195,7 @@ void Filter::filterSamples(uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 	struct FilterState* state= getState(this);
 
 #if defined(USE_FILTER)
-	if (((voice<2) || isActive(state->filter[voice])) && state->filter[voice]) {	// XXX last && seems wrong
+	if (((voice<2) || isActive(state->filter[voice])) && state->filter[voice]) {	// todo: last "&&" seems wrong
 #ifdef USE_DIGIFILTER
 		struct FilterState* state= getState(this);
 	

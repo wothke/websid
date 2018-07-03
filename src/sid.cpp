@@ -328,8 +328,8 @@ void SID::advanceOscillators() {
 	}	
 */	
 	
-	// forwards time by ONE sample - which corresponds to about 22 cycles.. (FIXME: optimize this brute force impl later)
-	double c= _sid->cyclesPerSample + _sid->cycleOverflow;		// FIXME XXX double check for rounding issues..
+	// forwards time by ONE sample - which corresponds to about 22 cycles.. (todo: optimize this brute force impl later)
+	double c= _sid->cycleOverflow + _sid->cyclesPerSample;
 	uint16_t cycles= (uint16_t)c;		
 	_sid->cycleOverflow= c-cycles;
 
@@ -355,7 +355,6 @@ void SID::advanceOscillators() {
 
 			// base for hard sync
 			_osc[voice]->msbRising = (_osc[voice]->counter & 0x800000) > (_osc[voice]->prevCounter & 0x800000);
-// old	_osc[voice]->msbRising = !(_osc[voice]->prevCounter & 0x800000) && (_osc[voice]->counter & 0x800000);
 		}
 		
 		// handle oscillator HARD SYNC (quality wise it isn't worth the trouble to use this correct impl..)
@@ -688,7 +687,6 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 			
 			// envelopeOutput has 8-bit and and outv 16	(Hermit's impl based on 16-bit wave output)		
 			// 16-bit wave * 8 bit envelope	-> 24bit >>8 = 16bit
-			// FIXME check if division/255 results in better results than not 100% correct shifting 
 
 			#define BASELINE 0x8000	
 			int32_t voiceOut= round(scale* (((int32_t)outv)-BASELINE) * _env[voice]->getOutput() );			
@@ -697,7 +695,7 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 			// filtered channel (with disabled filter outf is used)	
 			_filter->routeSignal(&voiceOut, &outo, &outf, voice, &_sid->voices[voice].enabled);
 
-			// trace output (always make it 16-bit - in case somebody wants to play the voices separately)		
+			// trace output (always make it 16-bit)		
 			if (synthTraceBufs) {
 				int16_t *voiceTraceBuffer= synthTraceBufs[voice];
 				*(voiceTraceBuffer+bp)= (int16_t)(voiceOut >> 8);			
@@ -774,16 +772,6 @@ extern "C" uint32_t sidGetSampleFreq() {
 	return _sids[0]._sid->sampleRate;
 }
 
-extern "C" void sidResetIO() {
-	// FIXME legacy code used from memory.c ..todo: cleanup properly
-	
-	for (uint8_t i= 0; i<_usedSIDs; i++) {
-		SID &sid= _sids[i];			
-		memWriteIO(sid.getBaseAddr()+0x18, 0xf);		// turn on full volume	
-		sid.poke(0x18, 0xf);  	
-	}
-}
-
 extern "C" void sidSetMute(uint8_t voice, uint8_t value) {
 	uint8_t sidId= voice/3;
 	if (sidId >= _usedSIDs) sidId= 0;	// garbage in
@@ -791,7 +779,9 @@ extern "C" void sidSetMute(uint8_t voice, uint8_t value) {
 	_sids[sidId]._sid->voices[voice%3].enabled= !value;
 }
 
-static double volMap[]= { 1.0f, 0.6f, 0.4f };// more than 0.6 for 2 SIDs will lead to overflow/clicks.. (see Canon_457_Study_2_2SID)
+
+// test cases: Yet_Bigger_Beat_2SID, Canon_457_Study_2_2SID
+static double volMap[]= { 1.0f, 0.5f, 0.4f };
 
 extern "C" void sidSynthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {	
 
@@ -803,7 +793,7 @@ extern "C" void sidSynthRender(int16_t *buffer, uint32_t len, int16_t **synthTra
 	}
 }
 
-extern "C" void sidReset(uint32_t sampleRate, uint16_t *sidAddrs, uint8_t *sidIs6581, uint8_t compatibility) {
+extern "C" void sidReset(uint32_t sampleRate, uint16_t *sidAddrs, uint8_t *sidIs6581, uint8_t compatibility, uint8_t resetVol) {
 	_usedSIDs= 0;
 	memset(_mem2sid, 0, MEM_MAP_SIZE); // default is SID #0
 
@@ -812,14 +802,18 @@ extern "C" void sidReset(uint32_t sampleRate, uint16_t *sidAddrs, uint8_t *sidIs
 		if (sidAddrs[i]) {
 			SID &sid= _sids[_usedSIDs];			
 			sid.reset(sidAddrs[i], sampleRate, sidIs6581[i]);
-						
+			
+			if (resetVol) {
+				memWriteIO(sid.getBaseAddr()+0x18, 0xf);		// turn on full volume	
+				sid.poke(0x18, 0xf);  	
+			}
+			
 			if (i) {	// 1st entry is always the regular default SID
 				memset((void*)(_mem2sid+sidAddrs[i]-0xd400), _usedSIDs, 0x1f);
 			}
 			_usedSIDs++;
 		}
 	}
-	
 	// digis are rarely used in multi-SID configurations (Mahoney did it but then that 
 	// song crashes the emu anyways) .. only support digi for 1st SID:
 	digiReset(compatibility, sidIs6581[0]);

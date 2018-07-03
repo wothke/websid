@@ -101,42 +101,58 @@ uint8_t Envelope::getSR() {
 }
 
 void Envelope::poke(uint8_t reg, uint8_t val) {
-	handleAdsrBug(reg, val);
-
+	// problem: correctly the below updates should occur cpuCycles() into the next SID-
+	// rendering but with the current impl the SID-rendering will use the updated 
+	// state *immediately*..
+	
 	switch (reg) {
         case 0x4: {
+			struct EnvelopeState *state= getState(this);
+
 			uint8_t oldGate= _sid->getWave(_voice)&0x1;
 			uint8_t oldTest= _sid->getWave(_voice)&0x8;		// oscillator stop
 			uint8_t newGate= val & 0x01;
 			
 			if (!oldGate && newGate) {
+				simGateAdsrBug(0, state->ad >> 4);	// switch to 'attack'
 				/* 
 				If the envelope is then gated again (before the RELEASE cycle has reached 
 				zero amplitude), another ATTACK cycle will begin, starting from whatever 
 				amplitude had been reached.
 				*/
-				struct EnvelopeState *state= getState(this);
 				state->envphase= Attack;				
 				state->zeroLock= 0;
 			} else if (oldGate && !newGate) {
+				simGateAdsrBug(1, state->sr & 0xf);	// switch to 'release'
 				/* 
 				if the gate bit is reset before the envelope has finished the ATTACK cycle, 
 				the RELEASE cycles will immediately begin, starting from whatever amplitude 
 				had been reached
 				// see http://www.sidmusic.org/sid/sidtech2.html
 				*/
-				struct EnvelopeState *state= getState(this);
 				state->envphase= Release;
-			}			
+			}
 			break;
 		}
-        case 0x5: {
+        case 0x5: {		// set AD
 			struct EnvelopeState *state= getState(this);
+
+			if (state->envphase != Release) {	// reminder: S keeps using the D threshold
+				if (state->envphase == Attack) {
+					simGateAdsrBug(2, val >> 4);
+				} else {
+					simGateAdsrBug(3, val & 0xf);
+				}
+			}
 			state->ad = val;			
 			break;
 		}
-        case 0x6: { 
+        case 0x6: {		// set SR
 			struct EnvelopeState *state= getState(this);
+
+			if (state->envphase == Release) {
+				simGateAdsrBug(4, val & 0xf);
+			}			
 			state->sr = val; 
 			break;	
 		}
@@ -222,7 +238,7 @@ void Envelope::updateEnvelope() {
 	struct EnvelopeState *state= getState(this);
 	
 	/*
-	FIXME: step width here is 22 cycles - instead of 1; double check for overflow/rounding related issues  
+	todo: step width here is 22 cycles - instead of 1; double check for overflow/rounding related issues  
 	
 	Updates the envelope related status by a "one sample" wide step (i.e. ~22 cycles)
 	
@@ -250,7 +266,6 @@ void Envelope::updateEnvelope() {
 				// inc volume when threshold is reached						
 				if (!state->zeroLock) {
 					if (state->envelopeOutput < 0xff) {
-						// FIXME XXX check what "fix" was introduced here...
 						/* see Alien.sid: "full envelopeOutput level" GATE off/on sequences 
 						   within same IRQ will cause undesireable overflow.. this might not 
 						   be a problem in cycle accurate emulations.. but here it is (we 
@@ -285,7 +300,7 @@ void Envelope::updateEnvelope() {
 		case Sustain: {                        // Phase 2 : Sustain
 			triggerLFSR_Threshold(state->decay, &state->currentLFSR);	// keeps using the decay threshold!
 		
-			if (state->envelopeOutput != state->sustain) {
+			if (state->envelopeOutput != state->sustain) {	// what might change the level?
 				state->envphase = Decay;
 			}
 			break;
@@ -350,7 +365,7 @@ void Envelope::updateEnvelope() {
 * e.g. the time it takes to update the SR and then switch to AD may be much longer than the new A 
 * threshold and if the set R was larger, this will directly result in a triggered bug.)
 *
-* The below add-on hack in handleAdsrBug() tries to mitigate that blind-spot - at least for some of the
+* The below add-on hack in simGateAdsrBug() tries to mitigate that blind-spot - at least for some of the
 * most relevant scenarios.
 */
 uint16_t Envelope::getCurrentThreshold() {
@@ -402,7 +417,9 @@ void Envelope::snapshotLFSR() {
 	*then* be needed to reach the newThreshold, i.e. the "elapsed" time here would be relevant as a "correct 
 	timing" offset.
 */
-void Envelope::simGateAdsrBug(uint8_t scenario, uint16_t newRate) {
+void Envelope::simGateAdsrBug(uint8_t dbgIdx, uint16_t newRate) {
+	// example LMan - Confusion 2015 Remix.sid: updates threshold then switches to lower threshold via GATE
+
 	struct EnvelopeState *state= getState(this);
 	
 	uint16_t oldThreshold= getCurrentThreshold();
@@ -432,44 +449,7 @@ void Envelope::simGateAdsrBug(uint8_t scenario, uint16_t newRate) {
 			// tigger the bug but reduce the steps needed to get out of it..
 			// (note: Eskimonika is a good test case for false positives..)
 						
-			if (scenario != 2) { 
-				state->currentLFSR= simLSFR;	// this should be the correctly reduced bug time: newThreshold+(simLSFR-newThreshold)
-			} else {
-				// something is still not right ... this hack is for the benefit of songs like Departure_I
-				state->currentLFSR= newThreshold;	// 
-			}
+			state->currentLFSR= simLSFR;	// this should be the correctly reduced bug time: newThreshold+(simLSFR-newThreshold)
 		}		
-	}
-}
-void Envelope::handleAdsrBug(uint8_t reg, uint8_t val) {
-	// example LMan - Confusion 2015 Remix.sid: updates threshold then switches to lower threshold via GATE
-	
-	switch (reg) {		
-		case 4: { // wave
-			// scenario 1
-			uint8_t oldGate= _sid->getWave(_voice) & 0x1;
-			uint8_t newGate= val & 0x01;
-			if (!oldGate && newGate) {
-				simGateAdsrBug(0, getState(this)->ad >> 4);	// switch to 'attack'
-			}
-			else if (oldGate && !newGate) {
-				simGateAdsrBug(1, getState(this)->sr & 0xf);	// switch to release
-			}
-			break;
-		}
-		case 5: { // new AD
-			// scenario 1
-			if (getState(this)->envphase != Release) {
-				simGateAdsrBug(2, val >> 4);
-			}
-			break;
-		}
-		case 6: { // new SR
-			// scenario 1
-			if (getState(this)->envphase == Release) {
-				simGateAdsrBug(3, val & 0xf);
-			}
-			break;
-		}
 	}
 }

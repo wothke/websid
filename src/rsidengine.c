@@ -435,10 +435,7 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 
 void rsidReset(uint32_t sampleRate, uint8_t compatibility)
 {		
-	cpuInit();
-
-	sidReset(sampleRate, envSIDAddresses(), envSID6581s(), compatibility);
-	
+	cpuInit();	
 	cpuSetProgramMode(MAIN_OFFSET_MASK);
 	_mainLoopOnlyMode= 0;
 	
@@ -446,8 +443,13 @@ void rsidReset(uint32_t sampleRate, uint8_t compatibility)
 	// (Sean Connolly) even seems to play digis during multi-screen IRQs (so give them more time)			
 	setIrqTimeout(envCyclesPerScreen()*4);
 	
-	// reset IO area
-    memResetIO(envCyclesPerScreen(), envIsRSID(), NO_INT);
+    memResetIO();	// reset IO area
+
+	ciaReset(envCyclesPerScreen(), envIsRSID(), NO_INT);
+		
+	vicReset(envIsRSID(), NO_INT);
+	
+	sidReset(sampleRate, envSIDAddresses(), envSID6581s(), compatibility, 1);
 }
 
 void rsidLoadSongBinary(uint8_t *src, uint16_t destAddr, uint32_t len) {

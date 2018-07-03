@@ -72,7 +72,6 @@ private:
 	uint8_t handleExponentialDelay();
 		// --- ADSR-bug
 	uint16_t getCurrentThreshold();
-	void handleAdsrBug(uint8_t reg, uint8_t val);
 	void simGateAdsrBug(uint8_t scenario, uint16_t newRate);
 	int32_t clocksToSamples(int32_t clocks);
 

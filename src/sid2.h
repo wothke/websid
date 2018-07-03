@@ -21,6 +21,7 @@ extern "C" void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t voic
 extern "C" uint32_t sidGetSampleFreq();
 extern "C" uint16_t sidGetFreq(uint8_t voice);
 extern "C" uint16_t sidGetPulse(uint8_t voice);
+
 extern "C" void sidSetMute(uint8_t voice, uint8_t value);
 
 /**

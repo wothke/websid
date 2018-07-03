@@ -18,8 +18,7 @@
 #include "base.h"
 
 // init/reset
-void sidReset(uint32_t sampleRate, uint16_t *sidAddrs, uint8_t *sidIs6581, uint8_t compatibility);
-void sidResetIO();	// FIXME properly refactor this legacy function
+void sidReset(uint32_t sampleRate, uint16_t *sidAddrs, uint8_t *sidIs6581, uint8_t compatibility, uint8_t resetVol);
 
 // direct manipulation of SID state (only for SID #1 - exclusively used for digis  )
 void sidPoke(uint8_t reg, uint8_t val);		// update SID registers 

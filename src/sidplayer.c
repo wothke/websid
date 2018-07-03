@@ -681,7 +681,7 @@ static uint8_t envSetSID6581(uint8_t is6581)  __attribute__((noinline));
 static uint8_t EMSCRIPTEN_KEEPALIVE envSetSID6581(uint8_t is6581) {
 	_sidIs6581[0]= _sidIs6581[1]= _sidIs6581[2]= is6581;
 	
-	sidReset(_sampleRate, envSIDAddresses(), envSID6581s(), _compatibility);
+	sidReset(_sampleRate, envSIDAddresses(), envSID6581s(), _compatibility, 0);
 
 	return 0;
 }

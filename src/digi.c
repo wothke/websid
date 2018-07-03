@@ -363,7 +363,7 @@ static uint8_t handleIceGuysDigi(uint8_t voice, uint8_t reg, uint8_t value) {
 // Mahoney's D418 "8-bit" digi sample technique..
 // -------------------------------------------------------------------------------------------
 
-// based on Mahoney's amplitude_table_8580.txt (FIXME: use .sid file's version preference and support both tables?)
+// based on Mahoney's amplitude_table_8580.txt (not using SID model specific sample logic to this should be good enough)
 static const uint8_t _mahoneySample[256]= {
 	164, 170, 176, 182, 188, 194, 199, 205, 212, 218, 224, 230, 236, 242, 248, 254, 
 	164, 159, 153, 148, 142, 137, 132, 127, 120, 115, 110, 105, 99, 94, 89, 84, 

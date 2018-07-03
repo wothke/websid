@@ -42,7 +42,7 @@ void vicReset(uint8_t isRsid, uint32_t f) {
 }
 
 static void setCurrentRasterPos(uint32_t cycleTime) {
-// FIXME maybe badlines should be considered here?
+	// todo: maybe badlines should be considered here?
 	_currentRasterPos= ((uint32_t)((float)cycleTime/envCyclesPerRaster()))%envLinesPerScreen();	
 }
 
@@ -125,8 +125,7 @@ static uint16_t getCycleTime(uint16_t rasterTime) {
 }
 
 uint8_t vicIsIrqActive() {
-//	return ((memReadIO(0xd01a)&0x1) == 1);  // old imp
-	return !cpuIrqFlag() && ((memReadIO(0xd01a)&0x1) == 1);	// XXX needs to be tested
+	return !cpuIrqFlag() && ((memReadIO(0xd01a)&0x1) == 1);
 }
 
 /*

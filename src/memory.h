@@ -18,7 +18,7 @@
 // setup/initialization
 void memResetKernelROM();
 void memResetRAM(uint8_t isPsid);
-void memResetIO(uint32_t cyclesPerScreen, uint8_t isRsid, uint32_t failMarker);
+void memResetIO();
 
 // regular memory access
 uint8_t memGet(uint16_t addr);

@@ -396,9 +396,7 @@ static uint32_t intForwardToNextCiaInterrupt(struct Timer *t, uint32_t timeLimit
 	return waited;
 }
 
-uint32_t ciaForwardToNextInterrupt(uint8_t ciaIdx, uint32_t timeLimit) {
-	// XXX needs to be tested
-	
+uint32_t ciaForwardToNextInterrupt(uint8_t ciaIdx, uint32_t timeLimit) {	
 	// must not be used for PSID (see Synth_Sample_III.sid tracks >3)
 	if (!envIsPSID() && cpuIrqFlag() && (ciaIdx == 0)) return _failMarker; // no IRQ while I-flag is set (NMI cannot be masked)
 	
@@ -606,7 +604,7 @@ uint8_t ciaReadMem(uint16_t addr) {
 			/*
 			hack originally used for Storebror.sid.. but apparently other songs also 
 			"benefit" from it (e.g. Uwe Anfang's stuff)...  always use 0x08xx NMI vector 
-			(our timing is too imprecise to reliably calc the required values between 
+			(timing is too imprecise to reliably calc the required values between 
 			0x08 and 0x0e.. (other songs - e.g. Hunters_Moon.sid - are using 0x02-0x09) 
 			but since jitter is the least of our problems, there is no need for the 
 			respective timing logic anyway)
