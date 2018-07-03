@@ -46,4 +46,8 @@ uint16_t envLinesPerScreen();
 
 uint16_t envNumberOfSamplesPerCall();
 
+// array with 3 elements, 0 means not available
+uint16_t* envSIDAddresses();
+uint8_t*  envSID6581s();
+
 #endif

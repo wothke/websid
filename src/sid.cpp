@@ -174,8 +174,8 @@ static WaveformTables _wave;		// only need one instance of this
 /**
 * This class represents once specific MOS SID chip.
 */
-SID::SID(uint16_t addr) {
-	_addr= addr;		// e.g. 0xd400
+SID::SID() {
+	_addr= 0;		// e.g. 0xd400
 	
 	_sid= (SidState*) malloc(sizeof(SidState));
 
@@ -225,7 +225,7 @@ uint32_t SID::getRingModCounter(uint8_t voice) {
 
 
 
-void SID::resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
+void SID::resetEngine(uint32_t sampleRate, uint8_t isModel6581) {	
 	// base setting
 	memset((uint8_t*)_sid,0,sizeof(SidState));
 
@@ -585,8 +585,13 @@ uint8_t SID::simReadD41B() {
 }
 
 // ------------------------- public API ----------------------------
+uint16_t SID::getBaseAddr() {
+	return _addr;
+}
 
-void SID::reset(uint32_t sampleRate, uint8_t isModel6581) {
+void SID::reset(uint16_t addr, uint32_t sampleRate, uint8_t isModel6581) {
+	_addr= addr;
+	
 	resetEngine(sampleRate, isModel6581);
 	
 	Envelope::resetConfiguration(sampleRate);
@@ -663,7 +668,7 @@ void SID::writeMem(uint16_t addr, uint8_t value) {
 	}
 }
 
-void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {	
+void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, double scale, uint8_t doClear) {	
 	syncRegisterCache();
     
 	double cutoff, resonance;	// calc once here as an optimization
@@ -686,13 +691,11 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {
 			// FIXME check if division/255 results in better results than not 100% correct shifting 
 
 			#define BASELINE 0x8000	
-			int32_t voiceOut= ( (((int32_t)outv)-BASELINE) * _env[voice]->getOutput() );			
+			int32_t voiceOut= round(scale* (((int32_t)outv)-BASELINE) * _env[voice]->getOutput() );			
 
 			// now route the voice output to either the non-filtered or the
 			// filtered channel (with disabled filter outf is used)	
 			_filter->routeSignal(&voiceOut, &outo, &outf, voice, &_sid->voices[voice].enabled);
-	//uint8_t e= 1;
-	//		_filter->routeSignal(&voiceOut, &outo, &outf, voice, &e);
 
 			// trace output (always make it 16-bit - in case somebody wants to play the voices separately)		
 			if (synthTraceBufs) {
@@ -705,7 +708,11 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {
 		
 		finalSample= digiGenPsidSample(finalSample); // PSID digis & clipping
 		
-		*(buffer+bp)= (int16_t)finalSample;	
+		if (doClear) {
+			*(buffer+bp)= (int16_t)finalSample;	
+		} else {
+			*(buffer+bp)+= (int16_t)finalSample;	
+		}	
     }
 	
 	// temp variables used during ADSR-bug detection
@@ -727,57 +734,104 @@ void SID::filterSamples(uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 	_filter->filterSamples(digiBuffer, len, voice);
 }
 
+const uint8_t MAX_SID_CHIPS= 3;
+static uint8_t _usedSIDs= 0; 
+static SID _sids[MAX_SID_CHIPS];	// allocate the maximum.. some may then just remain unused..
 
-/******************************* old interface to the remaining emulation code ************************************/
-static SID _sidInstance(0xd400);	// FIXME XXX use more than 1 instance
+/**
+* Use a simple map to later find which IO access matches which SID (saves annoying if/elses later):
+*/
+const int MEM_MAP_SIZE = 0xbff;
+static uint8_t _mem2sid[MEM_MAP_SIZE];	// maps memory area d400-dfff to available SIDs 
 
+/******************************* old C interface to the remaining emulation code ************************************/
+
+	// APIs exclusively used for digis, i.e. always use the "built-in" standard SID chip
+extern "C" void sidPoke(uint8_t reg, uint8_t val) {
+	_sids[0].poke(reg, val);
+}
 extern "C" uint8_t sidGetWave(uint8_t voice) {
-	return _sidInstance.getWave(voice);
+	return _sids[0].getWave(voice);
 }
 extern "C" uint8_t sidGetAD(uint8_t voice) {
-	return _sidInstance.getAD(voice);	
+	return _sids[0].getAD(voice);	
 }
 extern "C" uint8_t sidGetSR(uint8_t voice) {
-	return _sidInstance.getSR(voice);	
-}
-extern "C" void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t voice) {
-	_sidInstance.filterSamples(digiBuffer, len, voice);
-}
-
-extern "C" uint32_t sidGetSampleFreq() {
-	return _sidInstance._sid->sampleRate;
+	return _sids[0].getSR(voice);	
 }
 extern "C" uint16_t sidGetFreq(uint8_t voice) {
-	return _sidInstance._sid->voices[voice].freq;
+	return _sids[0]._sid->voices[voice].freq;
 }
 extern "C" uint16_t sidGetPulse(uint8_t voice) {
-	return _sidInstance._sid->voices[voice].pulse;
+	return _sids[0]._sid->voices[voice].pulse;
 }
+extern "C" void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t voice) {
+	_sids[0].filterSamples(digiBuffer, len, voice);
+}
+
+	// the sample frequency is the same for all SIDs
+extern "C" uint32_t sidGetSampleFreq() {
+	return _sids[0]._sid->sampleRate;
+}
+
+extern "C" void sidResetIO() {
+	// FIXME legacy code used from memory.c ..todo: cleanup properly
+	
+	for (uint8_t i= 0; i<_usedSIDs; i++) {
+		SID &sid= _sids[i];			
+		memWriteIO(sid.getBaseAddr()+0x18, 0xf);		// turn on full volume	
+		sid.poke(0x18, 0xf);  	
+	}
+}
+
 extern "C" void sidSetMute(uint8_t voice, uint8_t value) {
-	_sidInstance._sid->voices[voice].enabled= !value;
+	uint8_t sidId= voice/3;
+	if (sidId >= _usedSIDs) sidId= 0;	// garbage in
+	
+	_sids[sidId]._sid->voices[voice%3].enabled= !value;
 }
+
+static double volMap[]= { 1.0f, 0.6f, 0.4f };// more than 0.6 for 2 SIDs will lead to overflow/clicks.. (see Canon_457_Study_2_2SID)
 
 extern "C" void sidSynthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {	
-	_sidInstance.synthRender(buffer, len, synthTraceBufs);
+
+	double scale= volMap[_usedSIDs-1];
+	
+	for (uint8_t i= 0; i<_usedSIDs; i++) {
+		SID &sid= _sids[i];			
+		_sids[i].synthRender(buffer, len, synthTraceBufs, scale, !i);
+	}
 }
 
-extern "C" void sidReset(uint32_t sampleRate, uint8_t isModel6581, uint8_t compatibility) {
-	_sidInstance.reset(sampleRate, isModel6581);
+extern "C" void sidReset(uint32_t sampleRate, uint16_t *sidAddrs, uint8_t *sidIs6581, uint8_t compatibility) {
+	_usedSIDs= 0;
+	memset(_mem2sid, 0, MEM_MAP_SIZE); // default is SID #0
 
-	digiReset(compatibility, isModel6581);
-}
-
-// -----------------------------  SID I/O -------------------------------------------
-
-extern "C" void sidPoke(uint8_t reg, uint8_t val) {
-	_sidInstance.poke(reg, val);
+	// setup the configured SID chips & make map where to find them
+	for (uint8_t i= 0; i<MAX_SID_CHIPS; i++) {
+		if (sidAddrs[i]) {
+			SID &sid= _sids[_usedSIDs];			
+			sid.reset(sidAddrs[i], sampleRate, sidIs6581[i]);
+						
+			if (i) {	// 1st entry is always the regular default SID
+				memset((void*)(_mem2sid+sidAddrs[i]-0xd400), _usedSIDs, 0x1f);
+			}
+			_usedSIDs++;
+		}
+	}
+	
+	// digis are rarely used in multi-SID configurations (Mahoney did it but then that 
+	// song crashes the emu anyways) .. only support digi for 1st SID:
+	digiReset(compatibility, sidIs6581[0]);
 }
 
 extern "C" uint8_t sidReadMem(uint16_t addr) {
-	return _sidInstance.readMem(addr);
+	uint8_t sidId= _mem2sid[addr-0xd400];
+	return _sids[sidId].readMem(addr);
 }
 extern "C" void sidWriteMem(uint16_t addr, uint8_t value) {		// used by memory.c .. for memSet into d400ff
-	_sidInstance.writeMem(addr, value);
+	uint8_t sidId= _mem2sid[addr-0xd400];
+	_sids[sidId].writeMem(addr, value);
 }
 
 

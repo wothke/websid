@@ -2,7 +2,7 @@
 * Poor man's emulation of the C64's SID.
 *
 * <p>Tiny'R'Sid (c) 2018 J.Wothke
-* <p>version 0.91
+* <p>version 0.92
 * 
 * Terms of Use: This software is licensed under a CC BY-NC-SA 
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
@@ -33,12 +33,17 @@ extern "C" void sidSetMute(uint8_t voice, uint8_t value);
 */
 class SID {
 public:
-	SID(uint16_t addr);
+	SID();
 	
+	/**
+	* Gets the base memory address that this SID is mapped to.
+	*/
+	uint16_t getBaseAddr();
+
 	/**
 	* Resets this instance according to the passed params.
 	*/
-	void reset(uint32_t sampleRate, uint8_t isModel6581);
+	void reset(uint16_t addr, uint32_t sampleRate, uint8_t isModel6581);
 		
 	/**
 	* Directly updates one of the SID's registers.
@@ -71,7 +76,7 @@ public:
 	* @param synthTraceBufs when used it must be an array[4] containing
 	*                       buffers of length "len"
 	*/	
-	void synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs);
+	void synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, double scale, uint8_t sumIt);
 protected:
 	friend class Envelope;
 	

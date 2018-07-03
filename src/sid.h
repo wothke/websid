@@ -18,10 +18,13 @@
 #include "base.h"
 
 // init/reset
-void sidReset(uint32_t sampleRate, uint8_t isModel6581, uint8_t compatibility);
+void sidReset(uint32_t sampleRate, uint16_t *sidAddrs, uint8_t *sidIs6581, uint8_t compatibility);
+void sidResetIO();	// FIXME properly refactor this legacy function
 
-// direct manipulation of SID state
+// direct manipulation of SID state (only for SID #1 - exclusively used for digis  )
 void sidPoke(uint8_t reg, uint8_t val);		// update SID registers 
+
+// @param voice numbering just continues for 2 or 3 SID configurations
 void sidSetMute(uint8_t voice, uint8_t value);
 
 // use current SID state to generate audio samples

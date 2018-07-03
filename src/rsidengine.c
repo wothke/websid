@@ -437,7 +437,7 @@ void rsidReset(uint32_t sampleRate, uint8_t compatibility)
 {		
 	cpuInit();
 
-	sidReset(sampleRate, envIsSID6581(), compatibility);
+	sidReset(sampleRate, envSIDAddresses(), envSID6581s(), compatibility);
 	
 	cpuSetProgramMode(MAIN_OFFSET_MASK);
 	_mainLoopOnlyMode= 0;

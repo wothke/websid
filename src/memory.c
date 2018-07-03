@@ -94,9 +94,10 @@ static uint8_t isIoAreaVisible() {
 }
 
 uint8_t memReadIO(uint16_t addr) {
+	/* XXX FIXME nobody is using the mirrored mapping anyway.. and with multiple SID chips it is unnecessarily complicated..
 	if ((addr&0xfc00)==0xd400) {			
 		return _io_area[(addr&0xfc1f) - 0xd000];
-	}
+	}*/
 	return _io_area[addr-0xd000];
 }
 
@@ -127,7 +128,7 @@ uint8_t memGet(uint16_t addr)
 		if (isIoAreaVisible()) {		
 			if ((addr >= 0xd000) && (addr < 0xd400)) {
 				return vicReadMem(addr);
-			} else if ((addr >= 0xd400) && (addr < 0xd800)) {
+			} else if (((addr >= 0xd400) && (addr < 0xd800)) || ((addr >= 0xde00) && (addr < 0xdf00))) {
 				return sidReadMem(addr);
 			} else if ((addr >= 0xdc00) && (addr < 0xde00)) {
 				return ciaReadMem(addr);
@@ -154,7 +155,7 @@ void memSet(uint16_t addr, uint8_t value)
 			if ((addr >= 0xd000) && (addr < 0xd400)) {			// vic stuff
 				vicWriteMem(addr, value);
 				return;
-			} else if ((addr >= 0xd400) && (addr < 0xd800)) {	// SID stuff
+			} else if (((addr >= 0xd400) && (addr < 0xd800)) || ((addr >= 0xde00) && (addr < 0xdf00))) {	// SID stuff
 				sidWriteMem(addr, value);
 				return;
 			} else if ((addr >= 0xdc00) && (addr < 0xde00)) {			// CIA timers
@@ -220,10 +221,11 @@ void memResetRAM(uint8_t isPsid) {
 void memResetIO(uint32_t cyclesPerScreen, uint8_t isRsid, uint32_t f) {
     memset(&_io_area[0], 0x0, IO_AREA_SIZE);
 
+	
+	// XXX FIXME what's that stuff to do here??
 	ciaReset(cyclesPerScreen, isRsid, f);
 		
 	vicReset(isRsid, f);
 
-	memWriteIO(0xd418, 0xf);		// turn on full volume	
-	sidPoke(0x18, 0xf);  	
+	sidResetIO();
 }

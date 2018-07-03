@@ -69,7 +69,9 @@ static uint8_t _cyclesPerRaster;
 static uint16_t _linesPerScreen;
 
 static uint8_t _sidVersion;
-static uint8_t _sidModel6581;	// default
+
+static uint16_t _sidAddr[3];	// start addr of installed SID chips (0 means not available)
+static uint8_t _sidIs6581[3];		// models of installed SID chips 
 
 static uint8_t _ntscMode= 0;
 static uint8_t _compatibility;
@@ -118,6 +120,14 @@ static uint8_t _isFilePSID;
 
 static uint32_t _numberOfSamplesRendered = 0;
 static uint32_t _numberOfSamplesToRender = 0;
+
+
+uint16_t* envSIDAddresses() {
+	return _sidAddr;
+}
+uint8_t*  envSID6581s() {
+	return _sidIs6581;
+}
 
 uint8_t envIsRSID() {
 	return (_isPSID == 0);
@@ -503,9 +513,11 @@ void musGetSizes(uint8_t *musSongData, uint16_t *v1len, uint16_t *v2len, uint16_
 // Compute!'s .mus files require an addtional player that must installed with the song file.
 static uint16_t loadComputeSidplayerData(uint8_t *musSongData, uint32_t musSongDataLen) {
 	_sidVersion= 2;
-	_sidModel6581= 1;
 	_basicProg= 0;
 	_compatibility= 1;
+	_sidAddr[0]= 0xd400; _sidAddr[1]= _sidAddr[2]= 0;
+	_sidIs6581[0]= _sidIs6581[1]= _sidIs6581[2]= 1;
+
 	_ntscMode= 1;			// the .mus stuff is mostely from the US..
 	_loadAddr= MUS_BASE_ADDR;
 	_loadEndAddr= 0x9fff;
@@ -546,6 +558,29 @@ static uint16_t loadComputeSidplayerData(uint8_t *musSongData, uint32_t musSongD
 
 	return 1;
 }
+uint16_t getSidAddr(uint8_t centerByte) {
+	if (((centerByte >= 0x42) && (centerByte <= 0xFE)) && 
+		!((centerByte >= 0x80) && (centerByte <= 0xDF)) && 
+		!(centerByte & 0x1)) {
+
+		return ((uint16_t)0xD000) | (((uint16_t)centerByte)<<4);
+	}
+	return 0;
+}
+
+static void configureSids(uint16_t flags, uint8_t addr2, uint8_t addr3) {
+	_sidAddr[0]= 0xd400;
+	_sidIs6581[0]= (flags>>4) & 0x3;	
+	_sidIs6581[0]= !((_sidIs6581[0]>>1) & 0x1); 	// only use 8580 when bit is explicitly set
+	
+	_sidAddr[1]= getSidAddr(addr2);
+	_sidIs6581[1]= (flags>>6) & 0x3;
+	_sidIs6581[1]= !_sidIs6581[1] ? _sidIs6581[0] : !((_sidIs6581[1]>>1) & 0x1); 
+		
+	_sidAddr[2]= getSidAddr(addr3);
+	_sidIs6581[2]= (flags>>8) & 0x3;
+	_sidIs6581[2]= !_sidIs6581[2] ? _sidIs6581[0] : !((_sidIs6581[2]>>1) & 0x1); 
+}
 
 static uint32_t loadSidFile(uint32_t isMus, void * inBuffer, uint32_t inBufSize)  __attribute__((noinline));
 static uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t isMus, void * inBuffer, uint32_t inBufSize) {
@@ -577,19 +612,16 @@ static uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t isMus, void * inBuffer
 		rsidLoadSongBinary(_musMemBuffer, _loadAddr, _musMemBufferSize);		
 	} else {
 		_sidVersion= inputFileBuffer[0x05];
+				
+		uint16_t flags= (_sidVersion > 1) ? (((uint16_t)inputFileBuffer[0x77]) | (((uint16_t)inputFileBuffer[0x77])<<8)) : 0x0;
 		
-		// note: emu is not differenciating between SID chip versions (respective flags
-		// are therefore ignored - see bits 4/5)
-		
-		uint8_t flags= (_sidVersion > 1) ? inputFileBuffer[0x77] : 0x0;
-		
-		_sidModel6581= !((flags>>5) & 0x1); // only use 8580 when bit is explicitly set
-
 		_basicProg= (envIsRSID() && (flags & 0x2));	// C64 BASIC program need to be started..
 		
 		_compatibility= ( (_sidVersion & 0x2) &&  ((flags & 0x2) == 0));	
 		_ntscMode= (_sidVersion == 2) && envIsPSID() && (flags & 0x8); // NTSC bit
 		
+		configureSids(flags, _sidVersion>2?inputFileBuffer[0x7a]:0, _sidVersion>3?inputFileBuffer[0x7b]:0);
+			
 		uint8_t i;
 		for (i=0;i<32;i++) song_name[i] = inputFileBuffer[0x16+i];
 		for (i=0;i<32;i++) song_author[i] = inputFileBuffer[0x36+i]; 
@@ -642,13 +674,14 @@ static uint32_t EMSCRIPTEN_KEEPALIVE getSampleRate() {
 
 uint8_t envIsSID6581()  __attribute__((noinline));
 uint8_t EMSCRIPTEN_KEEPALIVE envIsSID6581() {
-	return _sidModel6581;
+	return _sidIs6581[0];		// only for the 1st chip
 }
 
 static uint8_t envSetSID6581(uint8_t is6581)  __attribute__((noinline));
 static uint8_t EMSCRIPTEN_KEEPALIVE envSetSID6581(uint8_t is6581) {
-	_sidModel6581= is6581;	
-	sidReset(_sampleRate, _sidModel6581, _compatibility);
+	_sidIs6581[0]= _sidIs6581[1]= _sidIs6581[2]= is6581;
+	
+	sidReset(_sampleRate, envSIDAddresses(), envSID6581s(), _compatibility);
 
 	return 0;
 }
