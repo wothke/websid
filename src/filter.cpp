@@ -28,8 +28,9 @@ extern "C" {
 // switch to completely disable use of the filter
 #define USE_FILTER
 
-//#define USE_DIGIFILTER	// as long as samples are not perfectly timed, this will introduce additional distortions (no point in wasting the extra cycles..)
-
+// there used to be some problem with certain (badly timed) samples (see Vortex) - but 
+// for some reason these seem to be gone now (maybe a clipping issue) - so let's use it 
+#define USE_DIGIFILTER	
 
 // internal filter def
 struct FilterState {
@@ -57,11 +58,9 @@ struct FilterState {
     uint8_t ftpVol;		// mode (hi/band/lo pass) / volume
 };
 
-
 struct FilterState* getState(Filter *e) {	// this should rather be static - but "friend" wouldn't work then
 	return (struct FilterState*)e->_state;
 }
-
 
 Filter::Filter(SID *sid) {
 	_sid= sid;
@@ -122,7 +121,7 @@ int32_t Filter::getOutput(int32_t *in, int32_t *out, double cutoff, double reson
 
 	int32_t OUTPUT_SCALEDOWN = 0x6 * 0xf;	// hand tuned with "424"
 	
-	// filter volume is 4 bits/ outo is 16bits		
+	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)		
 	return round(output * state->vol / OUTPUT_SCALEDOWN); // SID output
 #else
 	return (*in)/6;
@@ -205,13 +204,10 @@ void Filter::filterSamples(uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 	// respective sample data would need to be merged into the regular SID output before 
 	// the filter is applied... this emulator does NOT support this yet - the below 
 	// workaround separately runs the imaginary "digi channel" through the filter 
-
+#ifdef USE_FILTER
 	struct FilterState* state= getState(this);
-
-#if defined(USE_FILTER)
 	if (((voice<2) || isActive(voice)) && state->filter[voice]) {	// todo: last "&&" seems wrong
 #ifdef USE_DIGIFILTER
-		struct FilterState* state= getState(this);
 	
 		uint32_t unsignedOut;
 		double in, output;
@@ -238,8 +234,9 @@ void Filter::filterSamples(uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 	
 			unsignedOut= output<0 ? 0 : (output>0xffff ? 0xffff : output);			
 			
-			// XXX 0x101 only makes sense when >>8 is used here..
-			digiBuffer[i]= (unsignedOut / 0x101) & 0xff; // unsigned 8-bit 
+			// 0x101 only makes sense when >>8 is used here..
+//			digiBuffer[i]= (unsignedOut / 0x101) & 0xff; // unsigned 8-bit 
+			digiBuffer[i]= (unsignedOut >>8) & 0xff; // unsigned 8-bit 
 		}
 #else
 		double volAdjust= 0.66;	 // tuned according to LMan's feedback
