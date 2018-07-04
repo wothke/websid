@@ -77,6 +77,7 @@ static uint8_t _ntscMode= 0;
 static uint8_t _compatibility;
 static uint8_t _basicProg;
 static uint32_t _clockRate;
+static uint8_t _fps;
 
 static uint32_t _sampleRate;
 
@@ -186,6 +187,10 @@ uint8_t envCurrentSongSpeed() {
 uint32_t envClockRate() {
 	return _clockRate;
 }
+int8_t envFPS(){
+	return _fps;
+}
+
 int8_t envIsTimerDrivenPSID() {
 	return ((envIsPSID() == 1) && (envCurrentSongSpeed() == 1));
 }
@@ -245,14 +250,13 @@ static void resetAudioBuffers() {
 }
 
 static void resetTimings() {	
-	uint8_t fps;
 	if(_ntscMode) {		
-		fps= 60;
+		_fps= 60;
 		_cyclesPerRaster= 65;			// NTSC
 		_linesPerScreen = 263;
 		_clockRate= 1022727;
 	} else {
-		fps= 50;
+		_fps= 50;
 		_cyclesPerRaster= 63;			// PAL	
 		_linesPerScreen = 312;
 		_clockRate= 985248;
@@ -273,7 +277,7 @@ static void resetTimings() {
 	// NTSC: 17095	/ PAL: 19656		
 	_totalCyclesPerScreen= _cyclesPerRaster*_linesPerScreen- badlineCycles;			
 	// NTSC: 1025700 (clock would be: 1022727);		/ PAL: 982800 (clock would be: 985248);			
-	_totalCyclesPerSec= _totalCyclesPerScreen*fps;	
+	_totalCyclesPerSec= _totalCyclesPerScreen*_fps;	
 }
 
 static uint8_t musIsTrackEnd(uint8_t voice) {

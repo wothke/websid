@@ -24,6 +24,7 @@ void envSetPsidMode(uint8_t m);
 
 uint8_t envIsFilePSID();	// original file setting
 
+int8_t envFPS();
 int32_t envClockRate();
 
 uint8_t envIsSID6581();

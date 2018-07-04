@@ -681,7 +681,7 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 			}
 		}
 		int32_t finalSample= _filter->getOutput(&outf, &outo, cutoff, resonance);		
-		finalSample=  digiGenPsidSample(finalSample);
+		finalSample=  digiGenPsidSample(finalSample);		// recorded PSID digis are merged in directly 
 		
 		if (!doClear) finalSample+= *(buffer+bp);
 		

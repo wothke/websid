@@ -567,7 +567,7 @@ int32_t digiGenPsidSample(int32_t sIn)
 				sample = sample & 0x0f;
 			
 			// transform unsigned 4 bit range into signed 16 bit (–32,768 to 32,767) range			
-			sample = (sample << 11) - 0x4000; 
+			sample = (sample << 11) - 0x3fc0; 
         }
     }	
     return sIn;
@@ -656,7 +656,7 @@ void digiReset(uint8_t compatibility, uint8_t isModel6581) {
 const uint8_t SAMPLE_DETECT_MIN= 10;	
 
 uint8_t digiDetectSample(uint16_t addr, uint8_t value) {
-	if (!((addr>=0xd400) && (addr<= 0xd41c))) return 0;	// only use regular SID
+	if (_isC64compatible && !((addr>=0xd400) && (addr<= 0xd41c))) return 0;	// only use regular SID for digi (exclude PSID shit which uses weird addresses)
 	
 	if (envIsFilePSID() & _isC64compatible) return 0;	// for songs like MicroProse_Soccer_V1.sid tracks >5 (PSID digis must still be handled.. like Demi-Demo_4_PSID.sid)
 	
@@ -884,11 +884,12 @@ uint8_t digiRenderSamples(uint8_t * digiBuffer, uint32_t cyclesPerScreen, uint16
 /*
 * @param digi   is an unsigned 8-bit sample (i.e. origial $d418 4-bit samples have already been shifted
 */
-static inline int16_t genDigi(int16_t in, uint8_t digi) { 
+static inline int16_t genDigi(int16_t in, uint8_t digi, uint8_t is6581) { 
     // transform unsigned 8 bit range into signed 16 bit (–32,768 to 32,767) range	(
 	// shift only 6 instead of 8 because digis are otherwise too loud)	
-	int32_t value = in + (((digi & 0xff) << 6) - (0x4000>>2)); // FIXME do all the rescaling in one place!
-	
+	int32_t value = is6581 ? in + (((digi & 0xff) << 7) - (0x3fc0)) : 	// use loud d418/6581 digis
+							in + (((digi & 0xff) << 6) - (0x3fc0>>1));  
+		
 	const int32_t clipValue = 32767;
 	if ( value < -clipValue ) {
 		value = -clipValue;
@@ -901,13 +902,17 @@ static inline int16_t genDigi(int16_t in, uint8_t digi) {
 
 void digiMergeSampleData(int8_t hasDigi, int16_t *soundBuffer, uint8_t *digiBuffer, uint32_t len) {
 	if (hasDigi) {
+		uint8_t is6581= 0;
+		
 		if (_digiSource & 0x7) { 
 			// frequency- and pulsewidth-modulation based digis are affected by the sid filters...
 			sidFilterSamples(digiBuffer, len, (_digiSource & 0x7)-1);
+		} else {
+			is6581 = envSID6581s()[0];
 		}
 		uint32_t i;
 		for (i= 0; i<len; i++) {
-			soundBuffer[i]= genDigi(soundBuffer[i], digiBuffer[i]);
+			soundBuffer[i]= genDigi(soundBuffer[i], digiBuffer[i], is6581);
 		}
 	} 
 }

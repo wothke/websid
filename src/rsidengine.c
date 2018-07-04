@@ -422,7 +422,10 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 		// Wonderland XII part1.sid) fail miserably when it is used..
 
 		runScreenSimulation(synthBuffer, cyclesPerScreen, samplesPerCall, synthTraceBufs);
-		return digiRenderSamples(digiBuffer, cyclesPerScreen, samplesPerCall);
+		
+		
+//		return digiRenderSamples(digiBuffer, cyclesPerScreen, samplesPerCall);	// FIXME this change might break stuff
+		return digiRenderSamples(digiBuffer, envClockRate()/envFPS(), samplesPerCall);
 	} else {
 		// legacy PSID mode: one "IRQ" call per screen refresh (a PSID may actually setup CIA 1 
 		// timers but without wanting to use them - e.g. ZigZag.sid track2)
