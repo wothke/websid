@@ -25,12 +25,15 @@ protected:
 	
 	void reset(uint32_t sampleRate);
 	int32_t getOutput(int32_t *in, int32_t *out, double cutoff, double resonance);
-	uint8_t isActive(uint8_t filterVoice);
+	uint8_t isActive(uint8_t voice);
 	void filterSamples(uint8_t *digiBuffer, uint32_t len, int8_t voice);
 	double runFilter(double in, double output, double *prevbandpass, double *prevlowpass, double cutoff, double resonance);
-	void setupFilterInput(double *cutoff, double *resonance, uint8_t *resFtv, uint8_t *ffreqlo, uint8_t *ffreqhi);
-	void routeSignal(int32_t *voiceOut, int32_t *outo, int32_t *outf, uint8_t voice, uint8_t *voiceEnabled);
-	void syncState(uint8_t *ftpVol, uint8_t *resFtv);
+	void setupFilterInput(double *cutoff, double *resonance);
+	void routeSignal(int32_t *voiceOut, int32_t *outf, int32_t *outo, uint8_t voice, uint8_t *voiceEnabled);
+	/**
+	* Handle those SID writes that impact the filter.
+	*/
+	void poke(uint8_t reg, uint8_t val);
 
 private:
 private:

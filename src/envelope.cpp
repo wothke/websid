@@ -3,7 +3,7 @@
  * envelope generator.
  *
  * There is nothing left in here from the original "TinySid for Linux" implementation
- * (which did not have any support for the ADSR-bug, etc)
+ * (which did not have any support for the ADSR-delay bug, etc)
  * 
  * This implementation isn't as "clean" as it would be in some "cycle-by-cycle"
  * emulation, but again some hacks are needed to keep things "in-sync" which are
@@ -82,7 +82,7 @@ Envelope::Envelope(SID *sid, uint8_t voice) {
 	_state= (void*) malloc(sizeof(EnvelopeState));
 }
 
-void Envelope::syncState() {
+void Envelope::syncState() {		// FIXME moev this directly into poke()
 	struct EnvelopeState *state= getState(this);
 
 	// threshold to be reached before incrementing volume

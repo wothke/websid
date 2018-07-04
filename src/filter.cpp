@@ -50,6 +50,11 @@ struct FilterState {
 #endif	
 	double cutoff_ratio_8580;
     double cutoff_ratio_6581;
+	
+    uint8_t ffreqlo;	// filter cutoff low (3 bits)
+    uint8_t ffreqhi;	// filter cutoff high (8 bits)
+    uint8_t resFtv;		// resonance (4bits) / Filt
+    uint8_t ftpVol;		// mode (hi/band/lo pass) / volume
 };
 
 
@@ -70,8 +75,9 @@ void Filter::reset(uint32_t sampleRate) {
 	// init "filter" structures
 	memset((uint8_t*)state,0,sizeof(FilterState));
 
-    state->cutoff_ratio_8580 = ((double)-2.0) * 3.1415926535897932385 * (12500.0 / 256) / sampleRate,
-    state->cutoff_ratio_6581 = ((double)-2.0) * 3.1415926535897932385 * (20000.0 / 256) / sampleRate;
+	// XXX changed 256 to 255
+    state->cutoff_ratio_8580 = ((double)-2.0) * 3.1415926535897932385 * (12500.0 / 255) / sampleRate,
+    state->cutoff_ratio_6581 = ((double)-2.0) * 3.1415926535897932385 * (20000.0 / 255) / sampleRate;
 //	state->prevbandpass = 0;	// redundant
 //	state->prevlowpass = 0;	
 }
@@ -79,68 +85,80 @@ void Filter::reset(uint32_t sampleRate) {
 /* Get the bit from an uint32_t at a specified position */
 static uint8_t getBit(uint32_t val, uint8_t b) { return (uint8_t) ((val >> b) & 1); }
 
-void Filter::syncState(uint8_t *ftpVol, uint8_t *resFtv) {
+void Filter::poke(uint8_t reg, uint8_t val) {
 	struct FilterState* state= getState(this); 
+	switch (reg) {
+        case 0x15: { state->ffreqlo = val; break; }
+        case 0x16: { state->ffreqhi = val; break; }
+        case 0x17: { 
+				state->resFtv = val;		
+		
+				for (uint8_t voice=0; voice<3; voice++) {
+					state->filter[voice]  = getBit(val, voice);
+				}
+	
+			break; 
+			}
+        case 0x18: { 
+				state->ftpVol = val; 
+
 #ifdef USE_FILTER
-	state->lowEna = getBit((*ftpVol),4);	// lowpass
-	state->bandEna = getBit((*ftpVol),5);	// bandpass
-	state->hiEna = getBit((*ftpVol),6);	// highpass
-	state->v3ena = !getBit((*ftpVol),7);	// chan3 off
-	state->vol   = ((*ftpVol) & 0xf);		// main volume
-	
-    for (uint8_t voice=0; voice<3; voice++) {
-        state->filter[voice]  = getBit((*resFtv), voice);
-    }
-	
+				state->lowEna = getBit(val,4);	// lowpass
+				state->bandEna = getBit(val,5);	// bandpass
+				state->hiEna = getBit(val,6);		// highpass
+				state->v3ena = !getBit(val,7);	// chan3 off
+				state->vol   = (val & 0xf);		// main volume	
 #endif  
+			break;
+			}
+	};
 }
 
 int32_t Filter::getOutput(int32_t *in, int32_t *out, double cutoff, double resonance) {
-#ifndef USE_FILTER
-		return (*in)/6;
-#else
+#ifdef USE_FILTER
 	struct FilterState* state= getState(this);
 	
 	double output= runFilter((double)(*in), (double)(*out), &(state->prevbandpass), &(state->prevlowpass), cutoff, resonance);
 
-	int32_t OUTPUT_SCALEDOWN = 0xa * 0xf;	// hand tuned with "424"
+	int32_t OUTPUT_SCALEDOWN = 0x6 * 0xf;	// hand tuned with "424"
 	
 	// filter volume is 4 bits/ outo is 16bits		
 	return round(output * state->vol / OUTPUT_SCALEDOWN); // SID output
+#else
+	return (*in)/6;
 #endif
 }
 
-uint8_t Filter::isActive(uint8_t filterVoice) {
+uint8_t Filter::isActive(uint8_t voice) {
+	// NOTE: Voice 3 is not silenced by !v3ena if it is routed through the filter!
 	struct FilterState* state= getState(this);
-	return state->v3ena || (!state->v3ena && filterVoice);
+	return state->v3ena || (!state->v3ena && state->filter[voice]);
 }	
 
-void Filter::setupFilterInput(double *cutoff, double *resonance, uint8_t *resFtv, uint8_t *ffreqlo, uint8_t *ffreqhi) {
+void Filter::setupFilterInput(double *cutoff, double *resonance) {
 #ifdef USE_FILTER
 	struct FilterState* state= getState(this);
 	
 	// weird scale.. - using the "lo" register as a fractional part..	
-	(*cutoff) = ((double)((*ffreqlo) & 0x7)) / 8 +  (*ffreqhi) + 0.2;	// why the +0.2 ?
+	(*cutoff) = ((double)(state->ffreqlo & 0x7)) / 8 +  state->ffreqhi + 0.2;	// why the +0.2 ?
 		
 	if (!_sid->isModel6581()) {
 		(*cutoff) = 1.0 - exp((*cutoff) * state->cutoff_ratio_8580);
-		(*resonance) = pow(2.0, ((4.0 - ((*resFtv) >> 4)) / 8));
+		(*resonance) = pow(2.0, ((4.0 - (state->resFtv >> 4)) / 8));
 	} else {
 		if ((*cutoff) < 24.0) { (*cutoff) = 0.035; }
 		else { (*cutoff) = 1.0 - 1.263 * exp((*cutoff) * state->cutoff_ratio_6581); }
-		(*resonance) = ((*resFtv) > 0x5F) ? 8.0 / ((*resFtv) >> 4) : 1.41;
+		(*resonance) = (state->resFtv > 0x5F) ? 8.0 / (state->resFtv >> 4) : 1.41;
 	}
 #endif
 }
 
-void Filter::routeSignal(int32_t *voiceOut, int32_t *outo, int32_t *outf, uint8_t voice, uint8_t *voiceEnabled) {
+void Filter::routeSignal(int32_t *voiceOut, int32_t *outf, int32_t *outo, uint8_t voice, uint8_t *notMuted) {
 // note: compared to other emus output volume it quite high.. maybe better reduce it a bit?
 	struct FilterState* state= getState(this);
 
 #ifdef USE_FILTER
-	// NOTE: Voice 3 is not silenced by !v3ena if it is routed through the filter!
-
-	if (((voice<2) || isActive(state->filter[voice])) && (*voiceEnabled)) {
+	if (((voice<2) || isActive(voice)) && (*notMuted)) {
 		if (state->filter[voice]) {
 			// route to filter
 			(*outf)+= (*voiceOut);	
@@ -151,7 +169,7 @@ void Filter::routeSignal(int32_t *voiceOut, int32_t *outo, int32_t *outf, uint8_
 	}
 #else
 	// Don't use filters, just mix all voices together
-	if (*voiceEnabled) { 
+	if (*notMuted) { 
 		(*outf)+= (*voiceOut); 
 	}
 #endif
@@ -191,7 +209,7 @@ void Filter::filterSamples(uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 	struct FilterState* state= getState(this);
 
 #if defined(USE_FILTER)
-	if (((voice<2) || isActive(state->filter[voice])) && state->filter[voice]) {	// todo: last "&&" seems wrong
+	if (((voice<2) || isActive(voice)) && state->filter[voice]) {	// todo: last "&&" seems wrong
 #ifdef USE_DIGIFILTER
 		struct FilterState* state= getState(this);
 	
@@ -220,6 +238,7 @@ void Filter::filterSamples(uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 	
 			unsignedOut= output<0 ? 0 : (output>0xffff ? 0xffff : output);			
 			
+			// XXX 0x101 only makes sense when >>8 is used here..
 			digiBuffer[i]= (unsignedOut / 0x101) & 0xff; // unsigned 8-bit 
 		}
 #else

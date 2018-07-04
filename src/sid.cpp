@@ -89,14 +89,8 @@ struct SidState {
 		double prevWavData;				// combined waveform handling
 		uint16_t prevWaveFormOut;		// floating DAC handling
 		
-		uint8_t enabled;
+		uint8_t notMuted;				// player's separate "mute" feature
     } voices[3];
-	
-	// filter
-    uint8_t ffreqlo;	// filter cutoff low (3 bits)
-    uint8_t ffreqhi;	// filter cutoff high (8 bits)
-    uint8_t resFtv;		// resonance (4bits) / Filt
-    uint8_t ftpVol;		// mode (hi/band/lo pass) / volume
 	
 };
 
@@ -126,7 +120,6 @@ struct Oscillator {
     uint32_t noiseval;
     uint8_t noiseout;
 };
-
 
 /**
 * This utility class keeps the precalculated "combined waveform" lookup tables. 
@@ -221,8 +214,6 @@ uint32_t SID::getRingModCounter(uint8_t voice) {
 	}
 }
 
-
-
 void SID::resetEngine(uint32_t sampleRate, uint8_t isModel6581) {	
 	// base setting
 	memset((uint8_t*)_sid,0,sizeof(SidState));
@@ -252,7 +243,7 @@ void SID::resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 		// note: by default the rest of _sid, _osc & _filter 
 		// above is set to 0
 		_osc[i]->noiseval = 0x7ffff8;		
-		_sid->voices[i].enabled= 1;
+		_sid->voices[i].notMuted= 1;
 	}
 }
 /*
@@ -271,18 +262,14 @@ void SID::syncRegisterCache() {
 	
 	// oscillators
     for (uint8_t voice=0; voice<3; voice++) {
-        _osc[voice]->pulse   = (_sid->voices[voice].pulse & 0xfff) << 4;	// // 16 MSB pulse needed
+        _osc[voice]->pulse= (_sid->voices[voice].pulse & 0xfff) << 4;	// // 16 MSB pulse needed
 				
-        _osc[voice]->wave    = _sid->voices[voice].wave;
+        _osc[voice]->wave= _sid->voices[voice].wave;
 
-        _osc[voice]->freqIncSample    = round(_sid->cyclesPerSample * _sid->voices[voice].freq);	// per 1-sample interval (e.g. ~22 cycles)
-        _osc[voice]->freqIncCycle    = ((uint32_t)_sid->voices[voice].freq);		
+        _osc[voice]->freqIncSample= round(_sid->cyclesPerSample * _sid->voices[voice].freq);	// per 1-sample interval (e.g. ~22 cycles)
+        _osc[voice]->freqIncCycle= ((uint32_t)_sid->voices[voice].freq);		
     }
-	
-	// filter
-	_filter->syncState(&_sid->ftpVol, &_sid->resFtv);
 }
-
 
 // ------------------------- wave form generation ----------------------------
 
@@ -306,7 +293,6 @@ void SID::syncOscillator(uint8_t voice) {
 	uint8_t destVoice = getNextVoice(voice);  
 	uint8_t destSync= _osc[destVoice]->wave & SYNC_BITMASK;	// sync requested?
 
-	
 	// exception: when sync source is itself synced in the same cycle then destination 
 	// is NOT synced (based on analysis performed by reSID)
 	uint8_t srcSync= _osc[voice]->wave & SYNC_BITMASK;		// for special case handling 
@@ -468,7 +454,7 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 	uint16_t outv= 0xFFFF;
 	uint8_t ctrl= _osc[voice]->wave;
 	
-	if (_sid->voices[voice].enabled) {
+	if (_sid->voices[voice].notMuted) {
 		int8_t combined= 0;
 		
 		// use special handling for certain combined waveforms				
@@ -622,7 +608,11 @@ void SID::poke(uint8_t reg, uint8_t val) {
 	if ((reg >= 0x4) && (reg <= 0x6)) {
 		_env[voice]->poke(reg, val);
 	}
-	
+	// writes that impact the filter
+	if ((reg >= 0x15) && (reg <= 0x18)) {
+		_filter->poke(reg, val);
+	}
+
     switch (reg) {		
         case 0x0: { // Set frequency: Low byte
 			_sid->voices[voice].freq = (_sid->voices[voice].freq&0xff00) | val;
@@ -646,10 +636,6 @@ void SID::poke(uint8_t reg, uint8_t val) {
 			_sid->voices[voice].wave = val;			
             break;
         }
-        case 0x15: { _sid->ffreqlo = val; break; }
-        case 0x16: { _sid->ffreqhi = val; break; }
-        case 0x17: { _sid->resFtv = val; break; }
-        case 0x18: { _sid->ftpVol = val; break;}
     }
     return;
 }
@@ -666,7 +652,7 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 	syncRegisterCache();
     
 	double cutoff, resonance;	// calc once here as an optimization
-	_filter->setupFilterInput(&cutoff, &resonance, &_sid->resFtv, &_sid->ffreqlo, &_sid->ffreqhi);
+	_filter->setupFilterInput(&cutoff, &resonance);
 
 	// now render the buffer
 	for (uint32_t bp=0; bp<len; bp++) {		
@@ -681,14 +667,12 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 			_env[voice]->updateEnvelope();
 			
 			// envelopeOutput has 8-bit and and outv 16	(Hermit's impl based on 16-bit wave output)		
-			// => scale back to 16bit
-
-			#define BASELINE 0x8000	
-			int32_t voiceOut= scale*_env[voice]->getOutput()/255*(((int32_t)outv)-BASELINE) ;	
+			// => scale back to signed 16bit
+			int32_t voiceOut= scale*_env[voice]->getOutput()/0xff*(((int32_t)outv)-0x8000) ;	
 		
 			// now route the voice output to either the non-filtered or the
 			// filtered channel (with disabled filter outf is used)	
-			_filter->routeSignal(&voiceOut, &outo, &outf, voice, &_sid->voices[voice].enabled);
+			_filter->routeSignal(&voiceOut, &outf, &outo, voice, &(_sid->voices[voice].notMuted));
 
 			// trace output (always make it 16-bit)		
 			if (synthTraceBufs) {
@@ -697,12 +681,18 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 			}
 		}
 		int32_t finalSample= _filter->getOutput(&outf, &outo, cutoff, resonance);		
+		finalSample=  digiGenPsidSample(finalSample);
 		
-		if (doClear) {
-			*(buffer+bp)= digiGenPsidSample(finalSample); // PSID digis & clipping
-		} else {
-			*(buffer+bp)+= digiGenPsidSample(finalSample); // PSID digis & clipping	
-		}	
+		if (!doClear) finalSample+= *(buffer+bp);
+		
+		// clipping (filter, multi-SID as well as PSID digi may bring output over the edge)
+		const int32_t clipValue = 32767;
+		if ( finalSample < -clipValue ) {
+			finalSample = -clipValue;
+		} else if ( finalSample > clipValue ) {
+			finalSample = clipValue;
+		}				
+		*(buffer+bp)= (int16_t)finalSample;
     }
 	
 	// temp variables used during ADSR-bug detection
@@ -733,6 +723,15 @@ static SID _sids[MAX_SID_CHIPS];	// allocate the maximum.. some may then just re
 */
 const int MEM_MAP_SIZE = 0xbff;
 static uint8_t _mem2sid[MEM_MAP_SIZE];	// maps memory area d400-dfff to available SIDs 
+
+// who knows what people might use to wire up the output signals of their
+// multi-SID configurations... it probably depends on the song what might be "good" 
+// settings here.. alternatively I could just let the clipping do its work (without any 
+// rescaling). but for now I'll use Hermit's settings - this will make for a better user 
+// experience in DeepSID when switching players..
+
+static double _volMap[]= { 1.0f, 0.6f, 0.4f };	
+
 
 /******************************* old C interface to the remaining emulation code ************************************/
 
@@ -768,16 +767,12 @@ extern "C" void sidSetMute(uint8_t voice, uint8_t value) {
 	uint8_t sidId= voice/3;
 	if (sidId >= _usedSIDs) sidId= 0;	// garbage in
 	
-	_sids[sidId]._sid->voices[voice%3].enabled= !value;
+	_sids[sidId]._sid->voices[voice%3].notMuted= !value;
 }
-
-
-// test cases: Yet_Bigger_Beat_2SID, Canon_457_Study_2_2SID
-static double volMap[]= { 1.0f, 0.5f, 0.4f };
 
 extern "C" void sidSynthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {	
 
-	double scale= volMap[_usedSIDs-1];
+	double scale= _volMap[_usedSIDs-1];
 	
 	for (uint8_t i= 0; i<_usedSIDs; i++) {
 		SID &sid= _sids[i];			

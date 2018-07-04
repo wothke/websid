@@ -514,7 +514,7 @@ static void handlePsidDigi(uint16_t addr, uint8_t value) {
 	}	
 }
 
-int16_t digiGenPsidSample(int32_t sIn)
+int32_t digiGenPsidSample(int32_t sIn)
 {
     static int32_t sample = 0;
 
@@ -569,16 +569,8 @@ int16_t digiGenPsidSample(int32_t sIn)
 			// transform unsigned 4 bit range into signed 16 bit (–32,768 to 32,767) range			
 			sample = (sample << 11) - 0x4000; 
         }
-    }
-	// Clipping
-	const int32_t clipValue = 32767;
-	if ( sIn < -clipValue ) {
-		sIn = -clipValue;
-	} else if ( sIn > clipValue ) {
-		sIn = clipValue;
-	}
-	
-    return (int16_t)sIn;
+    }	
+    return sIn;
 }
 
 uint16_t digiGetCount() {
