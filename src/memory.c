@@ -94,10 +94,11 @@ static uint8_t isIoAreaVisible() {
 }
 
 uint8_t memReadIO(uint16_t addr) {
-	/* nobody is using the mirrored mapping anyway.. and with multiple SID chips it is unnecessarily complicated..
+	/* XXX nobody is using the mirrored mapping anyway.. and with multiple SID chips it is unnecessarily complicated..
 	if ((addr&0xfc00)==0xd400) {			
 		return _io_area[(addr&0xfc1f) - 0xd000];
-	}*/
+	}
+	*/
 	return _io_area[addr-0xd000];
 }
 

@@ -103,8 +103,7 @@ int32_t Filter::getOutput(int32_t *in, int32_t *out, double cutoff, double reson
 	
 	double output= runFilter((double)(*in), (double)(*out), &(state->prevbandpass), &(state->prevlowpass), cutoff, resonance);
 
-//    int32_t OUTPUT_SCALEDOWN = 3 * 16;	// need signed 16-bit here 
-	int32_t OUTPUT_SCALEDOWN = 6 * 16;	// need signed 16-bit here 
+	int32_t OUTPUT_SCALEDOWN = 0xa * 0xf;	// hand tuned with "424"
 	
 	// filter volume is 4 bits/ outo is 16bits		
 	return round(output * state->vol / OUTPUT_SCALEDOWN); // SID output
@@ -138,25 +137,22 @@ void Filter::routeSignal(int32_t *voiceOut, int32_t *outo, int32_t *outf, uint8_
 // note: compared to other emus output volume it quite high.. maybe better reduce it a bit?
 	struct FilterState* state= getState(this);
 
-#define RESCALE	8				// rescale by envelopeOutput to get 16-bit output
-#define RESCALE_NO_FILTER 8		
-
 #ifdef USE_FILTER
 	// NOTE: Voice 3 is not silenced by !v3ena if it is routed through the filter!
 
 	if (((voice<2) || isActive(state->filter[voice])) && (*voiceEnabled)) {
 		if (state->filter[voice]) {
 			// route to filter
-			(*outf)+= (*voiceOut) >> RESCALE;	
+			(*outf)+= (*voiceOut);	
 		} else {
 			// route directly to output
-			(*outo)+= (*voiceOut) >> RESCALE;
+			(*outo)+= (*voiceOut);
 		}
 	}
 #else
 	// Don't use filters, just mix all voices together
 	if (*voiceEnabled) { 
-		(*outf)+= (*voiceOut) >> RESCALE_NO_FILTER; 
+		(*outf)+= (*voiceOut); 
 	}
 #endif
 }

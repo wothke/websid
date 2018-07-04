@@ -328,7 +328,7 @@ void SID::advanceOscillators() {
 	*/
 	// forwards time by ONE sample - which corresponds to about 22 cycles.. (todo: optimize this brute force impl later)
 	double c= _sid->cycleOverflow + _sid->cyclesPerSample;
-	uint16_t cycles= (uint16_t)floor(c);		
+	uint16_t cycles= (uint16_t)c;		
 	_sid->cycleOverflow= c-cycles;
 
 	for (uint8_t t= 0; t<cycles; t++) {
@@ -657,6 +657,7 @@ void SID::poke(uint8_t reg, uint8_t val) {
 void SID::writeMem(uint16_t addr, uint8_t value) {
 	if (!digiDetectSample(addr, value)) {
 		poke(addr&0x1f, value);							
+//		memWriteIO((addr&0xfc1f), value);		// XXX check for other SID locations	
 		memWriteIO(addr, value);	// forget the mirroring stuff.. just messes with additional SIDs	
 	}
 }
@@ -680,11 +681,11 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 			_env[voice]->updateEnvelope();
 			
 			// envelopeOutput has 8-bit and and outv 16	(Hermit's impl based on 16-bit wave output)		
-			// 16-bit wave * 8 bit envelope	-> 24bit >>8 = 16bit
+			// => scale back to 16bit
 
 			#define BASELINE 0x8000	
-			int32_t voiceOut= round(scale* (((int32_t)outv)-BASELINE) * _env[voice]->getOutput() );			
-
+			int32_t voiceOut= scale*_env[voice]->getOutput()/255*(((int32_t)outv)-BASELINE) ;	
+		
 			// now route the voice output to either the non-filtered or the
 			// filtered channel (with disabled filter outf is used)	
 			_filter->routeSignal(&voiceOut, &outo, &outf, voice, &_sid->voices[voice].enabled);
@@ -695,15 +696,12 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 				*(voiceTraceBuffer+bp)= (int16_t)(voiceOut >> 8);			
 			}
 		}
-		
 		int32_t finalSample= _filter->getOutput(&outf, &outo, cutoff, resonance);		
 		
-		finalSample= digiGenPsidSample(finalSample); // PSID digis & clipping
-		
 		if (doClear) {
-			*(buffer+bp)= (int16_t)finalSample;	
+			*(buffer+bp)= digiGenPsidSample(finalSample); // PSID digis & clipping
 		} else {
-			*(buffer+bp)+= (int16_t)finalSample;	
+			*(buffer+bp)+= digiGenPsidSample(finalSample); // PSID digis & clipping	
 		}	
     }
 	

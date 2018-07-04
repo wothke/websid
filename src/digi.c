@@ -578,7 +578,7 @@ int16_t digiGenPsidSample(int32_t sIn)
 		sIn = clipValue;
 	}
 	
-    return ((int16_t)sIn);
+    return (int16_t)sIn;
 }
 
 uint16_t digiGetCount() {

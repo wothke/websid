@@ -448,7 +448,7 @@ void Envelope::simGateAdsrBug(uint8_t dbgIdx, uint16_t newRate) {
 			// the maximum of sLimitLFSR steps would be needed to get out of the bug, any higher value will still 
 			// tigger the bug but reduce the steps needed to get out of it..
 			// (note: Eskimonika is a good test case for false positives..)
-						
+
 			state->currentLFSR= simLSFR;	// this should be the correctly reduced bug time: newThreshold+(simLSFR-newThreshold)
 		}		
 	}
