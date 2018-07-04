@@ -29,7 +29,8 @@ extern "C" {
 #define USE_FILTER
 
 // there used to be some problem with certain (badly timed) samples (see Vortex) - but 
-// for some reason these seem to be gone now (maybe a clipping issue) - so let's use it 
+// for some reason these seem to be gone now (maybe a clipping issue) 
+// however now songs like "Hunters_Moon" no longer produce ANY output..
 #define USE_DIGIFILTER	
 
 // internal filter def
@@ -205,10 +206,9 @@ void Filter::filterSamples(uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 	// the filter is applied... this emulator does NOT support this yet - the below 
 	// workaround separately runs the imaginary "digi channel" through the filter 
 #ifdef USE_FILTER
-	struct FilterState* state= getState(this);
-	if (((voice<2) || isActive(voice)) && state->filter[voice]) {	// todo: last "&&" seems wrong
 #ifdef USE_DIGIFILTER
-	
+	struct FilterState* state= getState(this);
+	if (state->filter[voice]) {
 		uint32_t unsignedOut;
 		double in, output;
 
@@ -231,19 +231,19 @@ void Filter::filterSamples(uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 			
 			output *= volMul;		// apply filter volume
 			output += 0x8000;		// back  to unsigned			
-	
+
 			unsignedOut= output<0 ? 0 : (output>0xffff ? 0xffff : output);			
 			
 			// 0x101 only makes sense when >>8 is used here..
 //			digiBuffer[i]= (unsignedOut / 0x101) & 0xff; // unsigned 8-bit 
 			digiBuffer[i]= (unsignedOut >>8) & 0xff; // unsigned 8-bit 
 		}
-#else
-		double volAdjust= 0.66;	 // tuned according to LMan's feedback
-		for (uint32_t i= 0; i<len; i++) {
-			digiBuffer[i]= round((((int16_t)digiBuffer[i])-128) * volAdjust)+128;	
-		}
-#endif
 	}
+#else
+	double volAdjust= 0.66;	 // tuned according to LMan's feedback
+	for (uint32_t i= 0; i<len; i++) {
+		digiBuffer[i]= round((((int16_t)digiBuffer[i])-128) * volAdjust)+128;	
+	}
+#endif
 #endif
 }
