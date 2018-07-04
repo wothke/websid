@@ -173,7 +173,7 @@ void Envelope::reset() {
 }
 
 void Envelope::resetConfiguration(uint32_t sampleRate) {
-	sCyclesPerSample = ((double)envCyclesPerSec()) / sampleRate;
+	sCyclesPerSample = ((double)envClockRate()) / sampleRate;
 	
 	// The ATTACK rate determines how rapidly the output of a voice rises from zero to peak amplitude when 
 	// the envelope generator is gated (time/cycle in ms). The respective gradient is used whether the attack is 
@@ -198,7 +198,7 @@ void Envelope::resetConfiguration(uint32_t sampleRate) {
 	for (i=0; i<16; i++) {
 		// counter must reach respective threshold before envelope value is incremented/decremented								
 		// note: attack times are in millis & there are 255 steps for envelope..
-		sCounterPeriod[i]= (int32_t)floor(((double)envCyclesPerSec())/(255*1000) * attackTimes[i] / sCyclesPerSample)+1;	// in samples
+		sCounterPeriod[i]= (int32_t)floor(((double)envClockRate())/(255*1000) * attackTimes[i] / sCyclesPerSample)+1;	// in samples
 	}
 	// lookup table for decay rates
 	uint8_t from[] =  {93, 54, 26, 14,  6,  0};

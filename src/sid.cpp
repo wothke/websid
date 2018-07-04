@@ -172,7 +172,7 @@ static WaveformTables _wave;		// only need one instance of this
 
 
 /**
-* This class represents once specific MOS SID chip.
+* This class represents one specific MOS SID chip.
 */
 SID::SID() {
 	_addr= 0;		// e.g. 0xd400
@@ -186,11 +186,9 @@ SID::SID() {
 	_env[0]= new Envelope(this, 0);
 	_env[1]= new Envelope(this, 1);
 	_env[2]= new Envelope(this, 2);
-	
-	
+		
 	_filter= new Filter(this);
 
-	
 	// hack
 	_osc3sim = (SimOsc3*) malloc(sizeof(SimOsc3));
 }
@@ -232,7 +230,7 @@ void SID::resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 	_sid->sampleRate = sampleRate;
 	
 	_sid->cycleOverflow = 0;
-	_sid->cyclesPerSample = ((double)envCyclesPerSec()) / sampleRate;
+	_sid->cyclesPerSample = ((double)envClockRate()) / sampleRate;
 		
 	_sid->isModel6581= isModel6581;	
 	_sid->level_DC= isModel6581 ? 0x38 : 0x80;	// supposedly the DC level for respective chip model
@@ -322,15 +320,15 @@ void SID::advanceOscillators() {
 /*	
 	// this original HARD SYNC impl from TinySID was quite wrong .. but actually
 	// one doesn't hear much of a difference to the correct one!
+	uint8_t ctrl= _osc[voice]->wave;
 	if ((ctrl & SYNC_BITMASK) && (_osc[srcVoice]->counter < _osc[srcVoice]->freq)) {
 		// sync oscillator to srcVoice if sync bit set 
 		_osc[voice]->counter = _osc[srcVoice]->counter * _osc[voice]->freq / _osc[srcVoice]->freq;
 	}	
-*/	
-	
+	*/
 	// forwards time by ONE sample - which corresponds to about 22 cycles.. (todo: optimize this brute force impl later)
 	double c= _sid->cycleOverflow + _sid->cyclesPerSample;
-	uint16_t cycles= (uint16_t)c;		
+	uint16_t cycles= (uint16_t)floor(c);		
 	_sid->cycleOverflow= c-cycles;
 
 	for (uint8_t t= 0; t<cycles; t++) {
@@ -338,12 +336,10 @@ void SID::advanceOscillators() {
 		for (uint8_t voice=0; voice<3; voice++) {
 			_osc[voice]->prevCounter= _osc[voice]->counter;
 			
-			/*
-			note: TEST (Bit 3): The TEST bit, when set to one, resets and locks oscillator 1 at zero 
-			until the TEST bit is cleared. The noise waveform output of oscillator 1 is also 
-			reset and the pulse waveform output is held at a DC level; test bit has no influence 
-			on the envelope generator whatsoever!
-			*/
+			// note: TEST (Bit 3): The TEST bit, when set to one, resets and locks oscillator 1 at zero 
+			// until the TEST bit is cleared. The noise waveform output of oscillator 1 is also 
+			// reset and the pulse waveform output is held at a DC level; test bit has no influence 
+			// on the envelope generator whatsoever!
 			if (isTestBit(voice)) {
 				_osc[voice]->counter  = 0;
 				_osc[voice]->noisepos = 0;
@@ -493,7 +489,7 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 						outv = plsout ? combinedWF(voice, _wave.PulseTriSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
 					} else { // PULSE & TRIANGLE - like in Kentilla, Convincing, Clique_Baby, etc							
 						// a good test is Last_Ninja:6 voice 1 at 35secs; here Hermit's original PulseSaw settings seem to 
-						// be lacking here... the respective sound has none of the crispness nor volume of the original
+						// be lacking: the respective sound has none of the crispness nor volume of the original
 						
 						tmp = getRingModCounter(voice); 
 						outv = plsout ? combinedWF(voice, _wave.PulseTri_8580, (tmp ^ (tmp & 0x800000 ? 0xFFFFFF : 0)) >> 11, 0) : 0;	// either on or off						
@@ -528,8 +524,6 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 	}
 	return outv;
 }
-
-
 
 /**************************************************************************************************
 	below add-on HACK for "main loop ocsillator polling"

@@ -273,7 +273,7 @@ static void resetTimings() {
 	// NTSC: 17095	/ PAL: 19656		
 	_totalCyclesPerScreen= _cyclesPerRaster*_linesPerScreen- badlineCycles;			
 	// NTSC: 1025700 (clock would be: 1022727);		/ PAL: 982800 (clock would be: 985248);			
-	_totalCyclesPerSec= _totalCyclesPerScreen*fps; 
+	_totalCyclesPerSec= _totalCyclesPerScreen*fps;	
 }
 
 static uint8_t musIsTrackEnd(uint8_t voice) {

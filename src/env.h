@@ -40,6 +40,7 @@ uint8_t envCurrentSongSpeed();
 
 // timing info derived from the meta data
 uint32_t envCyclesPerScreen();
+
 uint32_t envCyclesPerSec();
 uint8_t envCyclesPerRaster();
 uint16_t envLinesPerScreen();
