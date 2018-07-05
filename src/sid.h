@@ -44,5 +44,9 @@ uint8_t sidGetSR(uint8_t voice);
 uint8_t sidReadMem(uint16_t addr);	// incl. special digi handling
 void sidWriteMem(uint16_t addr, uint8_t value);
 
+// hack
+void sidResetVolumeChangeCount();
+uint8_t sidGetNumberOfVolumeChanges();
+void sidDisableVolumeChangeNMI(uint8_t mode);
 
 #endif

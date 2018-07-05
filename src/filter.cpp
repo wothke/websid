@@ -100,7 +100,7 @@ void Filter::poke(uint8_t reg, uint8_t val) {
 			break; 
 			}
         case 0x18: { 
-				state->ftpVol = val; 
+				state->ftpVol = val;
 
 #ifdef USE_FILTER
 				state->lowEna = getBit(val,4);	// lowpass
@@ -114,18 +114,24 @@ void Filter::poke(uint8_t reg, uint8_t val) {
 	};
 }
 
+uint8_t Filter::getVolume() {
+	struct FilterState* state= getState(this);
+	return state->ftpVol;
+}
+
 int32_t Filter::getOutput(int32_t *in, int32_t *out, double cutoff, double resonance) {
 #ifdef USE_FILTER
 	struct FilterState* state= getState(this);
 	
-	double output= runFilter((double)(*in), (double)(*out), &(state->prevbandpass), &(state->prevlowpass), cutoff, resonance);
+	// save the trouble to run any filter calcs when no filters are activated..
+	double output= !(state->ftpVol & 0x70) ? (double)(*out) :  runFilter((double)(*in), (double)(*out), &(state->prevbandpass), &(state->prevlowpass), cutoff, resonance);
 
 	int32_t OUTPUT_SCALEDOWN = 0x6 * 0xf;	// hand tuned with "424"
 	
 	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)		
 	return round(output * state->vol / OUTPUT_SCALEDOWN); // SID output
 #else
-	return (*in)/6;
+	return (*out)/6;
 #endif
 }
 
@@ -170,7 +176,7 @@ void Filter::routeSignal(int32_t *voiceOut, int32_t *outf, int32_t *outo, uint8_
 #else
 	// Don't use filters, just mix all voices together
 	if (*notMuted) { 
-		(*outf)+= (*voiceOut); 
+		(*outo)+= (*voiceOut); 
 	}
 #endif
 }
@@ -186,7 +192,8 @@ double Filter::runFilter(double in, double output, double *prevbandpass, double 
 	// amplifies that error
 	struct FilterState* state= getState(this);
 	double tmp = in + (*prevbandpass) * resonance + (*prevlowpass);
-			
+	
+	
 	if (state->hiEna) { output -= tmp;} 
 	tmp = (*prevbandpass) - tmp * cutoff;
 	(*prevbandpass) = tmp;

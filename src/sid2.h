@@ -78,6 +78,15 @@ public:
 	*                       buffers of length "len"
 	*/	
 	void synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, double scale, uint8_t sumIt);
+	
+	
+	/**
+	* Hack to deal with "corrupted" volume info.
+	*/
+	void resetVolumeChangeCount();
+	uint8_t getNumberOfVolumeChanges();
+	void disableVolumeChangeNMI(uint8_t mode);
+
 protected:
 	friend class Envelope;
 	
@@ -135,6 +144,10 @@ private:
 	class Filter *_filter;
 	
 	uint16_t _addr;		// start memory address that the SID is mapped to
+	
+	// hack: to avoid undesirable volume changes from NMI
+	uint8_t _volUpdates;
+	uint8_t _nmiVolChangeDisabled;
 };
 
 

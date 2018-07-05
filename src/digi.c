@@ -687,11 +687,7 @@ uint8_t digiDetectSample(uint16_t addr, uint8_t value) {
 			// (this may lead to false positives..)
 			if (assertSameSource(0)) recordSample(isMahoneyDigi() ? _mahoneySample[value] : value << 4);
 
-			// GianaSisters seems to rely on setting made from NMI
-			sidPoke(addr&0x1f, value);	
-			
-			// hack: don't write io_area so that NMI digis don't 
-			// disturb loudness of Ferrari_Formula_One.sid
+			memWriteIO(0xd418, value);	// don't use in SID but store in mem (e.g. see disableVolumeChangeNMI())	
 		}
 		return 1;
 	} else {
@@ -851,7 +847,7 @@ uint8_t digiRenderSamples(uint8_t * digiBuffer, uint32_t cyclesPerScreen, uint16
 	/*
 	* if there are too few signals, then it's probably just the player setting filters or
 	* resetting the volume with no intention to play a digi-sample, e.g. Transformers.sid (Russel Lieblich)
-	*/
+	*/		
 	if (_digiCount > SAMPLE_DETECT_MIN) {
 		sortDigiSamples();
 
@@ -869,13 +865,6 @@ uint8_t digiRenderSamples(uint8_t * digiBuffer, uint32_t cyclesPerScreen, uint16
 		}
 		fillDigi(digiBuffer, fromIdx, (samplesPerCall-1), _currentDigi);
 
-		if (vicGetRasterline() == 0xf8) {
-			// hack fixes volume issue in Ferrari_Formula_One.sid
-			// (todo: the rasterline check is a rather brittle impl... a more 
-			// robust/foolproof impl fix needs to be found here)
-			// restore last value that was set by main or IRQ (see handleSidWrite()):
-			sidPoke(0xd418 & 0x1f, memReadIO(0xd418));
-		}
 		return 1;
 	}
 	return 0;
@@ -889,6 +878,7 @@ static inline int16_t genDigi(int16_t in, uint8_t digi, uint8_t is6581) {
 	// shift only 6 instead of 8 because digis are otherwise too loud)	
 	int32_t value = is6581 ? in + (((digi & 0xff) << 7) - (0x3fc0)) : 	// use loud d418/6581 digis
 							in + (((digi & 0xff) << 6) - (0x3fc0>>1));  
+//	int32_t value = in + (((digi & 0xff) << 6) - (0x3fc0>>1));  // FIXME not authentic but nicer to listen too?
 		
 	const int32_t clipValue = 32767;
 	if ( value < -clipValue ) {

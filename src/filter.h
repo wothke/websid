@@ -34,6 +34,8 @@ protected:
 	* Handle those SID writes that impact the filter.
 	*/
 	void poke(uint8_t reg, uint8_t val);
+	
+	uint8_t getVolume();
 
 private:
 private:

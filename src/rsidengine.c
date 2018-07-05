@@ -110,10 +110,20 @@ static void initCycleCount(uint32_t relOffset, uint32_t basePos) {
 	vicStartRasterSim(basePos+ relOffset);
 }
 
+static uint8_t _volUpdates; 
+static uint8_t _volPrevUpdates; 
+
+static void setupVolumeHack() {
+	_volPrevUpdates= _volUpdates;	
+	_volUpdates= 0; // detect updates from main/IRQ.. block NMI writes to volume
+}
+
 static uint32_t processInterrupt(uint32_t intMask, uint16_t npc, uint32_t startTime, int32_t cycleLimit) {
 	// known limitation: if the code uses ROM routines (e.g. register restore/return sequence) then we will 
 	// be missing those cpu cycles in our calculation..
 	uint32_t originalDigiCount= digiGetCount();
+	
+	sidResetVolumeChangeCount();
 	
 	if (isPsidDummyIrqVector()) {
 		// no point in trying to keep the stack consistent for a PSID
@@ -133,7 +143,9 @@ static uint32_t processInterrupt(uint32_t intMask, uint16_t npc, uint32_t startT
 	cpuSetProgramMode(MAIN_OFFSET_MASK);
 	
 	digiTagOrigin(intMask, startTime, originalDigiCount);		
-
+	
+	if (intMask == IRQ_OFFSET_MASK) _volUpdates+= sidGetNumberOfVolumeChanges();	// number of updates to the volume	
+	
 	return cpuCycles();
 }
 
@@ -269,13 +281,19 @@ static void processMain(uint32_t cyclesPerScreen, uint32_t startTime, int32_t ti
 	// "timeout" may be completely off the target...
 
 	if ((_mainProgStatus >0) && (timeout >0)) {		// might be the rest of some "init" logic... or some loop playing samples		
+		sidResetVolumeChangeCount();					
+	
 		uint32_t originalDigiCount= digiGetCount();
 		_mainProgStatus= callMain(0, 0, startTime, timeout);	// continue where interrupted
 		digiTagOrigin(MAIN_OFFSET_MASK, startTime, originalDigiCount);
+
+		_volUpdates+= sidGetNumberOfVolumeChanges();	// number of updates to the volume
 	}
 }
 
-static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall, int16_t **synthTraceBufs) {	
+static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall, int16_t **synthTraceBufs) {
+	setupVolumeHack();
+
 	// cpu cycles used during processing
 	int32_t irqCycles= 0, nmiCycles= 0, mainProgCycles= 0;			
 
@@ -330,16 +348,30 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 				
 				if (availableMainCycles > 0) {
 					processMain(cyclesPerScreen, mainProgStart, availableMainCycles);
+
 					mainProgCycles+= availableMainCycles;				
 				}			
 				mainProgStart= tDone + mainProgStep;
 			}
 			
-			// FIXME: better allow NMI to interrupt IRQ, i.e. set respectice cycle-limit
+			// FIXME: better allow NMI to interrupt IRQ, i.e. set respective cycle-limit
 			// accordingly - and then resume the IRQ later. see Ferrari_Formula_One.sid
 			
 			if (!isIrqNext(currentIrqTimer, currentNmiTimer, tIrq, tNmi)) {		// handle next NMI
 				tDone= tNmi;
+
+				// problem: songs like Arcade_Classics re-set the d418 volume nowhere else but in their
+				// NMI digi-player: when only used for the short intervals between NMIs the respective changing
+				// settings do not seem to pose any problems for the rendering of the regular SID output 
+				// (or are even intentionally creating some kind of tremolo) but when SID output rendering 
+				// is performed for longer intervals (e.g. like is done here) then "wrong" settings are also 
+				// used for these longer intervals which may cause audible clicking/pauses in the output.
+
+				// if the handled NMIs were preemtively scheduled/properly timed, then renderSynth() could 
+				// be performed also for these shorter intervals.. but unfortunately they are not and respective 
+				// rendering cannot be done here, i.e. the IRQ based rendering then has no clue regarding the 
+				// validity/duration of respectice NMI-volume infos..
+				
 				nmiCycles+= processInterrupt(NMI_OFFSET_MASK, getNmiVector(), tNmi, cyclesPerScreen);
 							
 				availableNmiCycles-= currentNmiTimer;		
@@ -347,7 +379,8 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 				
 				tNmi+= currentNmiTimer;		// will be garbage on last run..		
 			} else {															// handle next IRQ
-				tDone= tIrq;								
+				tDone= tIrq;
+				
 				renderSynth(synthBuffer, cyclesPerScreen, samplesPerCall, synthPos, tIrq, synthTraceBufs);
 				synthPos= tIrq;
 				
@@ -357,8 +390,10 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 					ciaSignalUnderflow(CIA1, TIMER_A); 
 				}
 				
-				// FIXME: multi-frame IRQ handling would be necessary to deal with songs like: Musik_Run_Stop.sid				
-				uint32_t usedCycles= processInterrupt(IRQ_OFFSET_MASK, getIrqVector(), tIrq, _irqTimeout);				
+				// FIXME: multi-frame IRQ handling would be necessary to deal with songs like: Musik_Run_Stop.sid	
+
+				uint32_t usedCycles= processInterrupt(IRQ_OFFSET_MASK, getIrqVector(), tIrq, _irqTimeout);
+				
 				// flaw: IRQ might have switched off NMI, e.g. Vicious_SID_2-Blood_Money.sid
 				
 				if (usedCycles >=_irqTimeout) { // IRQ gets aborted due to a timeout
@@ -394,6 +429,11 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 			renderSynth(synthBuffer, cyclesPerScreen, samplesPerCall, synthPos, cyclesPerScreen, synthTraceBufs);
 		}
 	}
+	
+	// hack (e.g. Arcade_Classics): when IRQ updates the volume (but not using it to play
+	// samples then volume changes originating from NMI should be ignored (with the current design of
+	// rendering SID output for longer time windows these volume settings otherwise mess up the output)
+	sidDisableVolumeChangeNMI(_volUpdates && (_volUpdates < 3));
 }
 
 /*
@@ -423,7 +463,6 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 
 		runScreenSimulation(synthBuffer, cyclesPerScreen, samplesPerCall, synthTraceBufs);
 		
-		
 //		return digiRenderSamples(digiBuffer, cyclesPerScreen, samplesPerCall);	// FIXME this change might break stuff
 		return digiRenderSamples(digiBuffer, envClockRate()/envFPS(), samplesPerCall);
 	} else {
@@ -441,6 +480,8 @@ void rsidReset(uint32_t sampleRate, uint8_t compatibility)
 	cpuInit();	
 	cpuSetProgramMode(MAIN_OFFSET_MASK);
 	_mainLoopOnlyMode= 0;
+	
+	_volPrevUpdates= 1; // lets presume that whatever init did counts as an update
 	
 	// hack: some IRQ players don't finish within one screen, e.g. A-Maze-Ing.sid and Axel_F.sid 
 	// (Sean Connolly) even seems to play digis during multi-screen IRQs (so give them more time)			

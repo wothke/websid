@@ -245,6 +245,8 @@ void SID::resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 		_osc[i]->noiseval = 0x7ffff8;		
 		_sid->voices[i].notMuted= 1;
 	}
+	
+	_nmiVolChangeDisabled= 0;
 }
 /*
 * While "_sid" data structure is automatically kept in sync by the emulator's memory access 
@@ -568,6 +570,29 @@ uint16_t SID::getBaseAddr() {
 	return _addr;
 }
 
+// hack
+void SID::resetVolumeChangeCount() {
+	_volUpdates= 0;
+}
+uint8_t SID::getNumberOfVolumeChanges() {
+	return _volUpdates;
+}
+void SID::disableVolumeChangeNMI(uint8_t mode) {
+	// test cases: Ferrari_Formula_One resets volume from main before starting NMI digis..
+	// test cases: Great_Giana_Sisters activates "filter" from NMI (without which the melody stays silent)
+	_nmiVolChangeDisabled |= mode; // once NMI mode is active it cannot be undone (see Ferrari_Formula_One - where IRQ sets D418 only sometimes);
+
+	if (_nmiVolChangeDisabled) {
+		// tune depends on the settings made by the NMI
+		uint8_t v= _filter->getVolume();
+				
+		// keep the volume part (needed in Ferrari_Formula_One) but use the filter (need in Great_Giana_Sisters)
+		v= (v&0xf) | (memReadIO(0xd418) & 0xf0);	// propagate filter setting made in NMI 
+		
+		_filter->poke(0xd418 & 0x1f, v);
+	}
+}
+
 void SID::reset(uint16_t addr, uint32_t sampleRate, uint8_t isModel6581) {
 	_addr= addr;
 	
@@ -609,8 +634,10 @@ void SID::poke(uint8_t reg, uint8_t val) {
 		_env[voice]->poke(reg, val);
 	}
 	// writes that impact the filter
-	if ((reg >= 0x15) && (reg <= 0x18)) {
-		_filter->poke(reg, val);
+	if ((reg >= 0x15) && (reg <= 0x18)) {		
+		if (!(_nmiVolChangeDisabled && (cpuGetProgramMode() == NMI_OFFSET_MASK) && (reg == 0x18))) {	// ignore NMI digis		
+			_filter->poke(reg, val);
+		}
 	}
 
     switch (reg) {		
@@ -636,6 +663,10 @@ void SID::poke(uint8_t reg, uint8_t val) {
 			_sid->voices[voice].wave = val;			
             break;
         }
+		case 0x18: {
+			_volUpdates++;
+			break;
+		}
     }
     return;
 }
@@ -671,7 +702,7 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 			int32_t voiceOut= scale*_env[voice]->getOutput()/0xff*(((int32_t)outv)-0x8000) ;	
 		
 			// now route the voice output to either the non-filtered or the
-			// filtered channel (with disabled filter outf is used)	
+			// filtered channel (with disabled filter outo is used)	
 			_filter->routeSignal(&voiceOut, &outf, &outo, voice, &(_sid->voices[voice].notMuted));
 
 			// trace output (always make it 16-bit)		
@@ -762,6 +793,17 @@ extern "C" void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t voic
 extern "C" uint32_t sidGetSampleFreq() {
 	return _sids[0]._sid->sampleRate;
 }
+
+extern "C" void sidResetVolumeChangeCount() {
+	 _sids[0].resetVolumeChangeCount();
+}
+extern "C" uint8_t sidGetNumberOfVolumeChanges() {
+	return _sids[0].getNumberOfVolumeChanges();
+}
+extern "C" void sidDisableVolumeChangeNMI(uint8_t mode) {
+	_sids[0].disableVolumeChangeNMI(mode);
+}
+
 
 extern "C" void sidSetMute(uint8_t voice, uint8_t value) {
 	uint8_t sidId= voice/3;
