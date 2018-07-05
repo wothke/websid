@@ -708,7 +708,7 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 			// trace output (always make it 16-bit)		
 			if (synthTraceBufs) {
 				int16_t *voiceTraceBuffer= synthTraceBufs[voice];
-				*(voiceTraceBuffer+bp)= (int16_t)(voiceOut >> 8);			
+				*(voiceTraceBuffer+bp)= (int16_t)(voiceOut);			
 			}
 		}
 		int32_t finalSample= _filter->getOutput(&outf, &outo, cutoff, resonance);		
@@ -804,12 +804,9 @@ extern "C" void sidDisableVolumeChangeNMI(uint8_t mode) {
 	_sids[0].disableVolumeChangeNMI(mode);
 }
 
-
 extern "C" void sidSetMute(uint8_t voice, uint8_t value) {
-	uint8_t sidId= voice/3;
-	if (sidId >= _usedSIDs) sidId= 0;	// garbage in
-	
-	_sids[sidId]._sid->voices[voice%3].notMuted= !value;
+	// FIXME currently not implemented for more than 1 SID	
+	_sids[0]._sid->voices[voice%3].notMuted= !value;
 }
 
 extern "C" void sidSynthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs) {	
