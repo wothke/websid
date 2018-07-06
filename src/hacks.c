@@ -192,8 +192,7 @@ static void patchFileDeletedIfNeeded(uint16_t *initAddr) {
 	}
 }
 
-void hackIfNeeded(uint16_t *initAddr) {
-
+void hackIfNeeded(uint16_t *initAddr) {	
 	patchFileDeletedIfNeeded(initAddr);
 	
 	patchMahoneyLatestIfNeeded(initAddr);

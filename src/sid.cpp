@@ -581,7 +581,7 @@ void SID::disableVolumeChangeNMI(uint8_t mode) {
 	// test cases: Ferrari_Formula_One resets volume from main before starting NMI digis..
 	// test cases: Great_Giana_Sisters activates "filter" from NMI (without which the melody stays silent)
 	_nmiVolChangeDisabled |= mode; // once NMI mode is active it cannot be undone (see Ferrari_Formula_One - where IRQ sets D418 only sometimes);
-
+	
 	if (_nmiVolChangeDisabled) {
 		// tune depends on the settings made by the NMI
 		uint8_t v= _filter->getVolume();

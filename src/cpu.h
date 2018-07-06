@@ -43,5 +43,7 @@ uint8_t cpuIrqFlag();
 uint32_t cpuCycles();
 uint32_t cpuTotalCycles();
 
-
+// debug only
+uint16_t cpuGetPC();
+uint8_t cpuGetSP();
 #endif

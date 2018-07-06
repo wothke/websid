@@ -156,7 +156,7 @@ void memSet(uint16_t addr, uint8_t value)
 			if ((addr >= 0xd000) && (addr < 0xd400)) {			// vic stuff
 				vicWriteMem(addr, value);
 				return;
-			} else if (((addr >= 0xd400) && (addr < 0xd800)) || ((addr >= 0xde00) && (addr < 0xdf00))) {	// SID stuff
+			} else if (((addr >= 0xd400) && (addr < 0xd800)) || ((addr >= 0xde00) && (addr < 0xdf00))) {	// SID stuff			
 				sidWriteMem(addr, value);
 				return;
 			} else if ((addr >= 0xdc00) && (addr < 0xde00)) {			// CIA timers
@@ -207,9 +207,9 @@ void memResetRAM(uint8_t isPsid) {
 
 	_memory[0x0314]= 0x31;		// standard IRQ vector
 	_memory[0x0315]= 0xea;
-
+	
 	// Master_Blaster_intro.sid actually checks this:
-	_memory[0x00cb]= 0x40;		// no key pressed 
+	_memory[0x00c5]= _memory[0x00cb]= 0x40;		// no key pressed 
 
 	// Dill_Pickles.sid depends on this
 	memWriteRAM(0x0000, 0x2f);	//default: processor port data direction register		

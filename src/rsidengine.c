@@ -430,6 +430,7 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 		}
 	}
 	
+	
 	// hack (e.g. Arcade_Classics): when IRQ updates the volume (but not using it to play
 	// samples then volume changes originating from NMI should be ignored (with the current design of
 	// rendering SID output for longer time windows these volume settings otherwise mess up the output)
@@ -468,9 +469,16 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 	} else {
 		// legacy PSID mode: one "IRQ" call per screen refresh (a PSID may actually setup CIA 1 
 		// timers but without wanting to use them - e.g. ZigZag.sid track2)
-		processInterrupt(IRQ_OFFSET_MASK, getIrqVector(), 0, -1);
+		
+		// might not be a good idea to give those garbage PSIDs unlimited cycles (see main-loop players
+		// disguised as PSID - which would otherwise hang the player/browser)! though some songs do seem to use 
+		// more that one frame, e.g. A-Maze-Ing.sid
+		int32_t cycleLimit= cyclesPerScreen*3;		// was originally -1
+		uint32_t c= processInterrupt(IRQ_OFFSET_MASK, getIrqVector(), 0, cycleLimit);
+		
 		sidSynthRender(synthBuffer, samplesPerCall, synthTraceBufs);	
 		digiClearBuffer();		
+		
 		return 0;
 	}
 }

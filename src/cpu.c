@@ -346,6 +346,14 @@ static void setaddr(uint8_t opc, int32_t mode, uint8_t val)
     }
 }
 
+uint16_t cpuGetPC() {
+	return _pc;
+}
+
+uint8_t cpuGetSP() {
+	return _s;
+}
+
 static void putaddr(uint8_t opc, int32_t mode, uint8_t val)
 {
     uint16_t ad,ad2;
@@ -415,7 +423,7 @@ static void setflags(int32_t flag, int32_t cond)
 static void push(uint8_t val)
 {
     memSet(0x100+_s,val);	
-	_s= (_s-1)&0xff;			// real stack just wraps around...
+	_s= (_s-1)&0xff;			// real stack just wraps around...	
 }
 
 static uint8_t pop(void)
@@ -885,7 +893,7 @@ void cpuParse(void)
 			// todo: if interrupts where to be handled correctly then we'd need to 
 			// clear interrupt flag here (and set it when NMI is invoked...)
             break;
-        case rts:
+        case rts:		
             _wval=pop();
             _wval|=pop()<<8;
 			_pc=_wval+1;
@@ -1084,8 +1092,12 @@ void cpuResetToIrq(uint16_t npc) {
 	
 	push(0);	// addr high
 	push(0);	// addr low
-	push(_p);	// processor status (processor would do this in case of interrupt...)	
 	
+	// NOTE: garbage PSID shit that uses RTS from IRQ will pick this up as a return address
+	// so _p better be 0 in that scenario:
+
+	push(_p);	// processor status (processor would do this in case of interrupt...)
+		
 	// only set _pc and keep current stackpointer and registers in case player directly passes 
 	// them between calls (see Look_sharp.sid)
 	_pc= npc;	

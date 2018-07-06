@@ -75,9 +75,8 @@ void Filter::reset(uint32_t sampleRate) {
 	// init "filter" structures
 	memset((uint8_t*)state,0,sizeof(FilterState));
 
-	// XXX changed 256 to 255
-    state->cutoff_ratio_8580 = ((double)-2.0) * 3.1415926535897932385 * (12500.0 / 255) / sampleRate,
-    state->cutoff_ratio_6581 = ((double)-2.0) * 3.1415926535897932385 * (20000.0 / 255) / sampleRate;
+    state->cutoff_ratio_8580 = ((double)-2.0) * 3.1415926535897932385 * (12500.0 / 256) / sampleRate,
+    state->cutoff_ratio_6581 = ((double)-2.0) * 3.1415926535897932385 * (20000.0 / 256) / sampleRate;
 //	state->prevbandpass = 0;	// redundant
 //	state->prevlowpass = 0;	
 }
@@ -107,8 +106,8 @@ void Filter::poke(uint8_t reg, uint8_t val) {
 				state->bandEna = getBit(val,5);	// bandpass
 				state->hiEna = getBit(val,6);		// highpass
 				state->v3ena = !getBit(val,7);	// chan3 off
-				state->vol   = (val & 0xf);		// main volume	
 #endif  
+				state->vol   = (val & 0xf);		// main volume	
 			break;
 			}
 	};
@@ -120,22 +119,20 @@ uint8_t Filter::getVolume() {
 }
 
 int32_t Filter::getOutput(int32_t *in, int32_t *out, double cutoff, double resonance) {
-#ifdef USE_FILTER
 	struct FilterState* state= getState(this);
-	
+	int32_t OUTPUT_SCALEDOWN = 0x6 * 0xf;	// hand tuned with "424"
+#ifdef USE_FILTER	
 	// save the trouble to run any filter calcs when no filters are activated..
 	double output= !(state->ftpVol & 0x70) ? (double)(*out) :  runFilter((double)(*in), (double)(*out), &(state->prevbandpass), &(state->prevlowpass), cutoff, resonance);
-
-	int32_t OUTPUT_SCALEDOWN = 0x6 * 0xf;	// hand tuned with "424"
 	
 	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)		
 	return round(output * state->vol / OUTPUT_SCALEDOWN); // SID output
 #else
-	return (*out)/6;
+	return (*out)* state->vol / OUTPUT_SCALEDOWN;
 #endif
 }
 
-uint8_t Filter::isActive(uint8_t voice) {
+uint8_t Filter::isActive(uint8_t voice) {	
 	// NOTE: Voice 3 is not silenced by !v3ena if it is routed through the filter!
 	struct FilterState* state= getState(this);
 	return state->v3ena || (!state->v3ena && state->filter[voice]);
@@ -151,6 +148,7 @@ void Filter::setupFilterInput(double *cutoff, double *resonance) {
 	if (!_sid->isModel6581()) {
 		(*cutoff) = 1.0 - exp((*cutoff) * state->cutoff_ratio_8580);
 		(*resonance) = pow(2.0, ((4.0 - (state->resFtv >> 4)) / 8));
+				
 	} else {
 		if ((*cutoff) < 24.0) { (*cutoff) = 0.035; }
 		else { (*cutoff) = 1.0 - 1.263 * exp((*cutoff) * state->cutoff_ratio_6581); }
@@ -192,7 +190,6 @@ double Filter::runFilter(double in, double output, double *prevbandpass, double 
 	// amplifies that error
 	struct FilterState* state= getState(this);
 	double tmp = in + (*prevbandpass) * resonance + (*prevlowpass);
-	
 	
 	if (state->hiEna) { output -= tmp;} 
 	tmp = (*prevbandpass) - tmp * cutoff;
