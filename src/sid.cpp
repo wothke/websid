@@ -581,16 +581,14 @@ void SID::disableVolumeChangeNMI(uint8_t mode) {
 	// test cases: Ferrari_Formula_One resets volume from main before starting NMI digis..
 	// test cases: Great_Giana_Sisters activates "filter" from NMI (without which the melody stays silent)
 	_nmiVolChangeDisabled |= mode; // once NMI mode is active it cannot be undone (see Ferrari_Formula_One - where IRQ sets D418 only sometimes);
-	
-	if (_nmiVolChangeDisabled) {
-		// tune depends on the settings made by the NMI
-		uint8_t v= _filter->getVolume();
-				
-		// keep the volume part (needed in Ferrari_Formula_One) but use the filter (need in Great_Giana_Sisters)
-		v= (v&0xf) | (memReadIO(0xd418) & 0xf0);	// propagate filter setting made in NMI 
 		
-		_filter->poke(0xd418 & 0x1f, v);
-	}
+	// tune depends on the settings made by the NMI (e.g. JCH's song)
+	uint8_t v= _filter->getVolume();
+			
+	// keep the volume part (needed in Ferrari_Formula_One) but use the filter (need in Great_Giana_Sisters)
+	v= (v&0xf) | (memReadIO(0xd418) & 0xf0);	// propagate filter setting made in NMI 
+	
+	_filter->poke(0xd418 & 0x1f, v);
 }
 
 void SID::reset(uint16_t addr, uint32_t sampleRate, uint8_t isModel6581) {
@@ -664,9 +662,8 @@ void SID::poke(uint8_t reg, uint8_t val) {
             break;
         }
 		case 0x18: {
-			// multi purpose detector
-			_volUpdates++;
-			
+			_volUpdates++;	// base for hacks
+
 			// hack: FutureComposer v1.0 in some cases (see Luca's songs) seems to perform 2x
 			// updates of filter (etc) from same IRQ (seems to be used for the hi-hat) and even 
 			// with respective handling the songs sound terrible (probably some flaw of the 
@@ -676,13 +673,13 @@ void SID::poke(uint8_t reg, uint8_t val) {
 				
 				// this hack might easily conflict with songs like Neverending_Story!
 				
-				// the voice3enable flag AND the volume here lead to massive up/downs. it seems				
-				// there is no point to keep anything from the original settings.. everything 
-				// sounds worse than this hard coded setting..
 				if(!_allowedOnce) {
 					_allowedOnce= 1;	// some songs come here during init
 				} else {
-					_filter->poke(reg, 0b01111111 );	// FIXME retry if filter impl should ever be changed
+				// the voice3enable flag AND the volume here lead to massive up/downs. it seems				
+				// there is no point to keep anything from the original settings.. everything 
+				// sounds worse than this hard coded setting..
+					_filter->poke(reg, 0b01111111 );	// FIXME retry if filter impl ever were to be changed
 				} 
 			}
 			break;
@@ -722,7 +719,8 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 			int32_t voiceOut= scale*_env[voice]->getOutput()/0xff*(((int32_t)outv)-0x8000) ;	
 		
 			// now route the voice output to either the non-filtered or the
-			// filtered channel (with disabled filter outo is used)	
+			// filtered channel (with disabled filter outo is used)
+			
 			_filter->routeSignal(&voiceOut, &outf, &outo, voice, &(_sid->voices[voice].notMuted));
 
 			// trace output (always make it 16-bit)		

@@ -133,7 +133,7 @@ SIDBackendAdapter = (function(){ var $this = function () {
 			result.songAuthor= this.getExtAsciiString(array[5]);
 			result.songReleased= this.getExtAsciiString(array[6]);			
 		},
-		// for debugging.. disable voices (0-2) by clearing respective bit
+		// for debugging.. disable voices (0-3) by clearing respective bit
 		enableVoices: function(mask) {
 			this.Module.ccall('enableVoices', 'number', ['number'], [mask]);
 		},

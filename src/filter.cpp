@@ -123,7 +123,8 @@ int32_t Filter::getOutput(int32_t *in, int32_t *out, double cutoff, double reson
 	int32_t OUTPUT_SCALEDOWN = 0x6 * 0xf;	// hand tuned with "424"
 #ifdef USE_FILTER	
 	// save the trouble to run any filter calcs when no filters are activated..
-	double output= !(state->ftpVol & 0x70) ? (double)(*out) :  runFilter((double)(*in), (double)(*out), &(state->prevbandpass), &(state->prevlowpass), cutoff, resonance);
+	double output=  !(state->ftpVol & 0x70) ? (double)(*out) :  
+		runFilter((double)(*in), (double)(*out), &(state->prevbandpass), &(state->prevlowpass), cutoff, resonance);
 	
 	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)		
 	return round(output * state->vol / OUTPUT_SCALEDOWN); // SID output
@@ -158,7 +159,7 @@ void Filter::setupFilterInput(double *cutoff, double *resonance) {
 }
 
 void Filter::routeSignal(int32_t *voiceOut, int32_t *outf, int32_t *outo, uint8_t voice, uint8_t *notMuted) {
-// note: compared to other emus output volume it quite high.. maybe better reduce it a bit?
+// note: compared to other emus output volume is quite high.. maybe better reduce it a bit?
 	struct FilterState* state= getState(this);
 
 #ifdef USE_FILTER
@@ -178,6 +179,7 @@ void Filter::routeSignal(int32_t *voiceOut, int32_t *outf, int32_t *outo, uint8_
 	}
 #endif
 }
+
 
 double Filter::runFilter(double in, double output, double *prevbandpass, double *prevlowpass, double cutoff, double resonance) {
 	// derived from Hermit's filter implementation:

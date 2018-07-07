@@ -687,6 +687,9 @@ uint8_t digiDetectSample(uint16_t addr, uint8_t value) {
 			// (this may lead to false positives..)
 			if (assertSameSource(0)) recordSample(isMahoneyDigi() ? _mahoneySample[value] : value << 4);
 
+			// testcase JCH's Better_Late_Than_Never: voice 1 is filtered and only outputs if the low-pass 
+			// filter is enabled (respective enabling comes from the sample player, i.e. here!)
+						
 			memWriteIO(0xd418, value);	// don't use in SID but store in mem (e.g. see disableVolumeChangeNMI())	
 		}
 		return 1;
