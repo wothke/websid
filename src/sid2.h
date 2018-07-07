@@ -148,6 +148,7 @@ private:
 	// hack: to avoid undesirable volume changes from NMI
 	uint8_t _volUpdates;
 	uint8_t _nmiVolChangeDisabled;
+	uint8_t _allowedOnce;
 };
 
 
