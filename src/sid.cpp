@@ -222,9 +222,8 @@ void SID::resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 	
 	_sid->cycleOverflow = 0;
 	_sid->cyclesPerSample = ((double)envClockRate()) / sampleRate;
-		
-	_sid->isModel6581= isModel6581;	
-	_sid->level_DC= isModel6581 ? 0x38 : 0x80;	// supposedly the DC level for respective chip model
+	
+	resetModel(isModel6581);
 	
 	// filter
 	_filter->reset(sampleRate);
@@ -591,6 +590,11 @@ void SID::disableVolumeChangeNMI(uint8_t mode) {
 	_filter->poke(0xd418 & 0x1f, v);
 }
 
+void SID::resetModel(uint8_t isModel6581) {
+	_sid->isModel6581= isModel6581;	
+	_sid->level_DC= isModel6581 ? 0x38 : 0x80;	// supposedly the DC level for respective chip model
+}
+
 void SID::reset(uint16_t addr, uint32_t sampleRate, uint8_t isModel6581) {
 	_addr= addr;
 	
@@ -835,6 +839,14 @@ extern "C" void sidSynthRender(int16_t *buffer, uint32_t len, int16_t **synthTra
 		SID &sid= _sids[i];			
 		_sids[i].synthRender(buffer, len, synthTraceBufs, scale, !i);
 	}
+}
+
+extern "C" void sidResetModel(uint8_t *sidIs6581) {
+	for (uint8_t i= 0; i<_usedSIDs; i++) {
+		SID &sid= _sids[i];			
+		sid.resetModel(sidIs6581[i]);
+	}
+	digiResetModel(sidIs6581[0]);
 }
 
 extern "C" void sidReset(uint32_t sampleRate, uint16_t *sidAddrs, uint8_t *sidIs6581, uint8_t compatibility, uint8_t resetVol) {

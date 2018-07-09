@@ -44,6 +44,7 @@ public:
 	/**
 	* Resets this instance according to the passed params.
 	*/
+	void resetModel(uint8_t isModel6581);
 	void reset(uint16_t addr, uint32_t sampleRate, uint8_t isModel6581);
 		
 	/**

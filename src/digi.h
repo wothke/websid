@@ -16,6 +16,7 @@
 #include "base.h"
 
 // setup
+void digiResetModel(uint8_t isModel6581);
 void digiReset(uint8_t compatibility, uint8_t isModel6581);
 
 // handling of collected data

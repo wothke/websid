@@ -678,10 +678,9 @@ uint8_t EMSCRIPTEN_KEEPALIVE envIsSID6581() {
 
 static uint8_t envSetSID6581(uint8_t is6581)  __attribute__((noinline));
 static uint8_t EMSCRIPTEN_KEEPALIVE envSetSID6581(uint8_t is6581) {
+	// this minimal update should allow to toggle the used filter without disrupting playback in progress
 	_sidIs6581[0]= _sidIs6581[1]= _sidIs6581[2]= is6581;
-	
-	sidReset(_sampleRate, envSIDAddresses(), envSID6581s(), _compatibility, 0);
-
+	sidResetModel(envSID6581s());
 	return 0;
 }
 
@@ -694,8 +693,8 @@ static uint8_t envSetNTSC(uint8_t isNTSC)  __attribute__((noinline));
 static uint8_t EMSCRIPTEN_KEEPALIVE envSetNTSC(uint8_t isNTSC) {
 	_ntscMode= isNTSC;
 	
-	resetAudioBuffers();
 	resetTimings();
+	resetAudioBuffers();
 
 	return 0;
 }

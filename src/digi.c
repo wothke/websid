@@ -615,11 +615,15 @@ void digiTagOrigin(uint32_t mask, uint32_t offset, uint32_t originalDigiCount) {
 	}
 }
 
+void digiResetModel(uint8_t isModel6581) {
+	_currentDigi= isModel6581 ? 0x38 : 0x80;	// supposedly the DC level for respective chip model
+}
+
 void digiReset(uint8_t compatibility, uint8_t isModel6581) {
 	
 	_isC64compatible= compatibility;
 
-	_currentDigi= isModel6581 ? 0x38 : 0x80;	// supposedly the DC level for respective chip model
+	digiResetModel(isModel6581);
 
 	memset( (uint8_t*)&_swallowPWM, 0, sizeof(_swallowPWM) ); 	
     memset( (uint8_t*)&_digiTime, 0, sizeof(_digiTime) ); 
