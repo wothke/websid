@@ -245,7 +245,7 @@ void SID::resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 		_sid->voices[i].notMuted= 1;
 	}
 	
-	_nmiVolChangeDisabled= _allowedOnce= 0;
+	_nmiVolChangeDisabled= _allowedMax= 0;
 }
 /*
 * While "_sid" data structure is automatically kept in sync by the emulator's memory access 
@@ -669,20 +669,25 @@ void SID::poke(uint8_t reg, uint8_t val) {
 			_volUpdates++;	// base for hacks
 
 			// hack: FutureComposer v1.0 in some cases (see Luca's songs) seems to perform 2x
-			// updates of filter (etc) from same IRQ (seems to be used for the hi-hat) and even 
-			// with respective handling the songs sound terrible (probably some flaw of the 
-			// filter impl). Disable filter in respective scenarios:
-			if ((_volUpdates > 1) && (!_nmiVolChangeDisabled) && ((val>>4) != 0x0)) {				
-				// trying to avoid false positives (some digis may still get in here.. but that doesn't hurt)
+			// updates of filter (etc) from same IRQ and even with respective handling the 
+			// songs sound terrible (probably some flaw of the filter impl). 			
+			// goal: disable filter *only* in respective scenarios:
+			
+			if ((_volUpdates > 1) && (!_nmiVolChangeDisabled) && ((val>>4) != 0x0)) {	
+				// trying to avoid false positives (e.g. some digis may still get in here.. but that 
+				// doesn't hurt). problem: this hack may easily create false positives, e.g.
+				// songs like Neverending_Story!
 				
-				// this hack might easily conflict with songs like Neverending_Story!
-				
-				if(!_allowedOnce) {
-					_allowedOnce= 1;	// some songs come here during init
+				if(_allowedMax < 5) { 
+					_allowedMax+= 1;	// some songs come here during init
 				} else {
-				// the voice3enable flag AND the volume here lead to massive up/downs. it seems				
-				// there is no point to keep anything from the original settings.. everything 
-				// sounds worse than this hard coded setting..
+					// test cases:
+					// - Kids_Arent_Allright & Why_Dont_You_Get_A_Job
+					// - Allen_Kim_Eriksen -Theme_01: false positive; makes 3 additional settings.. not more
+
+					// the voice3enable flag AND the volume here lead to massive up/downs. it seems				
+					// there is no point to keep anything from the original settings.. everything 
+					// sounds worse than this hard coded setting..
 					_filter->poke(reg, 0b01111111 );	// FIXME retry if filter impl ever were to be changed
 				} 
 			}
