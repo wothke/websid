@@ -30,7 +30,6 @@ extern "C" {
 
 // there used to be some problem with certain (badly timed) samples (see Vortex) - but 
 // for some reason these seem to be gone now (maybe a clipping issue) 
-// however now songs like "Hunters_Moon" no longer produce ANY output..
 #define USE_DIGIFILTER	
 
 // internal filter def
@@ -66,14 +65,14 @@ struct FilterState* getState(Filter *e) {	// this should rather be static - but 
 Filter::Filter(SID *sid) {
 	_sid= sid;
 	
-	_state= (void*) malloc(sizeof(FilterState));
+	_state= (void*) malloc(sizeof(struct FilterState));
 }
 
 void Filter::reset(uint32_t sampleRate) {
 	struct FilterState* state= getState(this); 
 
 	// init "filter" structures
-	memset((uint8_t*)state,0,sizeof(FilterState));
+	memset((uint8_t*)state,0,sizeof(struct FilterState));
 
     state->cutoff_ratio_8580 = ((double)-2.0) * 3.1415926535897932385 * (12500.0 / 256) / sampleRate,
     state->cutoff_ratio_6581 = ((double)-2.0) * 3.1415926535897932385 * (20000.0 / 256) / sampleRate;

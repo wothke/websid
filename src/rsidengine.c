@@ -434,7 +434,7 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 	// hack (e.g. Arcade_Classics): when IRQ updates the volume (but not using it to play
 	// samples then volume changes originating from NMI should be ignored (with the current design of
 	// rendering SID output for longer time windows these volume settings otherwise mess up the output)
-	sidDisableVolumeChangeNMI(_volUpdates && (_volUpdates < 3));
+ 	sidDisableVolumeChangeNMI(_volUpdates && (_volUpdates < 3));
 }
 
 /*

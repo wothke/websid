@@ -44,16 +44,21 @@ use of WASM you'll then also need a recent version of my respective "WebAudio Sc
 The below instructions assume a command prompt has been opened within the "websid" folder, and that the Emscripten environment 
 vars have been set (run emsdk_env.bat).
 
-Running the makeEmscripten.bat will generate a JavaScript 'Tiny'R'Sid' library (backend_tinyrsid.js) including 
-necessary interface APIs. This lib is directly written into the web-page example in the "htdocs" sub-folder. (This 
-generated lib is used from some manually written JavaScript/WebAudio code, see htdocs/stdlib/scriptprocessor_player.min.js). 
-Study the example in "htdocs" for how the player is used. (disclaimer: the .sh version of the make-script has been contributed
-by somebody else and I am not maintaing it or verifying that it still works)
+Running the makeEmscripten.bat will generate a JavaScript 'Tiny'R'Sid' library (backend_tinyrsid.js - and a separate tinyrsid.wasm file
+if you are compiling to WebAssembly) including necessary interface APIs. This output is directly written into the web-page example in 
+the "htdocs" sub-folder. (This generated lib is used from some manually written JavaScript/WebAudio code, see 
+htdocs/stdlib/scriptprocessor_player.min.js). Study the example in "htdocs" for how the player is used. 
+
+Disclaimer: the .sh version of the make-script has been contributed by somebody else and I am not maintaing it or verifying that it still works.
+
+Note: Due to some bug in Apple's JavaScriptCore (as of iOS 11.4) the regularily built version will not work on iOS devices. As
+a workaround you can compile using "-s SAFE_HEAP=1". This will make for slower code but it seems to be the only way around 
+the iCrap bug.
 
 ## Depencencies
 
 The current version requires version 1.02 (older versions will not
-support WebAssembly) of my https://github.com/wothke/webaudio-player.
+support WebAssembly) of my https://github.com/wothke/webaudio-player (use of the most recent version is recommended).
 
 ## License
 Terms of Use: This software is licensed under a CC BY-NC-SA (http://creativecommons.org/licenses/by-nc-sa/4.0/)

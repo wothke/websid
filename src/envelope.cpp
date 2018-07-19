@@ -79,10 +79,10 @@ Envelope::Envelope(SID *sid, uint8_t voice) {
 	_sid= sid;
 	_voice= voice;
 	
-	_state= (void*) malloc(sizeof(EnvelopeState));
+	_state= (void*) malloc(sizeof(struct EnvelopeState));
 }
 
-void Envelope::syncState() {		// FIXME moev this directly into poke()
+void Envelope::syncState() {		// FIXME move this directly into poke()
 	struct EnvelopeState *state= getState(this);
 
 	// threshold to be reached before incrementing volume

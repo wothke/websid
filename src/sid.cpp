@@ -170,11 +170,11 @@ static WaveformTables _wave;		// only need one instance of this
 SID::SID() {
 	_addr= 0;		// e.g. 0xd400
 	
-	_sid= (SidState*) malloc(sizeof(SidState));
+	_sid= (struct SidState*) malloc(sizeof(struct SidState));
 
-	_osc[0]= (Oscillator*) malloc(sizeof(Oscillator));
-	_osc[1]= (Oscillator*) malloc(sizeof(Oscillator));
-	_osc[2]= (Oscillator*) malloc(sizeof(Oscillator));
+	_osc[0]= (struct Oscillator*) malloc(sizeof(struct Oscillator));
+	_osc[1]= (struct Oscillator*) malloc(sizeof(struct Oscillator));
+	_osc[2]= (struct Oscillator*) malloc(sizeof(struct Oscillator));
 		
 	_env[0]= new Envelope(this, 0);
 	_env[1]= new Envelope(this, 1);
@@ -183,7 +183,7 @@ SID::SID() {
 	_filter= new Filter(this);
 
 	// hack
-	_osc3sim = (SimOsc3*) malloc(sizeof(SimOsc3));
+	_osc3sim = (struct SimOsc3*) malloc(sizeof(struct SimOsc3));
 }
 
 
@@ -216,7 +216,7 @@ uint32_t SID::getRingModCounter(uint8_t voice) {
 
 void SID::resetEngine(uint32_t sampleRate, uint8_t isModel6581) {	
 	// base setting
-	memset((uint8_t*)_sid,0,sizeof(SidState));
+	memset((uint8_t*)_sid,0,sizeof(struct SidState));
 
 	_sid->sampleRate = sampleRate;
 	
@@ -234,9 +234,9 @@ void SID::resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 	}
 
 	// oscillator / waveform stuff
-	memset((uint8_t*)_osc[0], 0, sizeof(Oscillator));
-	memset((uint8_t*)_osc[1], 0, sizeof(Oscillator));
-	memset((uint8_t*)_osc[2], 0, sizeof(Oscillator));
+	memset((uint8_t*)_osc[0], 0, sizeof(struct Oscillator));
+	memset((uint8_t*)_osc[1], 0, sizeof(struct Oscillator));
+	memset((uint8_t*)_osc[2], 0, sizeof(struct Oscillator));
 
 	for (uint8_t i=0;i<3;i++) {
 		// note: by default the rest of _sid, _osc & _filter 
@@ -245,7 +245,7 @@ void SID::resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 		_sid->voices[i].notMuted= 1;
 	}
 	
-	_nmiVolChangeDisabled= _allowedMax= 0;
+	_nmiVolChangeDisabled= _allowedMax= _volUpdates= 0;
 }
 /*
 * While "_sid" data structure is automatically kept in sync by the emulator's memory access 
@@ -370,26 +370,45 @@ uint16_t SID::createSawOutput(uint8_t voice) {	// test with Alien or Kawasaki_Sy
 	// Hermit's "anti-aliasing"
 	uint32_t wfout = _osc[voice]->counter >> 8;	// top 16-bits
 	double step = ((double)_osc[voice]->freqIncSample) / 0x1200000;
-	wfout += round(wfout * step);
-	if (wfout > 0xFFFF) wfout = 0xFFFF - round (((double)(wfout - 0x10000)) / step);
+	
+	if (step != 0) {
+		wfout += round(wfout * step);
+		if (wfout > 0xFFFF) wfout = 0xFFFF - round (((double)(wfout - 0x10000)) / step);
+	}
 	return wfout;
 }
 void SID::calcPulseBase(uint8_t voice, uint32_t *tmp, uint32_t *pw) {
 	// based on Hermit's impl
-	(*pw) = _osc[voice]->pulse;
+	(*pw) = _osc[voice]->pulse;						// 16 bit
 	(*tmp) = _osc[voice]->freqIncSample >> 9;	// 15 MSB needed
 	
-	if (0 < (*pw) && (*pw) < (*tmp)) { (*pw) = (*tmp); }
+	if ((0 < (*pw)) && ((*pw) < (*tmp))) { (*pw) = (*tmp); }
 	(*tmp) ^= 0xFFFF;
 	if ((*pw) > (*tmp)) (*pw) = (*tmp);
 	(*tmp) = _osc[voice]->counter >> 8;			// 16 MSB needed
 }
+
 uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// elementary pulse
+	// plain no-frills pulse
+//	return isTestBit(voice) ? 0xFFFF : (uint16_t) (((_osc[voice]->counter > (_osc[voice]->pulse <<8))-1) ^ 0xFFFF);
+
+	// Hermit's "anti-aliasing" pulse
 	if (isTestBit(voice)) return 0xFFFF;	// pulse start position
 	
-	// Hermit's "anti-aliasing"
-	double step = 256.0 / (_osc[voice]->freqIncSample >> 16); //simple pulse, most often used waveform, make it sound as clean as possible without oversampling
-
+	// note: the smaller the step, the slower the phase shift, e.g. ramp-up/-down rather than 
+	// immediate switch (current setting does not cause much of an effect - use "0.1*" to make it obvious )
+	
+	// larger steps cause "sizzling noise" and the step used here is 2x what Hermit is using 
+	// in his player.. (not sure it this "anti-aliasing" is really doing more good that harm..)
+		
+	uint32_t d= (_osc[voice]->freqIncSample >> 16);
+	if (!d)  {
+		// no base for anti-aliasing (division-by-zero leads to "wrong" results in WASM)
+		return (uint16_t) (((_osc[voice]->counter > (_osc[voice]->pulse <<8))-1) ^ 0xFFFF);	
+	}
+	
+	double step = 2 * 256.0 / d; //simple pulse, most often used waveform, make it sound as clean as possible without oversampling
+	
 	int32_t wfout;
 	if (tmp < pw) {
 		wfout = round((0xFFFF - pw) * step);
@@ -400,8 +419,8 @@ uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// e
 	else {
 		wfout = pw * step;
 		if (wfout > 0xFFFF) { wfout = 0xFFFF; }
-		wfout = round((0xFFFF - tmp) * step) - wfout;
-		if (wfout >= 0) { wfout = 0xFFFF; }
+		wfout = round((0xFFFF - tmp) * step) - wfout;		
+		if (wfout >= 0) { wfout = 0xFFFF; } 		
 		wfout &= 0xFFFF;
 	} //falling edge
 	return wfout;
@@ -454,7 +473,7 @@ uint16_t SID::createNoiseOutput(uint8_t voice) {
 uint16_t SID::createWaveOutput(int8_t voice) {
 	uint16_t outv= 0xFFFF;
 	uint8_t ctrl= _osc[voice]->wave;
-	
+		
 	if (_sid->voices[voice].notMuted) {
 		int8_t combined= 0;
 		
@@ -481,7 +500,7 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 						tmp = getRingModCounter(voice); 
 						outv = plsout ? combinedWF(voice, _wave.PulseTri_8580, (tmp ^ (tmp & 0x800000 ? 0xFFFFFF : 0)) >> 11, 0) : 0;	// either on or off						
 					}				
-				} else if ((ctrl & SAW_BITMASK) && ++combined)  {	// PULSE & SAW - like in Defiler.sid
+				} else if ((ctrl & SAW_BITMASK) && ++combined)  {	// PULSE & SAW - like in Defiler.sid, Neverending_Story.sid
 					outv = plsout ? combinedWF(voice, _wave.PulseSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
 				}
 			}
@@ -678,13 +697,13 @@ void SID::poke(uint8_t reg, uint8_t val) {
 				// doesn't hurt). problem: this hack may easily create false positives, e.g.
 				// songs like Neverending_Story!
 				
-				if(_allowedMax < 5) { 
+				if(_allowedMax < 5) {
 					_allowedMax+= 1;	// some songs come here during init
 				} else {
 					// test cases:
 					// - Kids_Arent_Allright & Why_Dont_You_Get_A_Job
 					// - Allen_Kim_Eriksen -Theme_01: false positive; makes 3 additional settings.. not more
-
+				
 					// the voice3enable flag AND the volume here lead to massive up/downs. it seems				
 					// there is no point to keep anything from the original settings.. everything 
 					// sounds worse than this hard coded setting..
