@@ -454,7 +454,6 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 	if (envIsPSID()) memResetPsidBanks(1, getIrqVector());	// must be reset before every "play" - see crap like 8-Bit_Keys_Theme.sid
 	
 	if (envIsTimerDrivenPSID() || vicIsIrqActive() || envIsRSID()) {
-
 		// info failed idea: the cycleLimit used below has the effect that
 		// a screen uses AT LEAST that many cycles (e.g. Axel_F.sid) and it 
 		// might be "more realistic" if a respective overflow would be 
@@ -522,12 +521,14 @@ void rsidPlayTrack(uint32_t sampleRate, uint8_t compatibility, uint16_t *pInitAd
 	hackIfNeeded(pInitAddr);	
 	
 	memSetDefaultBanks(envIsRSID(), (*pInitAddr), loadEndAddr);	// PSID crap
-
+	
 	// if initAddr call does not complete then it is likely in an endless loop / maybe digi player
 	// FIXME use CYCLELIMIT only for PSID: unfortunately RSIDs like Wonderland_XII-Digi_part_1.sid still 
 	// need some kind of startup phase
 	_mainProgStatus= callMain((*pInitAddr), actualSubsong, 0, !envIsRSID()? CYCLELIMIT : 200000);		
 
+	ciaResetPsid60Hz();
+	
 	memResetPsidBanks(envIsPSID(), playAddr);	// PSID again
 }
 

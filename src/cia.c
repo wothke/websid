@@ -684,6 +684,17 @@ static void initMem(uint16_t addr, uint8_t value) {
 	memWriteIO(addr, value);
 }
 
+void ciaResetPsid60Hz() {
+	if (envIsTimerDrivenPSID()) {
+		// if an idiotic PSID does not setup any timer it then expects 60Hz..
+		if (!memReadRAM(0xdc04) && !memReadRAM(0xdc05)) {
+			uint32_t c= envClockRate()/60;
+			initMem(0xdc04, c&0xff);
+			initMem(0xdc05, c>>8);		
+		}
+	}
+}
+
 void ciaReset(uint32_t cyclesPerScreen, uint8_t isRsid, uint32_t f) {
 	_failMarker= f;
 
@@ -696,9 +707,15 @@ void ciaReset(uint32_t cyclesPerScreen, uint8_t isRsid, uint32_t f) {
 	initMem(0xdc0d, 0x81);	// interrupt control	(interrupt through timer A)
 	initMem(0xdc0e, 0x01); 	// control timer A: start - must already be started (e.g. Phobia, GianaSisters, etc expect it)
 	initMem(0xdc0f, 0x08); 	// control timer B (start/stop) means auto-restart
-	initMem(0xdc04, cyclesPerScreen&0xff); 	// timer A (1x pro screen refresh)
-	initMem(0xdc05, cyclesPerScreen>>8);
 	
+	
+	if (envIsTimerDrivenPSID()) {
+		// if idiotic PSID does not setup any timer it then expects 60Hz..
+		// (which must be set later if needed)		
+	} else {	
+		initMem(0xdc04, cyclesPerScreen&0xff); 	// timer A (1x pro screen refresh)
+		initMem(0xdc05, cyclesPerScreen>>8);
+	}
 	if (isRsid) {	
 		// CIA 2 defaults
 		initMem(0xdd0e, 0x08); 	// control timer 2A (start/stop)

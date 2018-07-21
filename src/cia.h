@@ -22,7 +22,8 @@
 #define TIMER_B 1
 
 void ciaReset(uint32_t cyclesPerScreen, uint8_t isRsid, uint32_t failMarker);
-	
+void ciaResetPsid60Hz();
+
 // interface used to interact with CIA
 int ciaIsActive(uint8_t ciaIdx);
 uint32_t ciaForwardToNextInterrupt(uint8_t ciaIdx, uint32_t timeLimit);

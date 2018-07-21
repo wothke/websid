@@ -403,10 +403,10 @@ uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// e
 		
 	uint32_t d= (_osc[voice]->freqIncSample >> 16);
 	if (!d)  {
-		// no base for anti-aliasing (division-by-zero leads to "wrong" results in WASM)
+		// no base for anti-aliasing (division-by-zero leads to "wrong" results in WASM - unless slower
+		// -s BINARYEN_TRAP_MODE='js' mode is used)
 		return (uint16_t) (((_osc[voice]->counter > (_osc[voice]->pulse <<8))-1) ^ 0xFFFF);	
 	}
-	
 	double step = 2 * 256.0 / d; //simple pulse, most often used waveform, make it sound as clean as possible without oversampling
 	
 	int32_t wfout;
