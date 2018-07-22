@@ -521,7 +521,7 @@ void cpuParse(void)
             setflags(FLAG_Z, !_a);
             setflags(FLAG_N, _a&0x80);
 */
-        case anc:	// used by Axelf.sid (Crowther), Whats_Your_Lame_Excuse.sid
+        case anc:	// used by Axelf.sid (Crowther), Whats_Your_Lame_Excuse.sid, Probing_the_Crack_with_a_Hook.sid
             _bval=getaddr(opc, mode);
 			_a= _a&_bval;
 			
@@ -538,7 +538,9 @@ void cpuParse(void)
             setflags(FLAG_Z, !_a);
             setflags(FLAG_N, _a&0x80);
             break;
-        case arr: {		// Whats_Your_Lame_Excurse.sid uses this. sigh "the crappier the song...."
+        case arr: {		// Whats_Your_Lame_Excurse.sid uses this. sigh "the crappier the song...." & 
+						// Probing_the_Crack_with_a_Hook.sid
+									
 			// AND
             _bval=getaddr(opc, mode);
             _a&=_bval;
@@ -547,16 +549,17 @@ void cpuParse(void)
 			uint8_t bit7= !!(_a&0x80);
 			uint8_t bit6= !!(_a&0x40);
 
-            c=!!(_p&FLAG_C);
+            c= !!(_p&FLAG_C);
 			
-			setflags(FLAG_V,bit7^bit6);
-            setflags(FLAG_C,bit7);
-			
-			_a ^= (-c ^ _a) & (1UL << 7);	// "exchange" bit 7 with carry
-			
+			setflags(FLAG_V, bit7^bit6);
+            setflags(FLAG_C, bit7);
+						
 			// ROR - C+V not affected here
-            _a>>=1;
-    		
+            _a>>= 1;
+			
+			if (c) {
+				_a |= 0x80;	// exchange bit 7 with carry
+			}
             setflags(FLAG_N,_a&0x80);
             setflags(FLAG_Z,!_a);
 			}			
@@ -918,7 +921,7 @@ void cpuParse(void)
             _bval=_a&_x;
 			setaddr(opc,mode,_bval);
             break;
-		case sbx:	// used in Artefacts.sid, Whats_Your_Lame_Excuse.sid	
+		case sbx:	// used in Artefacts.sid, Whats_Your_Lame_Excuse.sid, Probing_the_Crack_with_a_Hook.sid
 			// affects N Z and C (like CMP)
 			_bval=getaddr(opc, mode);
 			
