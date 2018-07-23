@@ -56,13 +56,15 @@ struct EnvelopeState {
 
 	uint8_t envelopeOutput;
 	
-	int16_t currentLFSR;	// sim counter	(continuously counting / only reset by AD(S)R match)
+	uint16_t currentLFSR;	// sim counter	(continuously counting / only reset by AD(S)R match)
 	uint8_t zeroLock;  
 	uint8_t exponentialCounter;    
 
 	// ADSR bug detection 
-	uint16_t lastCycles;
-	uint16_t simLFSR;
+	uint32_t lastCycles;
+	uint16_t simLFSR;		// base for CPU-side simulation
+	uint16_t origLFSR;
+	double overflow;
 };
 
 struct EnvelopeState* getState(Envelope *e) {	// this should rather be static - but "friend" wouldn't work then
@@ -110,7 +112,6 @@ void Envelope::poke(uint8_t reg, uint8_t val) {
 			struct EnvelopeState *state= getState(this);
 
 			uint8_t oldGate= _sid->getWave(_voice)&0x1;
-			uint8_t oldTest= _sid->getWave(_voice)&0x8;		// oscillator stop
 			uint8_t newGate= val & 0x01;
 			
 			if (!oldGate && newGate) {
@@ -194,7 +195,7 @@ void Envelope::resetConfiguration(uint32_t sampleRate) {
 	may directly use a sample-counter (which also reduces rounding issues).
 	*/
 	uint16_t i;
-	sLimitLFSR= floor(((float)0x8000)/sCyclesPerSample);	// original counter was 15-bit
+	sLimitLFSR= round(((double)0x7fff)/sCyclesPerSample) + 1;	// original counter was 15-bit
 	for (i=0; i<16; i++) {
 		// counter must reach respective threshold before envelope value is incremented/decremented								
 		// note: attack times are in millis & there are 255 steps for envelope..
@@ -202,7 +203,7 @@ void Envelope::resetConfiguration(uint32_t sampleRate) {
 	}
 	// lookup table for decay rates
 	uint8_t from[] =  {93, 54, 26, 14,  6,  0};
-	uint8_t val[] = { 1,  2,  4,  8, 16, 30};
+	uint8_t val[] =   { 1,  2,  4,  8, 16, 30};
 	for (i= 0; i<256; i++) {
 		uint8_t q= 1;
 		for (uint8_t j= 0; j<6; j++) {
@@ -214,7 +215,7 @@ void Envelope::resetConfiguration(uint32_t sampleRate) {
 		sExponentialDelays[i]= q;
 	}	
 }
-uint8_t Envelope::triggerLFSR_Threshold(uint16_t threshold, int16_t *end) {
+uint8_t Envelope::triggerLFSR_Threshold(uint16_t threshold, uint16_t *end) {
 
 	// check if LFSR threshold was reached
 	if (threshold == (*end)) {
@@ -390,7 +391,8 @@ int32_t Envelope::clocksToSamples(int32_t clocks) {
 void Envelope::snapshotLFSR() {
 	struct EnvelopeState *state= getState(this);
 	state->lastCycles= 0; 
-	state->simLFSR= state->currentLFSR;
+	state->simLFSR= state->origLFSR= state->currentLFSR;
+	state->overflow= 0;
 }
 
 /*
@@ -412,36 +414,56 @@ void Envelope::snapshotLFSR() {
 	(note: cpuCycles() refers to the local context, i.e. it is reset for each new IRQ, etc.) 
 
 	Problem 2: (correctly) the ADSR bug will occur "elapsed" (see var below) samples into the next SID output 
-	rendering, i.e. NOT right from the start. Before that the old counter would still be used. The overflow 
+	rendering, i.e. NOT right from the start. Before that the old threshold would still be used. The overflow 
 	at that point would mean that a total of "sLimitLFSR-(currentLFSR-newThreshold)" increment steps would 
 	*then* be needed to reach the newThreshold, i.e. the "elapsed" time here would be relevant as a "correct 
 	timing" offset.
+	
+	
+	Rearding below method:
+	
+	The next SID emulation run will later start with whatever threshold is set here *last*, i.e. 
+	any intermediate settings that might normally still be used for a little while are completely skipped. 
+	The assumption is that most bug-cases the relavively short duration within the player-routine
+	(e.g. 2000 cycles) should not matter too much.
+	
+	Theoretically a player might make multiple settings, where some intermediate setting first  	
+	results in a bug-condition (i.e. lower threshold set) but where a later made higher-threshold setting
+	again removes that bug-condition.
+	
+	The below method tries to incrementally predict the state of the LFSR at the time some setting
+	is actually made and to force the SID-emu LFSR register into bug-mode if necessary.
 */
 void Envelope::simGateAdsrBug(uint8_t dbgIdx, uint16_t newRate) {
-	// example LMan - Confusion 2015 Remix.sid: updates threshold then switches to lower threshold via GATE
-
-	struct EnvelopeState *state= getState(this);
+	// testcases: LMan - Confusion 2015 Remix.sid: updates threshold then switches to lower threshold via GATE
+	// these songs depend on the "un-hacked" logic below:
+	//            Trick'n'Treat.sid: horrible "shhhht-shhht" sounds when wrong handling..
+	//            K9_V_Orange_Main_Sequence.sid: creates "blips" when wrong handling
+	// for some reason this one requires hack - which conflicts with the above:
+	//            Move_Me_Like_A_Movie.sid: creates "false positives" that lead to muted voices
 	
+	struct EnvelopeState *state= getState(this);
+		
 	uint16_t oldThreshold= getCurrentThreshold();
 	uint16_t newThreshold= sCounterPeriod[newRate];
-
-	// try to redundantly keep track of LFSR (obviously an ugly/error prone hack
-	// and the emu would be so much easier if just done on a cycle-by-cycle basis...)
 	
-	uint32_t elapsed = clocksToSamples(cpuCycles() - state->lastCycles);	// prone to rounding issues too
-	uint16_t simLSFR = state->simLFSR;
+	// probably a useless overkill to track the overflow: 
+	double e= ((double)cpuCycles() - state->lastCycles)/sCyclesPerSample + state->overflow;
+	uint32_t elapsed = floor(e);
+	state->overflow= e-elapsed;
+	
+	// simulate what happend since this method was last called...
+	uint16_t simLSFR = state->simLFSR;		// last state used by SID emu (that was cpuCycles() ago)
 	if (simLSFR < oldThreshold) {
-		simLSFR= (simLSFR + elapsed) % oldThreshold;	
+		// might have reached the threshold during elapsed time
+		simLSFR= (simLSFR + elapsed) % oldThreshold;
 	} else {
 		// already in overflow.. so let it do the full circle
-	}
-	simLSFR= simLSFR % sLimitLFSR;
-	
-	state->lastCycles= cpuCycles();	
-	state->simLFSR = simLSFR;
+		simLSFR= (simLSFR + elapsed) % sLimitLFSR;
+	}			
 
 	if (oldThreshold > newThreshold ) {	// only a reduction may lead to an overflow
-		if (simLSFR >= newThreshold ) {		// ADSR BUG activated!
+		if (simLSFR >= newThreshold ) {		// ADSR BUG activated!	
 			// by setting currentLFSR to something equal or higher than newThreshold it is forced into "overflow territory"):
 			
 			// try to trigger bug for correct "overall duration" (see problem 2): when set to newThreshold then 
@@ -449,7 +471,50 @@ void Envelope::simGateAdsrBug(uint8_t dbgIdx, uint16_t newRate) {
 			// tigger the bug but reduce the steps needed to get out of it..
 			// (note: Eskimonika is a good test case for false positives..)
 
-			state->currentLFSR= simLSFR;	// this should be the correctly reduced bug time: newThreshold+(simLSFR-newThreshold)
+			if (dbgIdx == 0) {	// hack: see Move_Me_Like_A_Movie.sid
+				// note: the usage pattern seems to be pretty identical for all the songs:  
+				// 				- all are PSIDs
+				//				- start from previous dbgIdx==4
+				// 				- origThreshold (see end of SID-run)= newThreshold=  1
+				// 				- oldThreshold= ~2-87 (i.e. temporarilly set higher before reduced again)
+				// 				- origLFSR = currentLFSR = 0		(see threshold)
+												
+				// but except for the Move_Me_Like_A_Movie.sid type, songs seem to depend on the simLSFR calculation 
+				// performed here (i.e. it does not seem to be too far off the target).. why the logic creates false 
+				// positives in Move_Me_Like_A_Movie.sid is totally unclear.. (would these songs actually 
+				// work on real HW? or are they designed against the flaws of some emulator?)
+				
+				// brittle hack: most songs would be better off without these exceptions..
+				if (((simLSFR - newThreshold) > 3) 	// Trick'n^Treat (presumably problem affects shorter intervals)
+						|| (oldThreshold <= 18 )		// K9_V_Orange_Main_Sequence (just a heuristic based in this song)
+					) 
+				{	
+					state->currentLFSR= simLSFR;
+				} else {
+					// filtering of "oldThreshold=18" case would cause ugly "shhhht-shhht"
+					// sounds in K9_V_Orange_Main_Sequence (some higher values also cause
+					// distortions in this song but they are less frequently used and 
+					// therefore tolerated
+					
+					// "false positives" affecting Move_Me_Like_A_Movie: todo: replace 
+					// this fragile hack with a proper fix (there are too many side-effects
+					// on other / correctly working songs!)
+				}
+			} else {
+				state->currentLFSR= simLSFR;	// this should be the correctly reduced bug time: newThreshold+(simLSFR-newThreshold)
+			}
 		}		
+	} else {
+		// some earlier setting might already have wrongly setup the bug-mode
+		if (simLSFR < newThreshold ) {	// false alarm.. restore
+			// flawed impl: the newThreshold might still be lower than what the SID emu
+			// had last been using. Just continuing with the origLFSR may (wrongly) result 
+			// in bug-mode - depending on what the timing of the update actually was.
+			state->currentLFSR= state->origLFSR;	
+		}
 	}
+	
+	// update base (in case there are more updates later)
+	state->lastCycles= cpuCycles();	
+	state->simLFSR = simLSFR;
 }

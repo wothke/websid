@@ -467,7 +467,8 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 		return digiRenderSamples(digiBuffer, envClockRate()/envFPS(), samplesPerCall);
 	} else {
 		// legacy PSID mode: one "IRQ" call per screen refresh (a PSID may actually setup CIA 1 
-		// timers but without wanting to use them - e.g. ZigZag.sid track2)
+		// timers but without wanting to use them - e.g. ZigZag.sid track2). note: most files from the
+		// HVSC actually fall into this mode...
 		
 		// might not be a good idea to give those garbage PSIDs unlimited cycles (see main-loop players
 		// disguised as PSID - which would otherwise hang the player/browser)! though some songs do seem to use 

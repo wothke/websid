@@ -687,7 +687,7 @@ static void initMem(uint16_t addr, uint8_t value) {
 void ciaResetPsid60Hz() {
 	if (envIsTimerDrivenPSID()) {
 		// if an idiotic PSID does not setup any timer it then expects 60Hz..
-		if (!memReadRAM(0xdc04) && !memReadRAM(0xdc05)) {
+		if (!memReadIO(0xdc04) && !memReadIO(0xdc05)) {
 			uint32_t c= envClockRate()/60;
 			initMem(0xdc04, c&0xff);
 			initMem(0xdc05, c>>8);		

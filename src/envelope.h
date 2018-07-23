@@ -68,7 +68,7 @@ protected:
 	*/
 	uint8_t getSR();	
 private:
-	uint8_t triggerLFSR_Threshold(uint16_t threshold, int16_t *end);
+	uint8_t triggerLFSR_Threshold(uint16_t threshold, uint16_t *end);
 	uint8_t handleExponentialDelay();
 		// --- ADSR-bug
 	uint16_t getCurrentThreshold();
