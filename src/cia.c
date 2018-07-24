@@ -269,9 +269,9 @@ static void setTimer(struct Timer *t, uint16_t offset, uint8_t value) {
 * @return _failMarker: timeLimit was reached / [positive number] wait time in 
 *					 cycles until the interrupt occurs
 */
-static uint32_t intForwardToNextCiaInterrupt(struct Timer *t, uint32_t timeLimit) {
+static uint32_t intForwardToNextCiaInterrupt(struct Timer *t, uint32_t timeLimit) {	
 	uint32_t waited= 0;
-		
+
 	for(;;) {
 		if (!(isTimerStarted(t, TIMER_A) || isTimerStarted(t, TIMER_B))) {
 			waited= _failMarker; 
@@ -369,7 +369,8 @@ static uint32_t intForwardToNextCiaInterrupt(struct Timer *t, uint32_t timeLimit
 				// timer1 is next (before timer2)
 				if ((waited + count1) >= timeLimit) {			// handle remaining counter in next screen
 					uint16_t timeLeft= timeLimit-waited;
-					reduceTimerCounter(t, timer1, timeLeft);
+					reduceTimerCounter(t, timer1, timeLeft);				
+		 		
 					if (count2 != STOPPED) {
 						reduceTimerCounter(t, timer2, timeLeft);
 					}

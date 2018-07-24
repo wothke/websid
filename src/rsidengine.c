@@ -50,7 +50,7 @@ enum TimerType { RASTER_TIMER = 0, CIA1_TIMER = 1, NO_IRQ = 2};
 
 // next interrupt not on this screen; value bigger 
 // than any 16-bit counter for easy comparison
-const uint32_t NO_INT= 0x1ffffff;		
+const uint32_t NO_INT= 0x1ffffff;			// aka 33554431
 
 // if 'init' takes longer than 2 secs then something is wrong (mb in endless loop)
 #define CYCLELIMIT 2000000
@@ -412,7 +412,7 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 				availableIrqCycles-= currentIrqTimer;
 			
 				currentIrqTimer= forwardToNextInterrupt(getIrqTimerMode(CIA1), CIA1, availableIrqCycles);
-								
+							
 				tIrq+= currentIrqTimer;		// will be garbage on last run..	
 			}
 		}

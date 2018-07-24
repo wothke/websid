@@ -65,6 +65,7 @@ struct EnvelopeState {
 	uint16_t simLFSR;		// base for CPU-side simulation
 	uint16_t origLFSR;
 	double overflow;
+	uint8_t rUpped;
 };
 
 struct EnvelopeState* getState(Envelope *e) {	// this should rather be static - but "friend" wouldn't work then
@@ -73,8 +74,8 @@ struct EnvelopeState* getState(Envelope *e) {	// this should rather be static - 
 
 // what garbage language needs this... (to avoid "unresolved symbols")
 double Envelope::sCyclesPerSample;
-int32_t Envelope::sLimitLFSR;
-int32_t Envelope::sCounterPeriod[16];
+uint32_t Envelope::sLimitLFSR;
+uint32_t Envelope::sCounterPeriod[16];
 uint8_t Envelope::sExponentialDelays[256];
 
 Envelope::Envelope(SID *sid, uint8_t voice) {
@@ -196,11 +197,13 @@ void Envelope::resetConfiguration(uint32_t sampleRate) {
 	*/
 	uint16_t i;
 	sLimitLFSR= round(((double)0x7fff)/sCyclesPerSample) + 1;	// original counter was 15-bit
+	
 	for (i=0; i<16; i++) {
 		// counter must reach respective threshold before envelope value is incremented/decremented								
 		// note: attack times are in millis & there are 255 steps for envelope..
-		sCounterPeriod[i]= (int32_t)floor(((double)envClockRate())/(255*1000) * attackTimes[i] / sCyclesPerSample)+1;	// in samples
+		sCounterPeriod[i]= floor(((double)envClockRate())/(255*1000) * attackTimes[i] / sCyclesPerSample)+1;	// in samples
 	}
+	
 	// lookup table for decay rates
 	uint8_t from[] =  {93, 54, 26, 14,  6,  0};
 	uint8_t val[] =   { 1,  2,  4,  8, 16, 30};
@@ -393,6 +396,7 @@ void Envelope::snapshotLFSR() {
 	state->lastCycles= 0; 
 	state->simLFSR= state->origLFSR= state->currentLFSR;
 	state->overflow= 0;
+	state->rUpped = 0;
 }
 
 /*
@@ -434,15 +438,50 @@ void Envelope::snapshotLFSR() {
 	The below method tries to incrementally predict the state of the LFSR at the time some setting
 	is actually made and to force the SID-emu LFSR register into bug-mode if necessary.
 */
+/*
+void dbgPrint(uint8_t dbgIdx, uint16_t newRate) {
+	const char* t="x";
+	switch (dbgIdx) {
+	case 0:
+		t= "GATE ON";
+		break;
+	case 1:
+		t= "GATE OFF";
+		break;
+	case 2: 
+		t= "A";
+		break;
+	case 3:
+		t= "D";
+		break;
+	case 4:
+		t= "R";
+		break;
+	}	
+	fprintf(stderr, "  %s %d %lu\n", t, newRate, cpuCycles());
+}
+*/
 void Envelope::simGateAdsrBug(uint8_t dbgIdx, uint16_t newRate) {
-	// testcases: LMan - Confusion 2015 Remix.sid: updates threshold then switches to lower threshold via GATE
+//	dbgPrint(dbgIdx, newRate);
+
+	struct EnvelopeState *state= getState(this);
+
+	if (dbgIdx == 4) {					// hack (see below)
+		uint8_t p= state->sr & 0xf;
+		if ((p == 0) && (newRate > p)) state->rUpped = 1;
+	}
+		
 	// these songs depend on the "un-hacked" logic below:
-	//            Trick'n'Treat.sid: horrible "shhhht-shhht" sounds when wrong handling..
-	//            K9_V_Orange_Main_Sequence.sid: creates "blips" when wrong handling
+	//            Confusion_2015_Remix.sid: updates threshold then switches to lower threshold via GATE
+	//            Trick'n'Treat.sid: horrible "shhhht-shhht" sounds when wrong/hacked handling..
+	//            K9_V_Orange_Main_Sequence.sid: creates "blips" when wrong/hacked handling
+	//            $11_Heaven.sid: creates audible clicks whem wrong/hacked handling
+	//            Eskimonika.sid: good test for false potitives
+	//            Monofail.sid
+	//            Blade_Runner_Main_Titles_2SID.sid
 	// for some reason this one requires hack - which conflicts with the above:
 	//            Move_Me_Like_A_Movie.sid: creates "false positives" that lead to muted voices
 	
-	struct EnvelopeState *state= getState(this);
 		
 	uint16_t oldThreshold= getCurrentThreshold();
 	uint16_t newThreshold= sCounterPeriod[newRate];
@@ -469,37 +508,22 @@ void Envelope::simGateAdsrBug(uint8_t dbgIdx, uint16_t newRate) {
 			// try to trigger bug for correct "overall duration" (see problem 2): when set to newThreshold then 
 			// the maximum of sLimitLFSR steps would be needed to get out of the bug, any higher value will still 
 			// tigger the bug but reduce the steps needed to get out of it..
-			// (note: Eskimonika is a good test case for false positives..)
 
-			if (dbgIdx == 0) {	// hack: see Move_Me_Like_A_Movie.sid
-				// note: the usage pattern seems to be pretty identical for all the songs:  
-				// 				- all are PSIDs
-				//				- start from previous dbgIdx==4
-				// 				- origThreshold (see end of SID-run)= newThreshold=  1
-				// 				- oldThreshold= ~2-87 (i.e. temporarilly set higher before reduced again)
-				// 				- origLFSR = currentLFSR = 0		(see threshold)
-												
-				// but except for the Move_Me_Like_A_Movie.sid type, songs seem to depend on the simLSFR calculation 
-				// performed here (i.e. it does not seem to be too far off the target).. why the logic creates false 
-				// positives in Move_Me_Like_A_Movie.sid is totally unclear.. (would these songs actually 
-				// work on real HW? or are they designed against the flaws of some emulator?)
-				
-				// brittle hack: most songs would be better off without these exceptions..
-				if (((simLSFR - newThreshold) > 3) 	// Trick'n^Treat (presumably problem affects shorter intervals)
-						|| (oldThreshold <= 18 )		// K9_V_Orange_Main_Sequence (just a heuristic based in this song)
-					) 
-				{	
-					state->currentLFSR= simLSFR;
-				} else {
-					// filtering of "oldThreshold=18" case would cause ugly "shhhht-shhht"
-					// sounds in K9_V_Orange_Main_Sequence (some higher values also cause
-					// distortions in this song but they are less frequently used and 
-					// therefore tolerated
+			if (dbgIdx == 0) {	// hack 
+				// note: the same R=0 -> R=x -> A(GATE)=0 sequence is used by many songs - which "all" seem
+				// to work fine with the regular impl (many actually seem to depend on it) - but for some reason
+				// it doesn't work in Move_Me_Like_A_Movie.sid (the currently used test is fragile.. and conflicts 
+				// with other yet to be discovered examples are to be expected).. 
+				// todo: find root cause - maybe some lack of precision issue (see ~22 cycle step width)?	
+				uint16_t diff= simLSFR - newThreshold;
+				if (state->rUpped && (newRate == 0) && ((state->sr & 0xf) == 10) && /*Trick'n'Treat:*/(diff < 3)) {
+					// the hack is still wrongly used in Blade_Runner_Main_Titles_2SID but the effect seems neglegible
 					
-					// "false positives" affecting Move_Me_Like_A_Movie: todo: replace 
-					// this fragile hack with a proper fix (there are too many side-effects
-					// on other / correctly working songs!)
+					state->currentLFSR= state->origLFSR;	// Move_Me_Like_A_Movie.sid specific hack
+				} else {
+					state->currentLFSR= simLSFR;
 				}
+				state->rUpped= 0;
 			} else {
 				state->currentLFSR= simLSFR;	// this should be the correctly reduced bug time: newThreshold+(simLSFR-newThreshold)
 			}

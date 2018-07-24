@@ -841,7 +841,11 @@ extern "C" uint32_t sidGetSampleFreq() {
 }
 
 extern "C" void sidResetVolumeChangeCount() {
-	 _sids[0].resetVolumeChangeCount();
+	for (uint8_t i= 0; i<_usedSIDs; i++) {		// see Blade_Runner_Main_Titles_2SID.sid
+		SID &sid= _sids[i];			
+		_sids[i].resetVolumeChangeCount();
+	}
+	 
 }
 extern "C" uint8_t sidGetNumberOfVolumeChanges() {
 	return _sids[0].getNumberOfVolumeChanges();

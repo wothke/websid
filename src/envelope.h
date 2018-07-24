@@ -84,8 +84,8 @@ private:
 	uint8_t _voice;
 
 	static double sCyclesPerSample;	// redundancy used to avoid repeated calcs
-	static int32_t sLimitLFSR; // the original cycle counter would be 15-bit (here samples are counted & counter is rescaled accordingly)
-	static int32_t sCounterPeriod[16];
+	static uint32_t sLimitLFSR; // the original cycle counter would be 15-bit (here samples are counted & counter is rescaled accordingly)
+	static uint32_t sCounterPeriod[16];
 	static uint8_t sExponentialDelays[256];
 };
 
