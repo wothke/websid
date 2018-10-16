@@ -99,7 +99,6 @@ struct SimOsc3 {
 	uint8_t waveform;
 	uint32_t baseCycles;
 	uint32_t counter;
-	uint32_t multiplicator;	
 };
 
 // internal oscillator def
@@ -550,9 +549,6 @@ void SID::simStartOscillatorVoice3(uint8_t voice, uint8_t val) {
 		// hack: use only for main/pulse cases like Instantfunk.sid
 		_osc3sim->baseCycles= cpuTotalCycles();
 		_osc3sim->counter= 0; 
-		
-		// for some reason the playback is slightly slower than in ACID64
-		_osc3sim->multiplicator= round(_sid->cyclesPerSample * envNumberOfSamplesPerCall() / envCyclesPerScreen());
 	}
 }
 uint32_t SID::simOsc3Counter() {
@@ -560,7 +556,8 @@ uint32_t SID::simOsc3Counter() {
 	uint32_t diff= cpuTotalCycles() - _osc3sim->baseCycles;
 	_osc3sim->baseCycles= cpuTotalCycles();
 
-	uint32_t f= ((uint32_t)_sid->voices[2].freq) * _osc3sim->multiplicator * diff;		
+		// for some reason the playback is slightly slower than in ACID64 .. therefore 5% hack..
+	uint32_t f= floor(1.05f * diff * _sid->voices[2].freq);
 	_osc3sim->counter= (_osc3sim->counter + f) & 0xffffff;
 	return _osc3sim->counter;
 }
