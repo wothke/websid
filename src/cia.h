@@ -37,4 +37,6 @@ void ciaSignalUnderflow(uint8_t ciaIdx, uint8_t timerIdx);
 uint8_t ciaReadMem(uint16_t addr);
 void ciaWriteMem(uint16_t addr, uint8_t value);
 
+void ciaPrintDebug();
+
 #endif

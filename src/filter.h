@@ -24,7 +24,9 @@ protected:
 	Filter(class SID *sid);
 	
 	void reset(uint32_t sampleRate);
-	int32_t getOutput(int32_t *in, int32_t *out, double cutoff, double resonance);
+	int32_t getOutput(int32_t *in, int32_t *out, double cutoff, double resonance, double cyclesPerSample);
+	int32_t simOutput(uint8_t voice, int32_t *in, int32_t *out, double cutoff, double resonance);
+
 	uint8_t isActive(uint8_t voice);
 	void filterSamples(uint8_t *digiBuffer, uint32_t len, int8_t voice);
 	double runFilter(double in, double output, double *prevbandpass, double *prevlowpass, double cutoff, double resonance);

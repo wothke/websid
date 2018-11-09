@@ -25,7 +25,7 @@
 #include "sid.h"
 #include "vic.h"		// for vicGetRasterline()
 
-#define DIGI_BUF_SIZE 1000
+#define DIGI_BUF_SIZE 1000		// caution... not same size as other buffers..
 
 static uint32_t INVALID_TIME= (0x1 << 27);	// large enough so that any regular timestamp will get preference
 static uint16_t IDX_NOT_FOUND= 0x1fff;			// we'll never have that many samples for one screen..
@@ -73,25 +73,34 @@ _internalAdd, _internalRepeatTimes, _internalRepeatStart;
 
 static void recordSample(uint8_t sample) {
 	if (cpuCycles() <= envCyclesPerScreen()) {
-		_digiTime[_digiCount%(DIGI_BUF_SIZE-1)]= cpuCycles();
-		_digiVolume[_digiCount%(DIGI_BUF_SIZE-1)]= sample;	// always use 8-bit to ease handling									
+		_digiTime[_digiCount]= cpuCycles();
+		_digiVolume[_digiCount]= sample;	// always use 8-bit to ease handling									
 
 		_digiCount+=1;	// buffer is meant to collect no more than the samples from one screen refresh!
-	}
-	else {
+		
+		_digiCount= _digiCount%(DIGI_BUF_SIZE-1);	// why wrap? avoid array bounds overflow
+		
+		if (_digiCount == DIGI_BUF_SIZE) _digiCount-= 1;	// just overwrite last entry
+		
+//		_digiCount= _digiCount%(DIGI_BUF_SIZE-1);	// why wrap? avoid array bounds overflow
+
+	} else {
 		// some players (e.g. Digital_Music.sid) start long running IRQ routines at the end of one screen 
 		// producing most of their output on the next screen... so we have to deal with this scenario..
 		
-		_overflowDigiTime[_overflowDigiCount%(DIGI_BUF_SIZE-1)]= cpuCycles()-envCyclesPerScreen();
-		_overflowDigiVolume[_overflowDigiCount%(DIGI_BUF_SIZE-1)]= sample;	// always use 8-bit to ease handling									
+		_overflowDigiTime[_overflowDigiCount]= cpuCycles()-envCyclesPerScreen();
+		_overflowDigiVolume[_overflowDigiCount]= sample;	// always use 8-bit to ease handling									
 
 		_overflowDigiCount+=1;	// buffer is meant to collect no more than the samples from one screen refresh!		
+		
+		if (_overflowDigiCount == DIGI_BUF_SIZE) _overflowDigiCount-= 1;	// just overwrite last entry
+//		_overflowDigiCount= _overflowDigiCount%(DIGI_BUF_SIZE-1); // why wrap?
 	}
 }
 
 // -------------------------------------------------------------------------------------------
 // detection of test-bit/frequency modulation digi-sample technique (e.g. used in 
-// Vicious_SID_2-15638Hz.sid, Storebror.sid, etc)
+// Vicious_SID_2-15638Hz.sid, Storebror.sid, Vaakataso.sid, etc)
 // -------------------------------------------------------------------------------------------
 
 /* 
@@ -363,6 +372,8 @@ static uint8_t handleIceGuysDigi(uint8_t voice, uint8_t reg, uint8_t value) {
 // Mahoney's D418 "8-bit" digi sample technique..
 // -------------------------------------------------------------------------------------------
 
+static uint8_t _IsMahoneyMode;
+
 // based on Mahoney's amplitude_table_8580.txt (not using SID model specific sample logic to this should be good enough)
 static const uint8_t _mahoneySample[256]= {
 	164, 170, 176, 182, 188, 194, 199, 205, 212, 218, 224, 230, 236, 242, 248, 254, 
@@ -383,6 +394,11 @@ static const uint8_t _mahoneySample[256]= {
 	164, 153, 142, 131, 120, 109, 99, 88, 75, 65, 55, 44, 34, 24, 14, 4
 } ;
 
+
+uint8_t digiIsMahoneyMode() {
+	return _IsMahoneyMode;
+}
+
 inline static uint8_t isMahoneyDigi() {
 	// Mahoney's "8-bit" D418 sample-technique requires a specific SID setup
 	if (((memGet(0xd406) == 0xff) && (memGet(0xd40d) == 0xff) && (memGet(0xd414) == 0xff)) && // correct SR
@@ -390,6 +406,7 @@ inline static uint8_t isMahoneyDigi() {
 		((memGet(0xd415) == 0xff) && (memGet(0xd416) == 0xff) ) && // correct filter cutoff
 		(memGet(0xd417) == 0x3)) {	// voice 1&2 through filter
 		
+		_IsMahoneyMode= 1;
 		return 1;
 	} else {
 		return 0;
@@ -606,7 +623,7 @@ void digiTagOrigin(uint32_t mask, uint32_t offset, uint32_t originalDigiCount) {
 	Alchemy bug.. for now the hack works.
 	*/
 	
-	uint16_t len= _digiCount - originalDigiCount;
+	int16_t len= _digiCount - originalDigiCount;
 	
 	if (len > 0) {
 		for (uint16_t i= 0; i<len; i++) {
@@ -654,6 +671,8 @@ void digiReset(uint8_t compatibility, uint8_t isModel6581) {
 		
 		_swallowPWM[i]= 0;
 	}
+	
+	_IsMahoneyMode= 0;
 }
 
 // samples per frame.. actually should be well more than this..
@@ -751,6 +770,8 @@ static void copy(uint32_t mask, uint16_t toIdx, uint16_t fromIdx) {
 static uint16_t next(uint32_t mask, uint16_t toIdx, uint16_t fromIdx) {
 	copy(mask, toIdx, fromIdx);
 
+	if (_digiCount > DIGI_BUF_SIZE) _digiCount= DIGI_BUF_SIZE;	// just in case
+	
 	uint16_t i; 
 	for (i= fromIdx+1; i<_digiCount; i++) {
 		if(isVal(mask, _digiTime[i])) {

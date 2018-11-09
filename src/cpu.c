@@ -235,7 +235,7 @@ static uint8_t getaddr(uint8_t opc, int32_t mode)
             return memGet(_pc++);
         case abs:
             ad=memGet(_pc++);
-            ad|=memGet(_pc++)<<8;
+            ad|=memGet(_pc++)<<8;			
             return memGet(ad);
         case abx:
         case aby:			

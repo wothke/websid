@@ -178,12 +178,13 @@ static void patchWonderlandIfNeeded(uint16_t *initAddr) {
 	}
 }
 
+static void patchThcmIfNeeded(uint16_t *initAddr) {
+	// "File Deleted" / "My Life" patch
+	uint8_t thcmPattern[]= {0xce, 0xb1, 0x0b, 0x68, 0x68, 0x68, 0x8c, 0x0d, 0xdd};
+	if (memMatch(0x0b4d, thcmPattern, 9)) {		
+		// NMI interrupting MAIN during init not supported (i.e. the 3 stack 
+		// entries are never pushed and there is nothing to pull back)
 
-static void patchFileDeletedIfNeeded(uint16_t *initAddr) {
-	// "File Deleted" patch
-	uint8_t thcmPattern[]= {0x24, 0x00, 0x4C, 0x03, 0x00};
-	if (((*initAddr) == 0x080d) && memMatch(0x08c3, thcmPattern, 5)) {
-		// NMI interrupting MAIN during init not supported
 		// (THCM uses it here to detect old/new CIA chips and make
 		// a +1 cycle timing correction..)
 		memWriteRAM(0x0B50, 0xea);	// disable NMI stack manipulation
@@ -192,8 +193,8 @@ static void patchFileDeletedIfNeeded(uint16_t *initAddr) {
 	}
 }
 
-void hackIfNeeded(uint16_t *initAddr) {	
-	patchFileDeletedIfNeeded(initAddr);
+void hackIfNeeded(uint16_t *initAddr) {
+	patchThcmIfNeeded(initAddr);
 	
 	patchMahoneyLatestIfNeeded(initAddr);
 	

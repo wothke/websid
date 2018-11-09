@@ -26,8 +26,8 @@ static uint32_t _failMarker;
 
 void vicReset(uint8_t isRsid, uint32_t f) {
 	_failMarker= f;
-
-	if (isRsid) {	
+	
+	if (isRsid) {
 		// by default C64 is configured with CIA1 timer / not raster irq
 		memWriteIO(0xd01a, 0x00); 	// raster irq not active
 		memWriteIO(0xd011, 0x1B);
@@ -85,11 +85,16 @@ static void setD019(uint8_t value) {
 	memWriteIO(0xd019, memReadIO(0xd019)&(~value));
 }
 
-static void signalVicIrq() {	
+static void signalIrq() {	
 	// bit 7: IRQ triggered by VIC
 	// bit 0: source was rasterline
 
 	memWriteIO(0xd019, memReadIO(0xd019)|0x81);
+}
+
+void vicSimIRQ() {
+	memWriteIO(0xd01a, 0x01);
+	signalIrq();
 }
 
 uint32_t lastDummyInterrupt=0;
@@ -158,7 +163,7 @@ uint32_t vicForwardToNextRaster() {
 
 	}
 	if (timer != _failMarker) {
-		signalVicIrq();	// in case some IRQ routine is checking.. e.g. Galdrumway.sid	
+		signalIrq();	// in case some IRQ routine is checking.. e.g. Galdrumway.sid	
 	} 
 
 	return timer;

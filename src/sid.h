@@ -48,6 +48,6 @@ void sidWriteMem(uint16_t addr, uint8_t value);
 // hack
 void sidResetVolumeChangeCount();
 uint8_t sidGetNumberOfVolumeChanges();
-void sidDisableVolumeChangeNMI(uint8_t mode);
+void sidDisableVolumeChangeNMI(uint8_t disabled);
 
 #endif

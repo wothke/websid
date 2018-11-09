@@ -10,6 +10,9 @@
  * "ADSR-bug" handling) and support for RSID digi playback (D418, PWM, etc) - which is handled
  * as a postprocessing step.
  *
+ * Known limitations: 
+ * - effects of the digital-to-analog conversion (e.g. respective 6581 flaws) are NOT handled
+ *
  * <p>Credits:
  * <ul>
  * <li>TinySid (c) 1999-2012 T. Hinrichs, R. Sinsch (with additional fixes from Markus Gritsch) 
@@ -103,7 +106,7 @@ struct SimOsc3 {
 
 // internal oscillator def
 struct Oscillator {
-    uint32_t freqIncSample;		// osc increment per second 
+    uint32_t freqIncSample;		// osc increment per sample 
     uint32_t freqIncCycle;		// osc increment per cycle
 	
     uint32_t pulse;
@@ -332,7 +335,7 @@ void SID::advanceOscillators() {
 				_osc[voice]->noiseval = 0x7ffff8;
 			} else {
 				// update wave counter
-				_osc[voice]->counter = (_osc[voice]->counter + _osc[voice]->freqIncCycle) & 0xFFFFFF;				
+				_osc[voice]->counter = (_osc[voice]->counter + _osc[voice]->freqIncCycle) & 0xffffff;				
 			}
 
 			// base for hard sync
@@ -353,7 +356,7 @@ void SID::advanceOscillators() {
 // works (it works well enough for Kentilla and Clique_Baby (apparently has to sound 
 // as shitty as it does)
 uint16_t SID::combinedWF(uint8_t channel, double *wfarray, uint16_t index, uint8_t differ6581) { //on 6581 most combined waveforms are essentially halved 8580-like waves
-	if (differ6581 && _sid->isModel6581) index &= 0x7FF;
+	if (differ6581 && _sid->isModel6581) index &= 0x7ff;
 	double combiwf = (wfarray[index] + _sid->voices[channel].prevWavData) / 2;
 	_sid->voices[channel].prevWavData = wfarray[index];
 	
@@ -362,17 +365,17 @@ uint16_t SID::combinedWF(uint8_t channel, double *wfarray, uint16_t index, uint8
 
 uint16_t SID::createTriangleOutput(uint8_t voice) {
 	uint32_t tmp = getRingModCounter(voice);
-    uint32_t wfout = (tmp ^ (tmp & 0x800000 ? 0xFFFFFF : 0)) >> 7;
-	return wfout & 0xFFFF;
+    uint32_t wfout = (tmp ^ (tmp & 0x800000 ? 0xffffff : 0)) >> 7;
+	return wfout & 0xffff;
 }			
 uint16_t SID::createSawOutput(uint8_t voice) {	// test with Alien or Kawasaki_Synthesizer_Demo
-	// Hermit's "anti-aliasing"
+	// Hermit's "anti-aliasing" - FIXME XXX with the added external filter this may no longer make sense
 	uint32_t wfout = _osc[voice]->counter >> 8;	// top 16-bits
 	double step = ((double)_osc[voice]->freqIncSample) / 0x1200000;
 	
 	if (step != 0) {
 		wfout += round(wfout * step);
-		if (wfout > 0xFFFF) wfout = 0xFFFF - round (((double)(wfout - 0x10000)) / step);
+		if (wfout > 0xffff) wfout = 0xffff - round (((double)(wfout - 0x10000)) / step);
 	}
 	return wfout;
 }
@@ -382,50 +385,80 @@ void SID::calcPulseBase(uint8_t voice, uint32_t *tmp, uint32_t *pw) {
 	(*tmp) = _osc[voice]->freqIncSample >> 9;	// 15 MSB needed
 	
 	if ((0 < (*pw)) && ((*pw) < (*tmp))) { (*pw) = (*tmp); }
-	(*tmp) ^= 0xFFFF;
+	(*tmp) ^= 0xffff;
 	if ((*pw) > (*tmp)) (*pw) = (*tmp);
 	(*tmp) = _osc[voice]->counter >> 8;			// 16 MSB needed
 }
 
+
+// flawed hack used to simulate the "highpass filter effect" of the originally 
+// missing "external filter" 
+//#define USE_PULSE_DECAY
+
 uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// elementary pulse
-	// plain no-frills pulse
-//	return isTestBit(voice) ? 0xFFFF : (uint16_t) (((_osc[voice]->counter > (_osc[voice]->pulse <<8))-1) ^ 0xFFFF);
+	if (isTestBit(voice)) return 0xffff;	// pulse start position
+
+#ifdef USE_PULSE_DECAY	
+	uint32_t p= (_osc[voice]->pulse <<8);	// i.e. 24-bit /low-byte always 0
+	int32_t pos= (_osc[voice]->counter - p);	// current position in the pulse (increases in "frequency" steps..)
+
+	uint32_t x= (0xffff-_osc[voice]->freqIncCycle);	
+	double drop= ((double)x)/0xffff/_osc[voice]->freqIncCycle; 
+	
+	uint16_t s= (_osc[voice]->counter >= p) ? 
+					floor(drop*pos) : 		// 0xffff side
+					floor(drop*_osc[voice]->counter);		// 0x0 side
+#endif		
+	// old "no-frills" impl:
+//	return  (pos >= 0) ? 0xffff-s:  s;
 
 	// Hermit's "anti-aliasing" pulse
-	if (isTestBit(voice)) return 0xFFFF;	// pulse start position
 	
 	// note: the smaller the step, the slower the phase shift, e.g. ramp-up/-down rather than 
 	// immediate switch (current setting does not cause much of an effect - use "0.1*" to make it obvious )
+	double step=  2 * 256.0 / (((double)_osc[voice]->freqIncSample)/(1 << 16));
 	
 	// larger steps cause "sizzling noise" and the step used here is 2x what Hermit is using 
 	// in his player.. (not sure it this "anti-aliasing" is really doing more good that harm..)
 		
-	uint32_t d= (_osc[voice]->freqIncSample >> 16);
-	if (!d)  {
-		// no base for anti-aliasing (division-by-zero leads to "wrong" results in WASM - unless slower
-		// -s BINARYEN_TRAP_MODE='js' mode is used)
-		return (uint16_t) (((_osc[voice]->counter > (_osc[voice]->pulse <<8))-1) ^ 0xFFFF);	
-	}
-	double step = 2 * 256.0 / d; //simple pulse, most often used waveform, make it sound as clean as possible without oversampling
-	
 	int32_t wfout;
-	if (tmp < pw) {
-		wfout = round((0xFFFF - pw) * step);
-		if (wfout > 0xFFFF) { wfout = 0xFFFF; }
+	if (tmp < pw) {	// rising edge (i.e. 0x0 side)	(in graph this is: TOP)
+		wfout = round((0xffff - pw) * step);
+		if (wfout > 0xffff) { wfout = 0xffff; }
 		wfout = wfout - round((pw - tmp) * step);
 		if (wfout < 0) { wfout = 0; }
-	} //rising edge
-	else {
-		wfout = pw * step;
-		if (wfout > 0xFFFF) { wfout = 0xFFFF; }
-		wfout = round((0xFFFF - tmp) * step) - wfout;		
-		if (wfout >= 0) { wfout = 0xFFFF; } 		
-		wfout &= 0xFFFF;
-	} //falling edge
+		
+#ifdef USE_PULSE_DECAY	
+		wfout+= s;
+#endif
+		// "tmp" are the low 16 bits of counter
+		
+	} else {//falling edge (i.e. 0xffff side)		(in graph this is: BOTTOM)
+		wfout += pw * step;
+		if (wfout > 0xffff) { wfout = 0xffff; }
+		wfout = round((0xffff - tmp) * step) - wfout;		
+
+		if (wfout >= 0) { wfout = 0xffff; }
+		
+		wfout &= 0xffff;
+		
+#ifdef USE_PULSE_DECAY	
+		wfout-= s;
+		if (wfout < 0) { wfout = 0; }
+#endif
+	} 
+	
 	return wfout;
 }	
+
+
+// combined noise-waveform will feed back into noiseval shift-register potentially clearing
+// bits that are used for the "noiseout" (no others.. and not setting!)
+static const uint32_t COMBINED_NOISE_MASK = ~((1<<22)|(1<<20)|(1<<16)|(1<<13)|(1<<11)|(1<<7)|(1<<4)|(1<<2));
+
 uint16_t SID::createNoiseOutput(uint8_t voice) {
-	// generate noise waveform exactly as the SID does.
+	// generate noise waveform (FIXME flaw: "noiseval" shift register is only updated when noise 
+	// is actually used..)
 	
 	// "random values are output through the waveform generator according to the 
 	// frequency setting" (http://www.ffd2.com/fridge/blahtune/SID.primer)
@@ -470,7 +503,7 @@ uint16_t SID::createNoiseOutput(uint8_t voice) {
 * not seem to be worth the trouble.
 */
 uint16_t SID::createWaveOutput(int8_t voice) {
-	uint16_t outv= 0xFFFF;
+	uint16_t outv= 0xffff;
 	uint8_t ctrl= _osc[voice]->wave;
 		
 	if (_sid->voices[voice].notMuted) {
@@ -487,7 +520,7 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 				plsout= createPulseOutput(voice, tmp, pw);
 			} else {
 				// combined waveforms with pulse
-				plsout=  ((tmp >= pw) || isTestBit(voice)) ? 0xFFFF : 0; //(this would be enough for simple but aliased-at-high-pitches pulse)
+				plsout=  ((tmp >= pw) || isTestBit(voice)) ? 0xffff : 0; //(this would be enough for simple but aliased-at-high-pitches pulse)
 
 				if ((ctrl & TRI_BITMASK) && ++combined)  {
 					if (ctrl & SAW_BITMASK) {	// PULSE & TRIANGLE & SAW	- like in Lenore.sid
@@ -497,7 +530,7 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 						// be lacking: the respective sound has none of the crispness nor volume of the original
 						
 						tmp = getRingModCounter(voice); 
-						outv = plsout ? combinedWF(voice, _wave.PulseTri_8580, (tmp ^ (tmp & 0x800000 ? 0xFFFFFF : 0)) >> 11, 0) : 0;	// either on or off						
+						outv = plsout ? combinedWF(voice, _wave.PulseTri_8580, (tmp ^ (tmp & 0x800000 ? 0xffffff : 0)) >> 11, 0) : 0;	// either on or off						
 					}				
 				} else if ((ctrl & SAW_BITMASK) && ++combined)  {	// PULSE & SAW - like in Defiler.sid, Neverending_Story.sid
 					outv = plsout ? combinedWF(voice, _wave.PulseSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
@@ -507,15 +540,47 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 			uint32_t tmp = _osc[voice]->counter >> 12;
 			outv = combinedWF(voice, _wave.TriSaw_8580, tmp, 1);	// tmp 12 MSB
 		} 
-		if (!combined) {
+
+		if (!combined || !(ctrl & NOISE_BITMASK)) {
 			/* for the rest mix the oscillators with an AND operation as stated in
-				the SID's reference manual - even if this is quite wrong. */
+				the SID's reference manual - even if this is absolutely wrong. */
 		
 			if (ctrl & TRI_BITMASK)  outv &= createTriangleOutput(voice);					
 			if (ctrl & SAW_BITMASK)  outv &= createSawOutput(voice);
 			if (ctrl & PULSE_BITMASK) outv &= plsout;
-			if (ctrl & NOISE_BITMASK)  outv &= createNoiseOutput(voice);
+		}
+		
+		if (ctrl & NOISE_BITMASK)   {
+			if (ctrl & 0x70) {	// combined waveform with noise
+				// testcase: Hollywood_Poker_Pro.sid (also Wizax_demo.sid, Billie_Jean.sid)
+				
+				// The wave-output of the SOASC recording of the above song (at the very beginning) shows a pulse-wave that is 
+				// overlaid with a combined "triangle-noise" waveform (without the below there would be strong noise
+				// that doesn't belong there)
+				
+				// according to resid's analysis "waveform bits are and-ed into the shift register via the 
+				// shift register outputs" and thereby the noise zeros-out after a few cycles
+				// (as long as noise is not actually used there does not seem to be a point to
+				// calculate the respective feedback loop.. eventhough other combined waveforms could 
+				// squelch the noise by the same process, requiring a GATE to re-activate it..
+				// have yet to find a song that would use that aproach)
+				outv &= createNoiseOutput(voice);
+				
+				uint32_t feedback=	(getBit(outv,15) << 22) |
+									(getBit(outv,14) << 20) |
+									(getBit(outv,13) << 16) |
+									(getBit(outv,12) << 13) |
+									(getBit(outv,11) << 11) |
+									(getBit(outv,10) << 7) |
+									(getBit(outv,9) << 4) |
+									(getBit(outv,8) << 2);
 			
+				_osc[voice]->noiseval &= COMBINED_NOISE_MASK | feedback;	// feed back into shift register
+			} else {
+				outv &= createNoiseOutput(voice);
+			}
+		} 
+		
 			// emulate waveform 00 floating wave-DAC 
 			if (ctrl & 0xf0) {	// TODO: find testcase song where this is relevant.. 
 				_sid->voices[voice].prevWaveFormOut= outv;
@@ -523,7 +588,8 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 				// no waveform set						
 				outv= _sid->voices[voice].prevWaveFormOut;		// old impl: outv &= _sid->level_DC;			
 			}	
-		}
+		
+		
 	} else {
 		outv= ((uint16_t)_sid->level_DC) << 8;
 	}
@@ -592,17 +658,48 @@ void SID::resetVolumeChangeCount() {
 uint8_t SID::getNumberOfVolumeChanges() {
 	return _volUpdates;
 }
-void SID::disableVolumeChangeNMI(uint8_t mode) {
-	// test cases: Ferrari_Formula_One resets volume from main before starting NMI digis..
-	// test cases: Great_Giana_Sisters activates "filter" from NMI (without which the melody stays silent)
-	_nmiVolChangeDisabled |= mode; // once NMI mode is active it cannot be undone (see Ferrari_Formula_One - where IRQ sets D418 only sometimes);
+void SID::disableVolumeChangeNMI(uint8_t disabled) {
+	// this check is performed at the end of a frame.. it is meant to control how subsequent frames are 
+	// handled (the problem that this hack tries to work around is that (in the current emu impl) SID settings 
+	// made from NMI/IRQ/MAIN may happen out of order (relative to each other) - also MAIN might have run 
+	// for less cycles than it should have (due to flawed rester polling emulation).. the below tries to 
+	// restore some "save" volume (&filter) setting that allows actually keep some useable output..
 		
-	// tune depends on the settings made by the NMI (e.g. JCH's song)
-	uint8_t v= _filter->getVolume();
-			
-	// keep the volume part (needed in Ferrari_Formula_One) but use the filter (need in Great_Giana_Sisters)
-	v= (v&0xf) | (memReadIO(0xd418) & 0xf0);	// propagate filter setting made in NMI 
+	_nmiVolChangeDisabled |= disabled; // once "NMI volume change" disabled is active it cannot be undone (see Ferrari_Formula_One - where IRQ sets D418 only sometimes);
+
+	// test cases:
+	// - Ferrari_Formula_One resets volume from main before starting NMI digis.. (does not tolerate volume set from the NMI)
+	//			=> timing of this song so distorted that it is probably a bad idea to try a workaround from the generic logic here.. FIXME
+	// - Great_Giana_Sisters activates "filter" from NMI (without which the melody stays silent)
+	// - All_You_Know_Is_Wrong volume settings made from IRQ
+	// - Better_Late_Than_Never depends on the filter settings made by the NMI
+	// - Digi155_DS may introduce clicks which actually originate from the 3 voices 
+	// - Thats_All_Folks make sure volume is turned back on after the sample playback!
 	
+	// note: 0xd418 (volume & filter stuff) changes are always reflected in the respective "IO area" memory location
+	// even if respective changes have not been propagated to the filter (where they would normally belong).  
+	// The special NMI d418-digi-sample playback handling does not write them to the filter to avoid side-effects that 
+	// are unavoidable with the unsynchronized NMI handling..). Most of the time there is no problem since music-players 
+	// USUALLY play samples from the NMI and do their volume resets separately, e.g. from IRQ. There are exceptions 
+	// where some player actually wants to keep using settings made from the NMI..
+	
+	// d418: keep the volume part (needed in Ferrari_Formula_One) but use the filter (need in Great_Giana_Sisters)
+		
+	uint8_t v= _filter->getVolume();
+	
+	if (!digiIsMahoneyMode()) { 	// emulation would generate occasional clicks from Mahoney's pulse settings (see Digi155_DS)
+		uint8_t vol= v & 0xf;
+		
+		// note: the below is bound to create problems is some songs, but at this
+		// point there is no way to distinguish the nature of the original flaw (that lead to the
+		// use of this hack)
+		
+		uint8_t v2= memReadIO(0xd418);
+		uint8_t vol2= v2 & 0xf;
+			
+		v= (v2 & 0xf0) | (vol>vol2 ? vol : vol2);	// propagate filter setting made in NMI 
+	}
+
 	_filter->poke(0xd418 & 0x1f, v);
 }
 
@@ -646,17 +743,56 @@ void SID::poke(uint8_t reg, uint8_t val) {
     if ((reg >= 7) && (reg <=13)) {voice=1; reg-=7;}
     if ((reg >= 14) && (reg <=20)) {voice=2; reg-=14;}
 
-	
 	// writes that impact the envelope generator
 	if ((reg >= 0x4) && (reg <= 0x6)) {
 		_env[voice]->poke(reg, val);
 	}
 	// writes that impact the filter
-	if ((reg >= 0x15) && (reg <= 0x18)) {		
-		if (!(_nmiVolChangeDisabled && (cpuGetProgramMode() == NMI_OFFSET_MASK) && (reg == 0x18))) {	// ignore NMI digis		
+    switch (reg) {		
+		case 0x15:
+		case 0x16:
+		case 0x17:
 			_filter->poke(reg, val);
+            break;
+		case 0x18: {
+			_volUpdates++;	// base for hacks
+			
+			if ((cpuGetProgramMode() != NMI_OFFSET_MASK)) {	// // use changes made from main or IRQ
+
+			// hack: FutureComposer v1.0 in some cases (see Luca's songs) seems to perform 2x
+			// updates of filter (etc) from same IRQ and even with respective handling the 
+			// songs sound terrible (probably some flaw of the filter impl). 			
+			// goal: disable filter *only* in respective scenarios:
+			
+				uint8_t usesFilter= ((val>>4) != 0x0);
+				if ((_volUpdates > 1) && usesFilter) {
+				
+				// trying to avoid false positives (e.g. some digis may still get in here.. but that 
+				// doesn't hurt). problem: this hack may easily create false positives, e.g.
+				// songs like Neverending_Story!
+				
+				if(_allowedMax < 5) {
+					_allowedMax+= 1;	// some songs come here during init
+						_filter->poke(reg, val); 
+				} else {
+					// test cases:
+					// - Kids_Arent_Allright & Why_Dont_You_Get_A_Job
+					// - Allen_Kim_Eriksen -Theme_01: false positive; makes 3 additional settings.. not more
+				
+					// the voice3enable flag AND the volume here lead to massive up/downs. it seems				
+					// there is no point to keep anything from the original settings.. everything 
+					// sounds worse than this hard coded setting..
+					_filter->poke(reg, 0b01111111 );	// FIXME retry if filter impl ever were to be changed
+				} 
+				} else {
+					// no use of filter
+					_filter->poke(reg, val);
+				}				
+			} else if (!_nmiVolChangeDisabled){		// NMI volume/filter changes
+				_filter->poke(reg, val);
+			}
 		}
-	}
+			}
 
     switch (reg) {		
         case 0x0: { // Set frequency: Low byte
@@ -679,34 +815,6 @@ void SID::poke(uint8_t reg, uint8_t val) {
 			simStartOscillatorVoice3(voice, val);
 			
 			_sid->voices[voice].wave = val;			
-            break;
-        }
-		case 0x18: {
-			_volUpdates++;	// base for hacks
-
-			// hack: FutureComposer v1.0 in some cases (see Luca's songs) seems to perform 2x
-			// updates of filter (etc) from same IRQ and even with respective handling the 
-			// songs sound terrible (probably some flaw of the filter impl). 			
-			// goal: disable filter *only* in respective scenarios:
-			
-			if ((_volUpdates > 1) && (!_nmiVolChangeDisabled) && ((val>>4) != 0x0)) {	
-				// trying to avoid false positives (e.g. some digis may still get in here.. but that 
-				// doesn't hurt). problem: this hack may easily create false positives, e.g.
-				// songs like Neverending_Story!
-				
-				if(_allowedMax < 5) {
-					_allowedMax+= 1;	// some songs come here during init
-				} else {
-					// test cases:
-					// - Kids_Arent_Allright & Why_Dont_You_Get_A_Job
-					// - Allen_Kim_Eriksen -Theme_01: false positive; makes 3 additional settings.. not more
-				
-					// the voice3enable flag AND the volume here lead to massive up/downs. it seems				
-					// there is no point to keep anything from the original settings.. everything 
-					// sounds worse than this hard coded setting..
-					_filter->poke(reg, 0b01111111 );	// FIXME retry if filter impl ever were to be changed
-				} 
-			}
 			break;
 		}
     }
@@ -716,7 +824,6 @@ void SID::poke(uint8_t reg, uint8_t val) {
 void SID::writeMem(uint16_t addr, uint8_t value) {
 	if (!digiDetectSample(addr, value)) {
 		poke(addr&0x1f, value);							
-//		memWriteIO((addr&0xfc1f), value);		// XXX check for other SID locations	
 		memWriteIO(addr, value);	// forget the mirroring stuff.. just messes with additional SIDs	
 	}
 }
@@ -751,10 +858,14 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 			// trace output (always make it 16-bit)		
 			if (synthTraceBufs) {
 				int16_t *voiceTraceBuffer= synthTraceBufs[voice];
-				*(voiceTraceBuffer+bp)= (int16_t)(voiceOut);			
+
+				int32_t o= 0, f= 0;
+				_filter->routeSignal(&voiceOut, &o, &f, voice, &(_sid->voices[voice].notMuted));	// redundant.. see above			
+				
+				*(voiceTraceBuffer+bp)= (int16_t)_filter->simOutput(voice, &o, &f, cutoff, resonance);			
 			}
 		}
-		int32_t finalSample= _filter->getOutput(&outf, &outo, cutoff, resonance);		
+		int32_t finalSample= _filter->getOutput(&outf, &outo, cutoff, resonance, _sid->cyclesPerSample);		
 		finalSample=  digiGenPsidSample(finalSample);		// recorded PSID digis are merged in directly 
 		
 		if (!doClear) finalSample+= *(buffer+bp);
@@ -847,8 +958,8 @@ extern "C" void sidResetVolumeChangeCount() {
 extern "C" uint8_t sidGetNumberOfVolumeChanges() {
 	return _sids[0].getNumberOfVolumeChanges();
 }
-extern "C" void sidDisableVolumeChangeNMI(uint8_t mode) {
-	_sids[0].disableVolumeChangeNMI(mode);
+extern "C" void sidDisableVolumeChangeNMI(uint8_t disabled) {
+	_sids[0].disableVolumeChangeNMI(disabled);
 }
 
 extern "C" void sidSetMute(uint8_t voice, uint8_t value) {

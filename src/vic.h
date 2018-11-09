@@ -25,4 +25,8 @@ uint32_t vicForwardToNextRaster();
 void vicWriteMem(uint16_t addr, uint8_t value);
 uint8_t vicReadMem(uint16_t addr);
 
+// only for legacy PSID use
+void vicSimIRQ();
+
+
 #endif

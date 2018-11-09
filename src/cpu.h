@@ -40,8 +40,8 @@ void cpuSetProgramMode(uint32_t p);
 uint32_t cpuGetProgramMode();
 uint8_t cpuPcIsValid();
 uint8_t cpuIrqFlag();
-uint32_t cpuCycles();
-uint32_t cpuTotalCycles();
+uint32_t cpuCycles();		// relative (e.g. measured from start of NMI, etc)
+uint32_t cpuTotalCycles();	// absolute (measured from start of song)
 
 // debug only
 uint16_t cpuGetPC();

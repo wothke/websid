@@ -48,6 +48,10 @@
 #include "memory.h"
 #include "cpu.h"		// cpuTotalCycles()
 
+#ifdef DEBUG
+#include <emscripten.h>
+#endif
+
 #define ADDR_CIA1 0xdc00
 #define ADDR_CIA2 0xdd00
 
@@ -62,7 +66,7 @@ void ciaSetNmiVectorHack(){
 // *********************** "regular" / predictive CIA simulation ***************
 
 // value bigger than any 16-bit counter for easy comparison
-uint32_t STOPPED= 0x1ffffff;	
+static const uint32_t STOPPED= 0x1fffff8;	// different from _failMarker
 
 // next interrupt not on this screen; use value bigger than any 
 // 16-bit counter for easy comparison
@@ -272,7 +276,10 @@ static void setTimer(struct Timer *t, uint16_t offset, uint8_t value) {
 static uint32_t intForwardToNextCiaInterrupt(struct Timer *t, uint32_t timeLimit) {	
 	uint32_t waited= 0;
 
-	for(;;) {
+#define ABORT_FUSE 10000 	// just avoid endless loop 
+	
+	uint16_t abort= 0;
+	for(;abort<ABORT_FUSE; abort++) {
 		if (!(isTimerStarted(t, TIMER_A) || isTimerStarted(t, TIMER_B))) {
 			waited= _failMarker; 
 			break;
@@ -397,12 +404,12 @@ static uint32_t intForwardToNextCiaInterrupt(struct Timer *t, uint32_t timeLimit
 	return waited;
 }
 
-uint32_t ciaForwardToNextInterrupt(uint8_t ciaIdx, uint32_t timeLimit) {	
+uint32_t ciaForwardToNextInterrupt(uint8_t ciaIdx, uint32_t timeLimit) {
 	// must not be used for PSID (see Synth_Sample_III.sid tracks >3)
 	if (!envIsPSID() && cpuIrqFlag() && (ciaIdx == 0)) return _failMarker; // no IRQ while I-flag is set (NMI cannot be masked)
 	
 	struct Timer *t= &(_cia[ciaIdx]);
-	return  intForwardToNextCiaInterrupt(t, timeLimit);
+	return   intForwardToNextCiaInterrupt(t, timeLimit);	
 }
 
 int ciaIsActive(uint8_t ciaIdx) {
@@ -599,7 +606,8 @@ uint8_t ciaReadMem(uint16_t addr) {
 		case 0xdc06:
 			if (isInNMI() && (memReadIO(0xdc05) == 0x2)) {
 				// hack: THMC's player in "File deleted" expects dc05/dc06 to point to 0002, 0102, etc
-				return 0x0;	// always use the ZP version
+//				return 0x0;	// always use the ZP version
+				return 0x01;	// LMan's My_Life.. uses the same approch but not ZP
 			}		
 		
 			/*
@@ -694,6 +702,29 @@ void ciaResetPsid60Hz() {
 			initMem(0xdc05, c>>8);		
 		}
 	}
+}
+#ifdef DEBUG
+// note: do not use fprintf since that will likely fail to work in case of
+// stack overflow proplems..
+
+void intPrintDebug(struct Timer *t){
+	EM_ASM_({ console.log('TIMER:        $' + ($0).toString(16));}, t->memoryAddress);
+	EM_ASM_({ console.log(' INT state             $' + ($0).toString(16));}, t->timerInterruptStatus);
+	EM_ASM_({ console.log(' t0 suspended          $' + ($0).toString(16));}, t->ts[0].timerSuspended);
+	EM_ASM_({ console.log(' t0 latch              $' + ($0).toString(16));}, t->ts[0].timerLatch);
+	EM_ASM_({ console.log(' t0 count              $' + ($0).toString(16));}, getTimerCounter(t, 0));
+	EM_ASM_({ console.log(' t1 suspended          $' + ($0).toString(16));}, t->ts[1].timerSuspended);
+	EM_ASM_({ console.log(' t1 latch              $' + ($0).toString(16));}, t->ts[1].timerLatch);
+	EM_ASM_({ console.log(' t1 count              $' + ($0).toString(16));}, getTimerCounter(t, 1));
+}
+#endif
+
+void ciaPrintDebug() {
+#ifdef DEBUG
+	intPrintDebug(&(_cia[0]));
+	intPrintDebug(&(_cia[1]));
+	EM_ASM_({ console.log(' ');});
+#endif
 }
 
 void ciaReset(uint32_t cyclesPerScreen, uint8_t isRsid, uint32_t f) {

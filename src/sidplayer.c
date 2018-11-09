@@ -89,8 +89,7 @@ static uint8_t _digiEnabled = 1;
 
 static uint32_t _traceSID= 0;
 
-// make it large enough for data of 8 PAL screens.. (allocate 
-// statically to ease passing to ActionScript)
+// make it large enough for data of 8 screens (for NTSC 8*735 would be sufficient)
 #define BUFLEN 8*882
 static uint32_t _soundBufferLen= BUFLEN;
 static int16_t _soundBuffer[BUFLEN];
@@ -122,6 +121,8 @@ static uint8_t _isFilePSID;
 static uint32_t _numberOfSamplesRendered = 0;
 static uint32_t _numberOfSamplesToRender = 0;
 
+static uint8_t _soundStarted, _skipSilenceLoop;
+
 
 uint16_t* envSIDAddresses() {
 	return _sidAddr;
@@ -129,6 +130,9 @@ uint16_t* envSIDAddresses() {
 uint8_t*  envSID6581s() {
 	return _sidIs6581;
 }
+
+// FIXME: envIsRSID is also used for certain PSID files that are deemed fit for use of 
+// the RSID emulation .. this is rather confusing and error prone!
 
 uint8_t envIsRSID() {
 	return (_isPSID == 0);
@@ -303,8 +307,30 @@ static uint32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 		if (_numberOfSamplesToRender == 0) {
 			_numberOfSamplesToRender = _numberOfSamplesPerCall;
 			sampleBufferIdx=0;
-			hasDigi= rsidProcessOneScreen(_synthBuffer, _digiBuffer, 
+						
+			for (uint8_t i= 0; i<_skipSilenceLoop; i++) {	// too much seeking might block too long?
+				hasDigi= rsidProcessOneScreen(_synthBuffer, _digiBuffer, 
 						_totalCyclesPerScreen, _numberOfSamplesPerCall, _synthTraceBuffers);
+							
+				_soundStarted|= hasDigi;
+				
+				if (!_soundStarted) {
+					// check if there is some output this time..
+					for (uint16_t j= 0; j<_numberOfSamplesPerCall; j++) {
+						if (_synthBuffer[j] != 0) {
+							_soundStarted= 1;
+							break;
+						}
+					}
+				} else {
+					break;
+				}			
+			}
+			if (!_soundStarted) {
+				// broken sounds might become irresponsive without this brake
+				_skipSilenceLoop = (_skipSilenceLoop - 10) | 1; 
+			}
+			
 			if (!_digiEnabled) hasDigi= 0;
 		}
 		
@@ -373,6 +399,9 @@ static uint32_t EMSCRIPTEN_KEEPALIVE playTune(uint32_t selectedTrack, uint32_t t
 	
 	_actualSubsong= selectedTrack & 0xff;
 	_digiEnabled = 1;
+	
+	_soundStarted= 0;
+	_skipSilenceLoop= 100;
 
 	rsidPlayTrack(_sampleRate, _compatibility, &_initAddr, _loadEndAddr, _playAddr, _actualSubsong);
 

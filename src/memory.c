@@ -173,6 +173,8 @@ void memSet(uint16_t addr, uint8_t value)
 	} else {
 		// normal RAM or
 		// kernal ROM (even if the ROM is visible, writes always go to the RAM)
+		// example: Vikings.sid copied player data to BASIC ROM area while BASIC ROM
+		// is turned on..
 		_memory[addr]=value;
 	}
 }

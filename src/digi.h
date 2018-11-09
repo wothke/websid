@@ -36,4 +36,6 @@ void digiMergeSampleData(int8_t hasDigi, int16_t *sound_buffer, uint8_t *digi_bu
 
 // utils for the handling of legacy PSID digis
 int32_t digiGenPsidSample(int32_t sIn);
+
+uint8_t digiIsMahoneyMode();
 #endif
