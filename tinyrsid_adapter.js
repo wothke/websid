@@ -87,6 +87,9 @@ SIDBackendAdapter = (function(){ var $this = function () {
 			if (typeof options.traceSID != 'undefined') {
 				traceSID= options.traceSID;
 			}
+			if (typeof options.track == 'undefined') {
+				options.track= -1;
+			}
 			return this.Module.ccall('playTune', 'number', ['number', 'number'], [options.track, traceSID]);
 		},
 		teardown: function() {
@@ -182,6 +185,9 @@ SIDBackendAdapter = (function(){ var $this = function () {
 		*/
 		getRegisterSID: function(offset) {
 			return this.Module.ccall('getRegisterSID', 'number', ['number'], [offset]);
+		},
+		getRAM: function(offset) {
+			return this.Module.ccall('getRAM', 'number', ['number'], [offset]);
 		}
 	});	return $this; })();
 	

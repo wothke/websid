@@ -15,6 +15,7 @@
 void vicReset(uint8_t isRsid, uint32_t failmarker);
 	
 // interface used to interact with VIC
+void vicSyncRasterIRQ();
 void vicStartRasterSim(uint32_t rasterPosInCycles);
 void vicSimRasterline();
 uint16_t vicGetRasterline();
@@ -27,6 +28,5 @@ uint8_t vicReadMem(uint16_t addr);
 
 // only for legacy PSID use
 void vicSimIRQ();
-
 
 #endif

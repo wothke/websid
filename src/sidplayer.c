@@ -289,10 +289,11 @@ static uint8_t musIsTrackEnd(uint8_t voice) {
 
 	return (memReadRAM(addr) == 0x1) && (memReadRAM(addr+1) == 0x4f); 	// HALT command 0x14f
 }
+
 static uint32_t computeAudioSamples()  __attribute__((noinline));
 static uint32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
-	if (_musMode) {	// check for end of .mus song 	
-		if (musIsTrackEnd(0) && musIsTrackEnd(1) && musIsTrackEnd(2)) {
+	if (_musMode) {	// check for end of .mus voice 0 (other voices might be shorter & loop)
+		if (musIsTrackEnd(0)) {
 			return -1;
 		}
 	}
@@ -397,7 +398,7 @@ static uint32_t playTune(uint32_t selectedTrack, uint32_t traceSID)  __attribute
 static uint32_t EMSCRIPTEN_KEEPALIVE playTune(uint32_t selectedTrack, uint32_t traceSID) {
 	_traceSID= traceSID; 
 	
-	_actualSubsong= selectedTrack & 0xff;
+	_actualSubsong= (selectedTrack >= _maxSubsong) ? _actualSubsong : selectedTrack;
 	_digiEnabled = 1;
 	
 	_soundStarted= 0;
@@ -551,7 +552,7 @@ static uint16_t loadComputeSidplayerData(uint8_t *musSongData, uint32_t musSongD
 	_loadEndAddr= 0x9fff;
 
 	_initAddr= MUS_BASE_ADDR;
-	_playAddr= 0x1bf2;
+	_playAddr=  0x1bf2;
 	
 	uint16_t pSize= COMPUTESIDPLAYER_LENGTH;
 	if((pSize > MUS_MAX_SIZE) || (musSongDataLen > MUS_MAX_SONG_SIZE)) return 0; // ERROR
@@ -561,8 +562,25 @@ static uint16_t loadComputeSidplayerData(uint8_t *musSongData, uint32_t musSongD
 		_musMemBuffer= (uint8_t*)malloc(_musMemBufferSize);	// represents mem from $1800-$9fff
 	}
 	memcpy(_musMemBuffer, computeSidplayer, pSize);
-	memcpy(_musMemBuffer+MUS_REL_DATA_START, musSongData, musSongDataLen);
+
+	/* 
+		this would seem to be the right kind of way to "properly init" the player, but unfortunately 
+		something still seems to be missing.. and since I don't care to waste more time
+		with the MUS crap I'll be keeping the hack that already works
 	
+	// patch "INIT" routine to properly load the MUS file (I should have put this in the file directly..)
+	uint16_t addr= 	MUS_DATA_START+2;	// 2-bytes header
+	_musMemBuffer[0x3b]= 0xa2;				// LDX #$..
+	_musMemBuffer[0x3c]= addr & 0xff;
+	_musMemBuffer[0x3d]= 0xa0;				// LDY #$..
+	_musMemBuffer[0x3e]= addr >>8;
+	_musMemBuffer[0x3f]= 0x4c;				// JMP $1ACE
+	_musMemBuffer[0x40]= 0xce;
+	_musMemBuffer[0x41]= 0x1a;	
+	*/
+	
+	memcpy(_musMemBuffer+MUS_REL_DATA_START, musSongData, musSongDataLen);
+
 	uint16_t v1len, v2len, v3len, trackLen;
 	musGetSizes(musSongData, &v1len, &v2len, &v3len, &trackLen);
 	if (trackLen >= musSongDataLen) {
@@ -576,14 +594,16 @@ static uint16_t loadComputeSidplayerData(uint8_t *musSongData, uint32_t musSongD
 	uint16_t v2start= v1start+ v1len;
 	uint16_t v3start= v2start+ v2len;
 	
-	// setup player
-	_musMemBuffer[MUS_REL_VOICE_PTRS+0]= v1start & 0xff;
-	_musMemBuffer[MUS_REL_VOICE_PTRS+1]= v2start & 0xff;
-	_musMemBuffer[MUS_REL_VOICE_PTRS+2]= v3start & 0xff;
-	_musMemBuffer[MUS_REL_VOICE_PTRS+3]= v1start >> 8;
-	_musMemBuffer[MUS_REL_VOICE_PTRS+4]= v2start >> 8;
-	_musMemBuffer[MUS_REL_VOICE_PTRS+5]= v3start >> 8;
-
+	// luckily all the relevant initialization stuff seems to already come with the player
+	// image that I dumped.. and all that remains to be done is to patch in the song's start vectors:
+	// (mirrored version at +9 is important for the restart of looping channels)
+	_musMemBuffer[MUS_REL_VOICE_PTRS+0]= _musMemBuffer[9+MUS_REL_VOICE_PTRS+0]= v1start & 0xff;
+	_musMemBuffer[MUS_REL_VOICE_PTRS+1]= _musMemBuffer[9+MUS_REL_VOICE_PTRS+1]= v2start & 0xff;
+	_musMemBuffer[MUS_REL_VOICE_PTRS+2]= _musMemBuffer[9+MUS_REL_VOICE_PTRS+2]= v3start & 0xff;
+	_musMemBuffer[MUS_REL_VOICE_PTRS+3]= _musMemBuffer[9+MUS_REL_VOICE_PTRS+3]= v1start >> 8;
+	_musMemBuffer[MUS_REL_VOICE_PTRS+4]= _musMemBuffer[9+MUS_REL_VOICE_PTRS+4]= v2start >> 8;
+	_musMemBuffer[MUS_REL_VOICE_PTRS+5]= _musMemBuffer[9+MUS_REL_VOICE_PTRS+5]= v3start >> 8;
+	
 	return 1;
 }
 uint16_t getSidAddr(uint8_t centerByte) {
@@ -713,8 +733,8 @@ static uint8_t EMSCRIPTEN_KEEPALIVE envSetSID6581(uint8_t is6581) {
 	return 0;
 }
 
-static uint8_t envIsNTSC()  __attribute__((noinline));
-static uint8_t EMSCRIPTEN_KEEPALIVE envIsNTSC() {
+uint8_t envIsNTSC()  __attribute__((noinline));
+uint8_t EMSCRIPTEN_KEEPALIVE envIsNTSC() {
 	return _ntscMode;
 }
 

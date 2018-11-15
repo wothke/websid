@@ -15,6 +15,7 @@
 #include "digi.h"
  
 #include <stdio.h>
+#include <stdlib.h> 
 #include <string.h>
 #include <math.h>
 
@@ -25,7 +26,12 @@
 #include "sid.h"
 #include "vic.h"		// for vicGetRasterline()
 
-#define DIGI_BUF_SIZE 1000		// caution... not same size as other buffers..
+#define DIGI_BUF_SIZE 1000		// caution... not same size as other buffers.. FIXME too big anyway..
+
+
+#define ORIGIN_MASK 	(NMI_OFFSET_MASK | IRQ_OFFSET_MASK | MAIN_OFFSET_MASK)
+#define SAMPLE_MASK 	 ~ORIGIN_MASK
+
 
 static uint32_t INVALID_TIME= (0x1 << 27);	// large enough so that any regular timestamp will get preference
 static uint16_t IDX_NOT_FOUND= 0x1fff;			// we'll never have that many samples for one screen..
@@ -48,12 +54,34 @@ static uint8_t _sortedDigiVolume[DIGI_BUF_SIZE];
 static uint8_t _isC64compatible= 1;
 
 /*
-* samples which already belong to the next screen, e.g. produced by some long running IRQ which
+* samples which already belong to the next screens, e.g. produced by some long running IRQ which
 * crossed over to the next screen..
 */
+static uint8_t _overflowMaxFrames= 0;
+static uint32_t _overflowMaxCycles= 0;
 static uint16_t _overflowDigiCount= 0;
-static uint32_t _overflowDigiTime[DIGI_BUF_SIZE];
-static uint8_t _overflowDigiVolume[DIGI_BUF_SIZE];
+static uint32_t *_overflowDigiTime= 0;
+static uint8_t *_overflowDigiVolume= 0;
+
+void digiOverflowFrames(uint8_t numberOfFrames) {
+	_overflowMaxCycles= envCyclesPerScreen() * numberOfFrames;
+	
+	if (numberOfFrames > _overflowMaxFrames) {
+		_overflowMaxFrames= numberOfFrames;
+		
+		if (_overflowDigiTime != 0)  {
+			free(_overflowDigiTime);
+			_overflowDigiTime= 0;
+		}
+		if (_overflowDigiVolume != 0) {
+			free(_overflowDigiVolume);
+			_overflowDigiVolume= 0;
+		}		
+	}
+	if (_overflowDigiTime == 0) _overflowDigiTime= (uint32_t*)malloc(sizeof(uint32_t)*DIGI_BUF_SIZE*_overflowMaxFrames);
+	if (_overflowDigiVolume == 0) _overflowDigiVolume= (uint8_t*)malloc(sizeof(uint8_t)*DIGI_BUF_SIZE*_overflowMaxFrames);		
+}
+
 
 // detection of test-bit based samples
 const uint8_t TB_TIMEOUT = 12;	 	// minimum that still works for "Vortex" is 10
@@ -71,8 +99,29 @@ static int32_t _sampleNibble;
 static int32_t _internalPeriod, _internalOrder, _internalStart, _internalEnd,
 _internalAdd, _internalRepeatTimes, _internalRepeatStart;
 
+
+uint32_t _baseOffset;		// FIXME: get rid of this hack and always use correct "frame time"..
+void digiBaseOffset(uint32_t base) {
+	_baseOffset= base;
+}
+
+uint8_t _blockRecording;
+
 static void recordSample(uint8_t sample) {
-	if (cpuCycles() <= envCyclesPerScreen()) {
+	// in here the cpuCycles() contains nothing but a relative time which 
+	// is USELESS for any envCyclesPerScreen() based comparisons.. 
+	
+	// NOTE: samples generated from IRQ are subject to significant timing errors
+	// due to missing "badline" handling (and other effects that normally steal cycles from the CPU)
+	
+	uint32_t avail= envCyclesPerScreen() -_baseOffset;	// available cycles in current frame
+	
+	if ((_digiCount == 0) && (_overflowDigiCount == 0)) {
+		_blockRecording= 0;
+	}
+	if (_blockRecording) return;
+	
+	if (cpuCycles() <= avail) { 	
 		_digiTime[_digiCount]= cpuCycles();
 		_digiVolume[_digiCount]= sample;	// always use 8-bit to ease handling									
 
@@ -84,16 +133,17 @@ static void recordSample(uint8_t sample) {
 		
 //		_digiCount= _digiCount%(DIGI_BUF_SIZE-1);	// why wrap? avoid array bounds overflow
 
-	} else {
+	} else {	
 		// some players (e.g. Digital_Music.sid) start long running IRQ routines at the end of one screen 
 		// producing most of their output on the next screen... so we have to deal with this scenario..
+		// testcase: Axel_F.sid!
 		
-		_overflowDigiTime[_overflowDigiCount]= cpuCycles()-envCyclesPerScreen();
+		_overflowDigiTime[_overflowDigiCount]= cpuCycles()- avail;
 		_overflowDigiVolume[_overflowDigiCount]= sample;	// always use 8-bit to ease handling									
 
 		_overflowDigiCount+=1;	// buffer is meant to collect no more than the samples from one screen refresh!		
 		
-		if (_overflowDigiCount == DIGI_BUF_SIZE) _overflowDigiCount-= 1;	// just overwrite last entry
+		if (_overflowDigiCount == DIGI_BUF_SIZE*_overflowMaxFrames) _overflowDigiCount-= 1;	// just overwrite last entry
 //		_overflowDigiCount= _overflowDigiCount%(DIGI_BUF_SIZE-1); // why wrap?
 	}
 }
@@ -147,6 +197,7 @@ static uint8_t assertSameSource(uint8_t voicePlus) {
 	// be interpreted as "sample output".. 
 
 	// note: trying to use the cpuGetProgramMode() to figure out what to use is NOT a good idea
+	
 	
 	if (_digiSource != voicePlus) {
 		if (_digiSource&MASK_DIGI_UNUSED) {
@@ -338,6 +389,12 @@ static uint8_t handlePulseModulationDigi(uint8_t voice, uint8_t reg, uint8_t val
 // by selecting a corresponding waveform in d412.
 // -------------------------------------------------------------------------------------------
 
+uint8_t _isIceGuysMode;
+
+uint8_t digiIsIceGuysMode() {
+	return _isIceGuysMode;
+}
+
 static uint8_t handleIceGuysDigi(uint8_t voice, uint8_t reg, uint8_t value) {
 	/* 
 	would be nice to find a robust check for non Ice_Guys.sid 
@@ -363,6 +420,8 @@ static uint8_t handleIceGuysDigi(uint8_t voice, uint8_t reg, uint8_t value) {
 			default:
 				return 0;	// false positive, e.g. 	Wonderland_XII-Digi_part_1.sid	
 		}
+		_isIceGuysMode= 1;
+
 		return 1;
 	}
 	return 0;
@@ -372,7 +431,7 @@ static uint8_t handleIceGuysDigi(uint8_t voice, uint8_t reg, uint8_t value) {
 // Mahoney's D418 "8-bit" digi sample technique..
 // -------------------------------------------------------------------------------------------
 
-static uint8_t _IsMahoneyMode;
+static uint8_t _isMahoneyMode;
 
 // based on Mahoney's amplitude_table_8580.txt (not using SID model specific sample logic to this should be good enough)
 static const uint8_t _mahoneySample[256]= {
@@ -396,7 +455,7 @@ static const uint8_t _mahoneySample[256]= {
 
 
 uint8_t digiIsMahoneyMode() {
-	return _IsMahoneyMode;
+	return _isMahoneyMode;
 }
 
 inline static uint8_t isMahoneyDigi() {
@@ -406,7 +465,7 @@ inline static uint8_t isMahoneyDigi() {
 		((memGet(0xd415) == 0xff) && (memGet(0xd416) == 0xff) ) && // correct filter cutoff
 		(memGet(0xd417) == 0x3)) {	// voice 1&2 through filter
 		
-		_IsMahoneyMode= 1;
+		_isMahoneyMode= 1;
 		return 1;
 	} else {
 		return 0;
@@ -598,8 +657,10 @@ void digiClearBuffer() {
 	_digiCount= 0;
 }
 
-void digiTagOrigin(uint32_t mask, uint32_t offset, uint32_t originalDigiCount) {
+void digiTagOrigin(uint32_t mask, uint32_t offset, uint16_t originalDigiCount, uint16_t originalDigiOverflowCount) {
 	/*
+	FIXME: ditch this silly function and make sure the respective data is recorded directly!
+	
 	Due to the current implementation which only considers timer start times but 
 	not delays through interrupts - the enties in the digi-sample recording may be 
 	out of sequence (e.g. if IRQ starts first it will first write all its values 
@@ -619,15 +680,29 @@ void digiTagOrigin(uint32_t mask, uint32_t offset, uint32_t originalDigiCount) {
 	Mystery time: Instead setting the start time to 0 and then adding the below 
 	stuff to the recordings afterwards, the original idea was to directly set the 
 	flag and offset in the start time for the simulation. This should have led to 
-	the same result.. alone it did not :( mb it's a C skills problem or just some 
+	the same result.. only it did not :( mb it's a C skills problem or just some 
 	Alchemy bug.. for now the hack works.
+	
+	KNOWN FLAW: when overflow buffer AND multiple sources are involved, the overflow buffer 
+	might actually contain data that is younger than the one in the regular buffer (e.g. 
+	if a long running IRQ first fills the regular buffer all the NMI entries might later end up 
+	in the overflow even though the NMI would normally have interrupted the IRQ.. to fix this
+	the complete recordings should be sorted. FIXME better just use ONE buffer and then 
+	consume the leading section that corresponds to the current frame..
 	*/
 	
-	int16_t len= _digiCount - originalDigiCount;
-	
+	int16_t len= _digiCount - originalDigiCount;	
 	if (len > 0) {
 		for (uint16_t i= 0; i<len; i++) {
 			_digiTime[originalDigiCount+i] = (offset + _digiTime[originalDigiCount+i]) | mask;
+		}
+	}
+	
+	len= _overflowDigiCount - originalDigiOverflowCount;
+	if (len > 0) {
+		for (uint16_t i= 0; i<len; i++) {
+			// note: respective offset here already has been used during recording..
+			_overflowDigiTime[originalDigiOverflowCount+i] = (_overflowDigiTime[originalDigiOverflowCount+i]) | mask;
 		}
 	}
 }
@@ -636,7 +711,7 @@ void digiResetModel(uint8_t isModel6581) {
 	_currentDigi= isModel6581 ? 0x38 : 0x80;	// supposedly the DC level for respective chip model
 }
 
-void digiReset(uint8_t compatibility, uint8_t isModel6581) {
+void digiReset(uint8_t compatibility, uint8_t isModel6581, uint8_t overflowFrames) {
 	
 	_isC64compatible= compatibility;
 
@@ -649,8 +724,8 @@ void digiReset(uint8_t compatibility, uint8_t isModel6581) {
 	_digiCount= 0;
 	_overflowDigiCount= 0;
 	_digiSource= MASK_DIGI_UNUSED;
-    memset( (uint8_t*)&_overflowDigiTime, 0, sizeof(_overflowDigiTime) ); 
-    memset( (uint8_t*)&_overflowDigiVolume, 0, sizeof(_overflowDigiVolume) ); 
+	
+	digiOverflowFrames(overflowFrames);
 	
 	// PSID digi stuff
 	_sampleActive= _samplePosition= _sampleStart= _sampleEnd= _sampleRepeatStart= _fracPos= 
@@ -672,13 +747,15 @@ void digiReset(uint8_t compatibility, uint8_t isModel6581) {
 		_swallowPWM[i]= 0;
 	}
 	
-	_IsMahoneyMode= 0;
+	_isMahoneyMode= _isIceGuysMode= 0;
 }
 
 // samples per frame.. actually should be well more than this..
 const uint8_t SAMPLE_DETECT_MIN= 10;	
 
 uint8_t digiDetectSample(uint16_t addr, uint8_t value) {
+	if (_isC64compatible) addr&= ~(0x3e0); // mask out alternative addresses of d400 SID (see 5-Channel_Digi-Tune).. use in PSID would crash playback of recorded samples
+	
 	if (_isC64compatible && !((addr>=0xd400) && (addr<= 0xd41c))) return 0;	// only use regular SID for digi (exclude PSID shit which uses weird addresses)
 	
 	if (envIsFilePSID() & _isC64compatible) return 0;	// for songs like MicroProse_Soccer_V1.sid tracks >5 (PSID digis must still be handled.. like Demi-Demo_4_PSID.sid)
@@ -687,7 +764,7 @@ uint8_t digiDetectSample(uint16_t addr, uint8_t value) {
 	uint8_t voice= 0;
     if ((reg >= 7) && (reg <=13)) {voice=1; reg-=7;}
     if ((reg >= 14) && (reg <=20)) {voice=2; reg-=14;}
-
+	
 	if (handleFreqModulationDigi(voice, reg, value)) return 1;
 	if (handlePulseModulationDigi(voice, reg, value)) return 1;
 	if (handleIceGuysDigi(voice, reg, value)) return 1;			// brittle detector
@@ -725,29 +802,46 @@ uint8_t digiDetectSample(uint16_t addr, uint8_t value) {
 			handlePsidDigi(addr, value);
 		}
 		// info: Fanta_in_Space.sid, digital_music.sid need regular volume settings produced here from Main..
-		return 0;	
+		return 0;
 	}
 }
 
 uint16_t digiGetOverflowCount() {
 	return _overflowDigiCount;
 } 
- 
- void digiMoveBuffer2NextFrame() {
+ void digiFetchOverflowData() {
+	 _digiCount= 0;
+	 
 	if (_overflowDigiCount > 0) {
-		uint16_t len= sizeof(long)*_overflowDigiCount;
-		memcpy(_digiTime, _overflowDigiTime, len);		
-		memcpy(_digiVolume, _overflowDigiVolume, len);		
+		uint32_t max= envCyclesPerScreen();
 		
-		// clear just in case..
-		memset(((uint8_t*)_digiTime)+len, 0, DIGI_BUF_SIZE-len);
-		memset(((uint8_t*)_digiVolume)+len, 0, DIGI_BUF_SIZE-len);
-	} else {
-		memset((uint8_t*)_digiTime, 0, DIGI_BUF_SIZE);
-		memset((uint8_t*)_digiVolume, 0, DIGI_BUF_SIZE);
+		uint16_t j= 0, trashed= 0;
+		for (uint16_t i= 0; i<_overflowDigiCount; i++) {
+			uint32_t ts= SAMPLE_MASK & _overflowDigiTime[i];
+			
+			if (ts < max) {
+				// use in current frame
+				_digiTime[_digiCount]= _overflowDigiTime[i];	// propagate *with* mask
+				_digiVolume[_digiCount]= _overflowDigiVolume[i];
+
+				_digiCount++;				
+			} else {
+				if (ts < _overflowMaxCycles) {	// get rid of obvious inconsistencies				
+					// keep in adjusted overflow for use in some future frame
+					_overflowDigiTime[j]= _overflowDigiTime[i] - max;	// propagate *with* mask
+					_overflowDigiVolume[j]= _overflowDigiVolume[i];
+					j++;
+				} else {
+					trashed++;
+				}
+			}
+		}	
+		_overflowDigiCount-= _digiCount + trashed;
 	}
-	_digiCount= _overflowDigiCount;
-	_overflowDigiCount= 0;	
+	
+	// properly merging recordings from different frames is a futile exercise (due to the 
+	// timing errors) -> just play what is available from earlier frames..
+	if ((_overflowDigiCount > 0) || (_digiCount > 0)) _blockRecording= 1;
 }
 
 static uint32_t isVal(uint32_t mask, uint32_t val) {
@@ -781,7 +875,7 @@ static uint16_t next(uint32_t mask, uint16_t toIdx, uint16_t fromIdx) {
 	return IDX_NOT_FOUND;
 }
 
-static void sortDigiSamples() {
+static void sortDigiSamples() {	
 	if (_digiCount >0) {
 		// IRQ and NMI routines are only more or less aligned and may actually be executed in an overlapping
 		// manner. Samples may therefore be stored out of sequence and we need to sort them here first before we render
@@ -824,7 +918,7 @@ static void sortDigiSamples() {
 
 		// create new list with strictly ascending timestamps
 		uint16_t toIdx;
-		int8_t offset= 0;
+		int16_t offset= 0;
 		for (toIdx= 0; toIdx<_digiCount; toIdx++) {
 			if (getValue(MAIN_OFFSET_MASK, mainIdx) < getValue(IRQ_OFFSET_MASK, irqIdx)) {
 				if (getValue(MAIN_OFFSET_MASK, mainIdx) < getValue(NMI_OFFSET_MASK, nmiIdx)) {		// "main" is next
@@ -904,9 +998,9 @@ uint8_t digiRenderSamples(uint8_t * digiBuffer, uint32_t cyclesPerScreen, uint16
 static inline int16_t genDigi(int16_t in, uint8_t digi, uint8_t is6581) { 
     // transform unsigned 8 bit range into signed 16 bit (–32,768 to 32,767) range	(
 	// shift only 6 instead of 8 because digis are otherwise too loud)	
-	int32_t value = is6581 ? in + (((digi & 0xff) << 7) - (0x3fc0)) : 	// use loud d418/6581 digis
-							in + (((digi & 0xff) << 6) - (0x3fc0>>1));  
-//	int32_t value = in + (((digi & 0xff) << 6) - (0x3fc0>>1));  // FIXME not authentic but nicer to listen too?
+//	int32_t value = is6581 ? in + (((digi & 0xff) << 7) - (0x3fc0)) : 	// use loud d418/6581 digis	(annoying for songs like Digital_Music)
+//							in + (((digi & 0xff) << 6) - (0x3fc0>>1));  
+	int32_t value = in + (((digi & 0xff) << 6) - (0x3fc0>>1));  // FIXME not authentic but nicer to listen too?
 		
 	const int32_t clipValue = 32767;
 	if ( value < -clipValue ) {

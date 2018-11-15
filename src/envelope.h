@@ -52,6 +52,7 @@ protected:
 	* Hack uses for ADSR-bug detection.
 	*/
 	void snapshotLFSR();
+	void planB();
 
 	
 	/**

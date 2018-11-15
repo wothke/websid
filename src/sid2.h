@@ -88,6 +88,7 @@ public:
 	uint8_t getNumberOfVolumeChanges();
 	void disableVolumeChangeNMI(uint8_t mode);
 
+	void planB();
 protected:
 	friend class Envelope;
 	
@@ -116,6 +117,7 @@ private:
 	uint8_t simReadSawtoothD41B();
 	uint8_t simReadPulsedD41B();
 	uint8_t simReadD41B();
+	uint8_t simIsPollyTracker();
 
 	// wave form generation
 	uint16_t combinedWF(uint8_t channel, double *wfarray, uint16_t index, uint8_t differ6581);

@@ -62,7 +62,7 @@ const uint32_t NO_INT= 0x1ffffff;			// aka 33554431
 static uint8_t _mainLoopOnlyMode= 0;
 static uint8_t _mainProgStatus= 0; 		// 0: completed 1: interrupted by cycleLimit
 
-static uint32_t _irqTimeout= 18000;		// will be reset anyway
+static uint32_t _irqTimeout= 0;		// will be reset anyway
 
 /*
 * snapshot of c64 memory right after loading.. 
@@ -70,9 +70,8 @@ static uint32_t _irqTimeout= 18000;		// will be reset anyway
 */
 static uint8_t _memorySnapshot[MEMORY_SIZE];
 
-
-static void setIrqTimeout(uint32_t t) {
-	_irqTimeout= t;		// in cpu cycles
+static void setIrqLimit(uint8_t numberOfFrames) {
+	_irqTimeout= envCyclesPerScreen()*numberOfFrames;		// in cpu cycles
 } 
 
 static uint16_t getNmiVector() {
@@ -110,12 +109,22 @@ static uint16_t getIrqVector() {
 }
 
 static void initCycleCount(uint32_t intMask, uint32_t basePos) {
+	// interrupt sequence takes 7 additional cycles (FIXME why not used for IRQ?)
 	uint32_t relOffset= (intMask == NMI_OFFSET_MASK) ? 7 : 0;
+
+	// reminder: cycle time is here initialized relative to some basePos (i.e. sample recordings
+	// made on this base must be transformed to "frame-time" via digiTagOrigin!)
+	// FIXME: cleanup impl to always directly use "frame-time" - removing this unnecessary 
+	//        source of confusion!
 	cpuResetCycles(relOffset);
+
+	digiBaseOffset(intMask == IRQ_OFFSET_MASK ? basePos : 0);	// HACK e.g. Axel_F.sid
 	
 	if (intMask != NMI_OFFSET_MASK) {	// testcase for MAIN usage Crush.sid
 		// XXX disabling this for NMI may have introduced side-effects..
-		vicStartRasterSim(basePos+ relOffset);
+		
+		// try to use approximate start pos, e.g. for MAIN sections.. might be usefull for songs like Boot_Zak_v2
+		vicStartRasterSim(basePos + relOffset);		// FIXME: this seems to be rather flawed..
 	}
 }
 
@@ -126,9 +135,9 @@ static void setupVolumeHack() {
 }
 
 static uint32_t processInterrupt(uint32_t intMask, uint16_t npc, uint32_t startTime, int32_t cycleLimit) {
-	// known limitation: if the code uses ROM routines (e.g. register restore/return sequence) then we will 
-	// be missing those cpu cycles in our calculation..
-	uint32_t originalDigiCount= digiGetCount();
+	// known limitation: if the code uses ROM routines calculation is flawed (see mock-up ROM routines).
+	uint16_t originalDigiCount= digiGetCount();
+	uint16_t originalDigiOverflowCount= digiGetOverflowCount();
 	
 	sidResetVolumeChangeCount();
 	
@@ -140,17 +149,22 @@ static uint32_t processInterrupt(uint32_t intMask, uint16_t npc, uint32_t startT
 	cpuResetToIrq(npc);
 	cpuSetProgramMode(intMask);
 	
-	
-	// interrupt sequence takes 7 additional cycles (FIXME why not used for IRQ?)
 	initCycleCount(intMask, startTime);
-
+	
+	if (intMask == IRQ_OFFSET_MASK)	{
+		vicSyncRasterIRQ();
+		
+		// FIXME the cpu interrupt flag should also be set before starting the interrupt handler!
+		// but since no one seems to have missed it yet..
+	}
+	
     while (cpuPcIsValid() && ((cycleLimit <0) || (cpuCycles() <cycleLimit))) {
 		vicSimRasterline();
         cpuParse();
 	}
 	cpuSetProgramMode(MAIN_OFFSET_MASK);
 	
-	digiTagOrigin(intMask, startTime, originalDigiCount);		
+	digiTagOrigin(intMask, startTime, originalDigiCount, originalDigiOverflowCount);		
 	
 	if (intMask == IRQ_OFFSET_MASK) _volUpdates+= sidGetNumberOfVolumeChanges();	// number of updates to the volume	
 	
@@ -291,9 +305,10 @@ static void processMain(uint32_t cyclesPerScreen, uint32_t startTime, int32_t ti
 	if ((_mainProgStatus >0) && (timeout >0)) {		// might be the rest of some "init" logic... or some loop playing samples		
 		sidResetVolumeChangeCount();					
 	
-		uint32_t originalDigiCount= digiGetCount();
+		uint16_t originalDigiCount= digiGetCount();
+		uint16_t originalDigiOverflowCount= digiGetOverflowCount();
 		_mainProgStatus= callMain(0, 0, startTime, timeout);	// continue where interrupted
-		digiTagOrigin(MAIN_OFFSET_MASK, startTime, originalDigiCount);
+		digiTagOrigin(MAIN_OFFSET_MASK, startTime, originalDigiCount, originalDigiOverflowCount);
 
 		_volUpdates+= sidGetNumberOfVolumeChanges();	// number of updates to the volume
 	}
@@ -324,7 +339,6 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 	// interrupt returns (which will lead to distortions)
 	
 	uint32_t currentNmiTimer= envIsRSID() ? ciaForwardToNextInterrupt(CIA2, availableNmiCycles) : NO_INT;	
-	uint32_t noInitialNMI = (currentNmiTimer == NO_INT);
 	
 	// KNOWN LIMITATION: ideally all 4 timers should be kept in sync - not just A/B within the same unit! 
 	// however progs that actually rely on multiple timers (like Vicious_SID_2-Carmina_Burana.sid) probably 
@@ -410,11 +424,10 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 				}
 				
 				// FIXME: multi-frame IRQ handling would be necessary to deal with songs like: Musik_Run_Stop.sid	
-
+								
 				uint32_t usedCycles= processInterrupt(IRQ_OFFSET_MASK, getIrqVector(), tIrq, _irqTimeout);
 				
 				// flaw: IRQ might have switched off NMI, e.g. Vicious_SID_2-Blood_Money.sid
-				
 				if (usedCycles >=_irqTimeout) { // IRQ gets aborted due to a timeout
 					if (cpuIrqFlag()) {
 						// this IRQ handler does not want to be interrupted.. (either the code got stuck due to some impossible
@@ -472,18 +485,32 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 /*
 * @return 		1: if digi data available   0: if not
 */
-uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall, int16_t **synthTraceBufs) {
-	digiMoveBuffer2NextFrame();
+uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall, int16_t **synthTraceBufs) {	
+	digiFetchOverflowData();
 		
 	initCycleCount(0, 0);
 
 	ciaUpdateTOD(envCurrentSongSpeed());
 	
 	if (!envSidPlayAddr()) {
-		envSetPsidMode(0);	
+		envSetPsidMode(0);		// FIXME confusing mode change should be avoided (if at all then rather in rsidPlayTrack() than here..)
 	}
 
 	if (envIsPSID()) memResetPsidBanks(1, getIrqVector());	// must be reset before every "play" - see crap like 8-Bit_Keys_Theme.sid
+	
+	
+	// note: The D019 Raster IRQ status bit is set WHENEVER the configured (D011/D012) 
+	// raster line is reached (also while RASTER IRQs are disabled!).. this emulator does 
+	// NOT correctly track the raster position while RASTER IRQ is disabled but some songs (PSIDs and RSIDs)
+	// will still check the flag to make sure that it is a new frame.. (see Come_What_May.sid, Viking.sid).
+	// for the benefit of those songs the flag is set for each frame (the timing will be wrong but 
+	// it should be good enough for those songs..):
+	if ((envIsFilePSID() && !envIsTimerDrivenPSID()) ||
+			!vicIsIrqActive()) {
+		vicSimIRQ(); 	// see Come_What_May.sid
+	}
+	
+	uint8_t retVal;
 	
 	// caution: envIsRSID() at this point also includes certain PSIDs that 
 	// have been deemed fit for use of RSID emulation.. 
@@ -494,15 +521,11 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 		// substracted on the following screen. however a test with a 
 		// respective feature showed that some songs (e.g. Cycles.sid, 
 		// Wonderland XII part1.sid) fail miserably when it is used..
-		
-		if (envIsFilePSID() && !envIsTimerDrivenPSID()) {
-			vicSimIRQ(); 	// see Come_What_May.sid
-		}
-		
+				
 		runScreenSimulation(synthBuffer, cyclesPerScreen, samplesPerCall, synthTraceBufs);
 		
-//		return digiRenderSamples(digiBuffer, cyclesPerScreen, samplesPerCall);	// FIXME this change might break stuff
-		return digiRenderSamples(digiBuffer, envClockRate()/envFPS(), samplesPerCall);
+//		retVal= digiRenderSamples(digiBuffer, cyclesPerScreen, samplesPerCall);	// FIXME this change might break stuff
+		retVal= digiRenderSamples(digiBuffer, envClockRate()/envFPS(), samplesPerCall);
 	} else {
 		// legacy PSID mode: one "IRQ" call per screen refresh (a PSID may actually setup CIA 1 
 		// timers but without wanting to use them - e.g. ZigZag.sid track2). note: most files from the
@@ -517,8 +540,14 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 		sidSynthRender(synthBuffer, samplesPerCall, synthTraceBufs);	
 		digiClearBuffer();		
 		
-		return 0;
+		retVal= 0;
 	}
+
+//	cpuReSyncTotalCycles(envClockRate()/envFPS());	
+	
+	sidPlanB();	// ADSR-delay bug prevention
+	
+	return retVal;
 }
 
 void rsidReset(uint32_t sampleRate, uint8_t compatibility)
@@ -528,8 +557,10 @@ void rsidReset(uint32_t sampleRate, uint8_t compatibility)
 	_mainLoopOnlyMode= 0;
 	
 	// hack: some IRQ players don't finish within one screen, e.g. A-Maze-Ing.sid and Axel_F.sid 
-	// (Sean Connolly) even seems to play digis during multi-screen IRQs (so give them more time)			
-	setIrqTimeout(envCyclesPerScreen()*4);
+	// (Sean Connolly) even seems to play digis during multi-screen IRQs (so give them more time)
+	uint8_t overflowFrames= 4;
+	
+	setIrqLimit(overflowFrames);
 	
     memResetIO();	// reset IO area
 
@@ -537,7 +568,7 @@ void rsidReset(uint32_t sampleRate, uint8_t compatibility)
 		
 	vicReset(envIsRSID(), NO_INT);
 	
-	sidReset(sampleRate, envSIDAddresses(), envSID6581s(), compatibility, 1);
+	sidReset(sampleRate, envSIDAddresses(), envSID6581s(), compatibility, overflowFrames, 1);
 }
 
 void rsidLoadSongBinary(uint8_t *src, uint16_t destAddr, uint32_t len) {
@@ -566,6 +597,15 @@ void rsidPlayTrack(uint32_t sampleRate, uint8_t compatibility, uint16_t *pInitAd
 
 	ciaResetPsid60Hz();
 	
+	/*
+	FIXME: for the below to work it would seem to be the "right thing" to fetch whatever 
+	the PSID INIT setup.. but since this same call is repeated in each PLAY, the below memResetPsidBanks
+	call actually seems to be redundant here..
+	
+	if (!playAddr) {
+		playAddr= getIrqVector();	// should have been initialized by now..
+	}
+	*/
 	memResetPsidBanks(envIsPSID(), playAddr);	// PSID again
 }
 

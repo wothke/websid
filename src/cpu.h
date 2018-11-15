@@ -42,6 +42,7 @@ uint8_t cpuPcIsValid();
 uint8_t cpuIrqFlag();
 uint32_t cpuCycles();		// relative (e.g. measured from start of NMI, etc)
 uint32_t cpuTotalCycles();	// absolute (measured from start of song)
+//void cpuReSyncTotalCycles(uint32_t cyclesPerScreen);
 
 // debug only
 uint16_t cpuGetPC();

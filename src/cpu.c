@@ -11,10 +11,19 @@
  *    <li>"cycle limit" feature used to interrupt emulation runs (e.g. main prog can now be suspended/continued)
  *  </ol>
  *
- * <p>version 0.81
- * <p>Tiny'R'Sid (c) 2016 Jürgen Wothke
+ * KNOWN Limitations: Cycle exact interactions with external components (VIA, CIA, SID) are NOT implemented: The below
+ * implementatation only models how long some CPU command ideally takes (in total). It DOES not take any of those external 
+ * effects into account that can temporarilly freeze/stall the CPU (e.g. VIC during badlines, etc). It also DOES NOT provide 
+ * the more fine grained view that would show at which exact cycle within some operation some memory access would be performed
+ * (e.g. this would be required to precisely time the SID interactions which are relevant for correct ADSR-delay-bug simulation,
+ * etc..).
+ *
+ * <p>version 0.82
+ * <p>Tiny'R'Sid (c) 2018 Jürgen Wothke
  */
 
+ // NOTE: for some reason EMSCRIPTREN does not seem to cope with use if "inline" functions here..
+ 
 // useful links:
 // http://www.oxyron.de/html/opcodes02.html
  
@@ -34,6 +43,7 @@
 
 static uint32_t _cycles= 0;			// counter of burned cpu cycles within current frame
 static uint32_t _totalCycles= 0;			// counter of burned cpu cycles since start of emu
+static uint32_t _totalCyclesBase= 0;
 static uint16_t _pc;
 
 // ----------------------------------------------------------------- Register
@@ -71,6 +81,18 @@ void cpuResetCycles(uint32_t c) {
 uint32_t cpuTotalCycles() {
 	return _totalCycles;
 }
+
+/*	bad idea: this would break songs link Ring_Ring_Ring 
+void cpuReSyncTotalCycles(uint32_t cyclesPerScreen) {
+	// due to various emulator flaws, more cycles may actually be used (e.g. for polling) per frame
+	// then what is actually available.. this function periodically (each frame) resets the count to 
+	// what it should be - if timing worked correctly.. cyclesPerScreen are the "real" cycles available to 
+	// SID...
+	
+	_totalCyclesBase+= cyclesPerScreen;	
+	_totalCycles= _totalCyclesBase;
+}
+*/
 
 uint32_t cpuCycles() {
 	return _cycles;
@@ -451,10 +473,10 @@ void cpuInit(void)
 	_a= _x= _y= _s= _p= 0;
 	_bval= 0;
 	_wval= 0;
-	
+
 	// status
 	_cycles= 0;
-	_totalCycles= 0;
+	_totalCycles= _totalCyclesBase= 0;
 
 	_fakeCountD012= 0;
 	_fakeLoopD012= 0;	
@@ -486,8 +508,8 @@ void cpuParse(void)
     int32_t mode=_modes[opc];
 	
 	uint8_t diff= _opbaseFrameCycles[opc];	// see adjustments in "branch", "putaddr" and "getaddr"
-	_cycles += diff;
-	_totalCycles += diff;
+	_cycles+= diff;
+	_totalCycles+= diff;
     
 	int32_t c;  
     switch (cmd)

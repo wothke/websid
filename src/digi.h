@@ -17,10 +17,10 @@
 
 // setup
 void digiResetModel(uint8_t isModel6581);
-void digiReset(uint8_t compatibility, uint8_t isModel6581);
+void digiReset(uint8_t compatibility, uint8_t isModel6581, uint8_t overflowFrames);
 
 // handling of collected data
-void digiMoveBuffer2NextFrame();	// preserve  "overflow" samples
+void digiFetchOverflowData();		// gets one frame worth of samples from overflow buffer
 void digiClearBuffer();				// start from 0
 uint16_t digiGetOverflowCount();	//  samples for the next frame?
 uint16_t digiGetCount();			//  current number of samples
@@ -28,7 +28,7 @@ uint16_t digiGetCount();			//  current number of samples
 // detection of sample playback
 uint8_t digiDetectSample(uint16_t addr, uint8_t value);
 	// tag origin (main-prog, IRQ, NMI) of captured digi-samples
-void digiTagOrigin(uint32_t mask, uint32_t offset, uint32_t originalDigiCount);
+void digiTagOrigin(uint32_t mask, uint32_t offset, uint16_t originalDigiCount, uint16_t originalDigiOverflowCount);
 
 // rendering the captured digi-samples
 uint8_t digiRenderSamples(uint8_t * digiBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall);
@@ -38,4 +38,8 @@ void digiMergeSampleData(int8_t hasDigi, int16_t *sound_buffer, uint8_t *digi_bu
 int32_t digiGenPsidSample(int32_t sIn);
 
 uint8_t digiIsMahoneyMode();
+uint8_t digiIsIceGuysMode();
+
+void digiBaseOffset(uint32_t base);
+
 #endif

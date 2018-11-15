@@ -15,6 +15,7 @@
 #include "vic.h"
 #include "cia.h"
 #include "sid.h"
+#include "env.h"
 
 #define MEMORY_SIZE 65536
 static uint8_t _memory[MEMORY_SIZE];
@@ -56,7 +57,12 @@ void memSetDefaultBanks(uint8_t isRsid, uint16_t initAddr, uint16_t loadEndAddr)
 			memBankSetting= 0x37;	// default memory config: basic ROM, IO area & kernal ROM visible			
 		}
 	}
-	setMemBank(memBankSetting);	
+	setMemBank(memBankSetting);
+	
+	// see "The SID file environment" (https://www.hvsc.c64.org/download/C64Music/DOCUMENTS/SID_file_format.txt)
+	// this alone might be rather useless without the added timer tweaks mentioned in that spec?
+	_memory[0x02A6]= envIsNTSC() ? 0 : 1;
+
 }
 
 void memResetPsidBanks(uint8_t isPsid, uint16_t playAddr) {
@@ -94,11 +100,7 @@ static uint8_t isIoAreaVisible() {
 }
 
 uint8_t memReadIO(uint16_t addr) {
-	/* XXX nobody is using the mirrored mapping anyway.. and with multiple SID chips it is unnecessarily complicated..
-	if ((addr&0xfc00)==0xd400) {			
-		return _io_area[(addr&0xfc1f) - 0xd000];
-	}
-	*/
+	// mirrored regions not implemented for reads.. nobody seems to use this (unlike write access to SID)
 	return _io_area[addr-0xd000];
 }
 
@@ -149,8 +151,10 @@ uint8_t memGet(uint16_t addr)
 	}
 }
 
-void memSet(uint16_t addr, uint8_t value)
-{
+void memSet(uint16_t addr, uint8_t value) {
+	// normally all writes to IO areas should "write through" to RAM, 
+	// however PSID garbage does not always seem to tolerate that (see Fighting_Soccer)
+		
 	if ((addr >= 0xd000) && (addr < 0xe000)) {	// handle I/O area 
 		if (isIoAreaVisible()) {
 			if ((addr >= 0xd000) && (addr < 0xd400)) {			// vic stuff
@@ -161,6 +165,7 @@ void memSet(uint16_t addr, uint8_t value)
 				return;
 			} else if ((addr >= 0xdc00) && (addr < 0xde00)) {			// CIA timers
 				ciaWriteMem(addr, value);
+				_memory[addr]=value;			// make sure at least timer latches can be retrieved from RAM..
 				return;
 			}
 			  
@@ -169,7 +174,6 @@ void memSet(uint16_t addr, uint8_t value)
 			// normal RAM access
 			_memory[addr]=value;
 		}
-		
 	} else {
 		// normal RAM or
 		// kernal ROM (even if the ROM is visible, writes always go to the RAM)
@@ -193,7 +197,7 @@ void memResetKernelROM() {
     memset(&_kernal_rom[0], 0x60, KERNAL_SIZE);			// RTS by default 
 	
     memcpy(&_kernal_rom[0x1f48], _irqHandlerFF48, 19);	// $ff48 irq routine
-    memset(&_kernal_rom[0x0a31], 0xea, 0x4d);			// $ea31 fill some NOPs	
+    memset(&_kernal_rom[0x0a31], 0xea, 0x4d);			// $ea31 fill some NOPs		(FIXME: nops may take longer than original..)
     memcpy(&_kernal_rom[0x0a7e], _irqHandlerEA7E, 9);	// $ea31 return sequence
     memcpy(&_kernal_rom[0x1e43], _nmiHandlerFE43, 4);	// $fe43 nmi handler
 	

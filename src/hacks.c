@@ -71,8 +71,7 @@ static void patchKnatterIfNeeded(uint16_t *initAddr) {
 
 /*
 * Thats_All_Folks.sid: here again we have a problem with nested IRQs, in addition the main prog uses
-* busy-d012-wait for timing.. (there still remains a speed problem at the very end of the melody but 
-* the rest plays with this hack)
+* busy-d012-wait for timing..
 */
 static void patchThatsAllFolksIfNeeded(uint16_t *initAddr) {
 	if (((*initAddr) == 0x4800) && (memReadRAM(0x4806)==0x48)) {	

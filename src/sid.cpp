@@ -100,6 +100,7 @@ struct SidState {
 // hack for main loop polling (would not be needed if CPU and SID emu were more tightly synchronized..)
 struct SimOsc3 {
 	uint8_t waveform;
+	uint8_t inUse;
 	uint32_t baseCycles;
 	uint32_t counter;
 };
@@ -219,7 +220,8 @@ uint32_t SID::getRingModCounter(uint8_t voice) {
 void SID::resetEngine(uint32_t sampleRate, uint8_t isModel6581) {	
 	// base setting
 	memset((uint8_t*)_sid,0,sizeof(struct SidState));
-
+	memset((uint8_t*)_osc3sim,0,sizeof(struct SimOsc3));
+	
 	_sid->sampleRate = sampleRate;
 	
 	_sid->cycleOverflow = 0;
@@ -245,8 +247,11 @@ void SID::resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 		// above is set to 0
 		_osc[i]->noiseval = 0x7ffff8;		
 		_sid->voices[i].notMuted= 1;
+		_sid->voices[i].prevWaveFormOut= 0x7fff;	// use center to avoid distortions through envelope scaling
 	}
 	
+//	for (uint8_t i= 0; i<0x17; i++) poke(i, 0xff);	// FIXME: this seems to be the recommended by ACID64 (not tested yet)
+
 	_nmiVolChangeDisabled= _allowedMax= _volUpdates= 0;
 }
 /*
@@ -397,7 +402,7 @@ void SID::calcPulseBase(uint8_t voice, uint32_t *tmp, uint32_t *pw) {
 
 uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// elementary pulse
 	if (isTestBit(voice)) return 0xffff;	// pulse start position
-
+	
 #ifdef USE_PULSE_DECAY	
 	uint32_t p= (_osc[voice]->pulse <<8);	// i.e. 24-bit /low-byte always 0
 	int32_t pos= (_osc[voice]->counter - p);	// current position in the pulse (increases in "frequency" steps..)
@@ -630,8 +635,8 @@ uint32_t SID::simOsc3Counter() {
 
 uint8_t SID::simReadSawtoothD41B() {
 	// simulate sawtooth voice 3 oscillator level based on elapsed time	
-	// (handle busy polling for sid oscillator3 - e.g. Ring_Ring_Ring.sid)
-
+	// (handle busy polling for sid oscillator3 - e.g. Ring_Ring_Ring.sid and
+	// Ice_Guys
 	return (uint8_t) (simOsc3Counter() >> 16);
 }
 uint8_t SID::simReadPulsedD41B() {
@@ -639,7 +644,13 @@ uint8_t SID::simReadPulsedD41B() {
 	uint32_t p= (((uint32_t)_sid->voices[2].pulse) & 0xfff) << 12;
 	return (simOsc3Counter() > p) ? 0 : 1;
 }
+uint8_t SID::simIsPollyTracker() {
+	return _osc3sim->inUse && !digiIsIceGuysMode();	// exclude false positive
+}
+
 uint8_t SID::simReadD41B() {
+	_osc3sim->inUse= 1;
+	
 	if (_osc3sim->waveform == 0x40) {
 		return  simReadPulsedD41B();
 	}
@@ -796,7 +807,7 @@ void SID::poke(uint8_t reg, uint8_t val) {
 
     switch (reg) {		
         case 0x0: { // Set frequency: Low byte
-			_sid->voices[voice].freq = (_sid->voices[voice].freq&0xff00) | val;
+			_sid->voices[voice].freq = (_sid->voices[voice].freq&0xff00) | val;			
             break;
         }
         case 0x1: { // Set frequency: High byte
@@ -823,12 +834,12 @@ void SID::poke(uint8_t reg, uint8_t val) {
 
 void SID::writeMem(uint16_t addr, uint8_t value) {
 	if (!digiDetectSample(addr, value)) {
-		poke(addr&0x1f, value);							
+		poke(addr&0x1f, value);		// i.e. needed for 5-Channel_Digi-Tune			
 		memWriteIO(addr, value);	// forget the mirroring stuff.. just messes with additional SIDs	
 	}
 }
 
-void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, double scale, uint8_t doClear) {	
+void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, double scale, uint8_t doClear) {
 	syncRegisterCache();
     
 	double cutoff, resonance;	// calc once here as an optimization
@@ -865,7 +876,7 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 				*(voiceTraceBuffer+bp)= (int16_t)_filter->simOutput(voice, &o, &f, cutoff, resonance);			
 			}
 		}
-		int32_t finalSample= _filter->getOutput(&outf, &outo, cutoff, resonance, _sid->cyclesPerSample);		
+		int32_t finalSample= simIsPollyTracker() ? 0 : _filter->getOutput(&outf, &outo, cutoff, resonance, _sid->cyclesPerSample);	// squelch PollyTracker pulse clicks..	
 		finalSample=  digiGenPsidSample(finalSample);		// recorded PSID digis are merged in directly 
 		
 		if (!doClear) finalSample+= *(buffer+bp);
@@ -894,6 +905,13 @@ uint8_t SID::getAD(uint8_t voice) {
 uint8_t SID::getSR(uint8_t voice) {
 	return _env[voice]->getSR();
 }
+
+void SID::planB() {
+	for (uint8_t voice= 0; voice<3; voice++) {
+		_env[voice]->planB();
+	}
+}
+
 
 void SID::filterSamples(uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 	_filter->filterSamples(digiBuffer, len, voice);
@@ -953,7 +971,6 @@ extern "C" void sidResetVolumeChangeCount() {
 		SID &sid= _sids[i];			
 		_sids[i].resetVolumeChangeCount();
 	}
-	 
 }
 extern "C" uint8_t sidGetNumberOfVolumeChanges() {
 	return _sids[0].getNumberOfVolumeChanges();
@@ -977,6 +994,13 @@ extern "C" void sidSynthRender(int16_t *buffer, uint32_t len, int16_t **synthTra
 	}
 }
 
+extern "C" void sidPlanB() {
+	for (uint8_t i= 0; i<_usedSIDs; i++) {
+		SID &sid= _sids[i];			
+		sid.planB();
+	}
+}
+
 extern "C" void sidResetModel(uint8_t *sidIs6581) {
 	for (uint8_t i= 0; i<_usedSIDs; i++) {
 		SID &sid= _sids[i];			
@@ -985,7 +1009,7 @@ extern "C" void sidResetModel(uint8_t *sidIs6581) {
 	digiResetModel(sidIs6581[0]);
 }
 
-extern "C" void sidReset(uint32_t sampleRate, uint16_t *sidAddrs, uint8_t *sidIs6581, uint8_t compatibility, uint8_t resetVol) {
+extern "C" void sidReset(uint32_t sampleRate, uint16_t *sidAddrs, uint8_t *sidIs6581, uint8_t compatibility, uint8_t overflowFrames, uint8_t resetVol) {
 	_usedSIDs= 0;
 	memset(_mem2sid, 0, MEM_MAP_SIZE); // default is SID #0
 
@@ -1008,7 +1032,7 @@ extern "C" void sidReset(uint32_t sampleRate, uint16_t *sidAddrs, uint8_t *sidIs
 	}
 	// digis are rarely used in multi-SID configurations (Mahoney did it but then that 
 	// song crashes the emu anyways) .. only support digi for 1st SID:
-	digiReset(compatibility, sidIs6581[0]);
+	digiReset(compatibility, sidIs6581[0], overflowFrames);
 }
 
 extern "C" uint8_t sidReadMem(uint16_t addr) {

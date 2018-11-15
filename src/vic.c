@@ -29,6 +29,8 @@ void vicReset(uint8_t isRsid, uint32_t f) {
 	
 	if (isRsid) {
 		// by default C64 is configured with CIA1 timer / not raster irq
+		
+		// FIXME according to SID file format spec the raster should default to 0x137!
 		memWriteIO(0xd01a, 0x00); 	// raster irq not active
 		memWriteIO(0xd011, 0x1B);
 		memWriteIO(0xd012, 0x00); 	// raster at line x
@@ -61,9 +63,28 @@ void vicStartRasterSim(uint32_t rasterPosInCycles) {
 	_lastRelativeCyclePos= cpuCycles();
 }
 
+void initRemainingRasterCycles() {
+	_remainingCyclesThisRaster+= envCyclesPerRaster();
+	
+	// note: in badline there are 40-43 cycles less available to the CPU! [i.e. only 20 instead of 60]
+	// "Normally, every eighth line inside the display window, starting with the
+	// very first line of the graphics, is a Bad Line.. depends on the YSCROLL."
+	
+	// see http://www.zimmers.net/cbmpics/cbm/c64/vic-ii.txt
+	
+	uint8_t displayEN= memReadIO(0xd011)&0x8;
+	if (displayEN && (_currentRasterPos >= 0x30) && (_currentRasterPos <= 0xf7)
+			&& ((memReadIO(0xd011)&0x7) == (_currentRasterPos&0x7))) {
+
+		// note: Waking_Up_part_4 makes use of respective raster polling and apparently it is using a 
+		// display mode that leads to the badlines here.. however is does not seem to make any difference..
+		_remainingCyclesThisRaster-= 40;	// doesn't seem to make a difference so far..
+	}
+}
+
 void vicSimRasterline() {
 	/* 
-	songs like Digital_Music.sid, Thats_All_Folks.sid or Uwe Anfang's stuff use busy-wait 
+	songs like Waking_Up_part_4, Digital_Music.sid, Thats_All_Folks.sid or Uwe Anfang's stuff use busy-wait 
 	for specific rasterlines from their IRQ and Main prog code. in order to avoid endless 
 	waiting the progress of the raster is simulated here..
 	
@@ -74,9 +95,12 @@ void vicSimRasterline() {
 	long cdiff= cpuCycles()-_lastRelativeCyclePos;
 	if (cdiff > _remainingCyclesThisRaster) {
 		incCurrentRasterPos();					// sim progress of VIC raster line..
-		_remainingCyclesThisRaster+= envCyclesPerRaster();	// badlines korrektur?
-	}	
-	_remainingCyclesThisRaster-= cdiff;
+		
+		initRemainingRasterCycles();
+	}
+	if (cdiff > 0) {
+		_remainingCyclesThisRaster-= cdiff;
+	}
 	_lastRelativeCyclePos= cpuCycles();	
 }
 
@@ -85,7 +109,8 @@ static void setD019(uint8_t value) {
 	memWriteIO(0xd019, memReadIO(0xd019)&(~value));
 }
 
-static void signalIrq() {	
+static void signalIrq() {
+	// simulate an enabled RASTER IRQ
 	// bit 7: IRQ triggered by VIC
 	// bit 0: source was rasterline
 
@@ -93,8 +118,10 @@ static void signalIrq() {
 }
 
 void vicSimIRQ() {
-	memWriteIO(0xd01a, 0x01);
-	signalIrq();
+	// simulate an disabled RASTER IRQ, i.e. just set the respective flag (as VIC DOES
+	// while RASTER IRQ is NOT enabled)
+	// test case: Wally Beben songs that use CIA 1 timer for IRQ but check for this flag
+	memWriteIO(0xd019, memReadIO(0xd019)|0x1);	
 }
 
 uint32_t lastDummyInterrupt=0;
@@ -133,6 +160,18 @@ uint8_t vicIsIrqActive() {
 	return !cpuIrqFlag() && ((memReadIO(0xd01a)&0x1) == 1);
 }
 
+void vicSyncRasterIRQ() {
+	if ((memReadIO(0xd01a)&0x1) == 1) {
+		// the configured line has actually been reached and a raster IRQ handler is about to 
+		// be triggered - better sync the simulated state accordingly..
+		_lastRelativeCyclePos= cpuCycles();
+		_currentRasterPos= vicGetRasterline();
+	
+		_remainingCyclesThisRaster= 0;
+		initRemainingRasterCycles();	
+	}
+}
+
 /*
 * Gets the next 'timer' based on next raster interrupt which will occur on the current screen.
 * @return _failMarker if no event on the  current screen
@@ -140,7 +179,7 @@ uint8_t vicIsIrqActive() {
 uint32_t vicForwardToNextRaster() {
 	if (!vicIsIrqActive()) {
 		return _failMarker;
-	}
+	}	
 	int32_t timer= 0;
 	if (_timerCarryOverIrq >=0) {
 		timer= _timerCarryOverIrq;

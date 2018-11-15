@@ -29,6 +29,8 @@ int32_t envClockRate();
 
 uint8_t envIsSID6581();
 
+uint8_t envIsNTSC();
+
 // PSID stuff
 int8_t envIsRasterDrivenPSID();
 int8_t envIsTimerDrivenPSID();
