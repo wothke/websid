@@ -58,11 +58,6 @@ void memSetDefaultBanks(uint8_t isRsid, uint16_t initAddr, uint16_t loadEndAddr)
 		}
 	}
 	setMemBank(memBankSetting);
-	
-	// see "The SID file environment" (https://www.hvsc.c64.org/download/C64Music/DOCUMENTS/SID_file_format.txt)
-	// this alone might be rather useless without the added timer tweaks mentioned in that spec?
-	_memory[0x02A6]= envIsNTSC() ? 0 : 1;
-
 }
 
 void memResetPsidBanks(uint8_t isPsid, uint16_t playAddr) {
@@ -209,7 +204,7 @@ void memResetKernelROM() {
 }
 
 void memResetRAM(uint8_t isPsid) {
-    memset(_memory, 0x0, sizeof(_memory));
+    memset(&_memory[0], 0x0, MEMORY_SIZE);
 
 	_memory[0x0314]= 0x31;		// standard IRQ vector
 	_memory[0x0315]= 0xea;
@@ -218,12 +213,19 @@ void memResetRAM(uint8_t isPsid) {
 	_memory[0x00c5]= _memory[0x00cb]= 0x40;		// no key pressed 
 
 	// Dill_Pickles.sid depends on this
-	memWriteRAM(0x0000, 0x2f);	//default: processor port data direction register		
+	 _memory[0x0000]= 0x2f;		//default: processor port data direction register
 	
 	// for our PSID friends who don't know how to properly use memory banks lets mirror the kernal ROM into RAM
 	if (isPsid) {
 		memcpy(&_memory[0xe000], &_kernal_rom[0], 0x2000);
+		
+		// FIXME maybe IO area should also be copied? 
 	}
+	
+	// see "The SID file environment" (https://www.hvsc.c64.org/download/C64Music/DOCUMENTS/SID_file_format.txt)
+	// though this alone might be rather useless without the added timer tweaks mentioned in that spec?
+	// (the MUS player is actually checking this - but also setting it)
+	_memory[0x02a6]= (!envIsNTSC()) & 0x1;	
 }
 void memResetIO() {
     memset(&_io_area[0], 0x0, IO_AREA_SIZE);

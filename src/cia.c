@@ -55,7 +55,23 @@
 #define ADDR_CIA1 0xdc00
 #define ADDR_CIA2 0xdd00
 
+
+
 // *********************** hacks *********************************************
+
+// hack: poor man's TOD sim (only secs & 10th of sec), see Kawasaki_Synthesizer_Demo.sid
+static uint32_t _todInMillies= 0;
+
+struct PollCia {
+	uint8_t isStarted;
+	uint32_t baseCycles;
+	uint16_t latch;
+	uint16_t nextLatch;	
+	uint8_t stopStatus;
+};
+static struct PollCia _dcia[4];
+
+
 static uint8_t _dummyDC04;
 static uint8_t _nmiVectorHack= 0;
 
@@ -420,8 +436,6 @@ int ciaIsActive(uint8_t ciaIdx) {
 
 // -----------------------------  CIA timer I/O -------------------------------------------
 
-// hack: poor man's TOD sim (only secs & 10th of sec), see Kawasaki_Synthesizer_Demo.sid
-static uint32_t _todInMillies= 0;
 static uint32_t getTimeOfDayMillis() {
 	return _todInMillies;
 }
@@ -448,16 +462,6 @@ void ciaUpdateTOD(uint8_t songSpeed) {
 	to the playback quality - but a respective add-on feature might break existing
 	stuff - it is not implemented.
 ***************************************************************************************************/
-
-struct PollCia {
-	uint8_t isStarted;
-	uint32_t baseCycles;
-	uint16_t latch;
-	uint16_t nextLatch;	
-	uint8_t stopStatus;
-};
-static struct PollCia _dcia[4];
-
 
 static void simWriteTABLO(uint8_t ciaIdx, uint8_t timerIdx, uint8_t val) {
 	struct PollCia *c= &(_dcia[ciaIdx*2+timerIdx]);

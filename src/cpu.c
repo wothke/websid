@@ -44,9 +44,9 @@
 static uint32_t _cycles= 0;			// counter of burned cpu cycles within current frame
 static uint32_t _totalCycles= 0;			// counter of burned cpu cycles since start of emu
 static uint32_t _totalCyclesBase= 0;
-static uint16_t _pc;
 
 // ----------------------------------------------------------------- Register
+static uint16_t _pc;
 static uint8_t _a,_x,_y,_s,_p;	// _p= status register
 
 
@@ -469,17 +469,19 @@ static void branch(uint8_t opc, int32_t flag)
 
 void cpuInit(void)
 {
-	_pc= 0;
-	_a= _x= _y= _s= _p= 0;
-	_bval= 0;
-	_wval= 0;
+	// timing status
+	_cycles= _totalCycles= _totalCyclesBase= 0;
+		
+	// cpu status
+	_pc=_a= _x= _y= _s= _p= _bval= _wval= 0;
 
-	// status
-	_cycles= 0;
-	_totalCycles= _totalCyclesBase= 0;
+	memset(&(_snapshots[0]), 0, sizeof(struct Snapshot));	// just in case
+	memset(&(_snapshots[1]), 0, sizeof(struct Snapshot));
+	
+	_programMode= MAIN_OFFSET_MASK;
 
-	_fakeCountD012= 0;
-	_fakeLoopD012= 0;	
+	// hacks
+	_fakeCountD012= _fakeLoopD012= 0;	
 }
 
 void cpuRegReset(void)

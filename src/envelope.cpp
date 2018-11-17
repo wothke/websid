@@ -243,7 +243,7 @@ void Envelope::reset() {
 	state->zeroLock= 1;
 	
 	// plan B
-	state->adsrHist[2]= 0xffff;	// 0 would be a bad default since is cannot be distinguished from real data
+	state->adsrHist[0]= state->adsrHist[1]= state->adsrHist[2]= 0xffff;	// 0 would be a bad default since is cannot be distinguished from real data
 }
 
 void Envelope::resetConfiguration(uint32_t sampleRate) {
@@ -549,7 +549,7 @@ void dbgPrint(uint8_t dbgIdx, uint16_t newRate) {
 	fprintf(stderr, "  %s %d %lu\n", t, newRate, cpuCycles());
 }
 */
-void Envelope::simGateAdsrBug(uint8_t dbgIdx, uint16_t newRate) {	
+void Envelope::simGateAdsrBug(uint8_t dbgIdx, uint16_t newRate) {
 	// CAUTION: this impl is only designed with IRQ handling in mind.. and presumes that previous SID output
 	// has been generated up to the moment that the IRQ handler (from which this SID setting is triggered) is 
 	// called (the relative timing information used here depends on it..)

@@ -103,8 +103,8 @@ void Filter::reset(uint32_t sampleRate) {
 	struct FilterState* state= getState(this); 
 
 	// init "filter" structures
-	memset((uint8_t*)state,0,sizeof(struct FilterState));
-
+	memset((uint8_t*)state, 0, sizeof(struct FilterState));
+	
     state->cutoffRatio8580 = ((double)-2.0) * 3.1415926535897932385 * (12500.0 / 256) / sampleRate,
     state->cutoffRatio6581 = ((double)-2.0) * 3.1415926535897932385 * (20000.0 / 256) / sampleRate;
 //	state->bandPass = 0;	// redundant
@@ -166,7 +166,7 @@ int32_t Filter::simOutput(uint8_t voice, int32_t *in, int32_t *out, double cutof
 	// save the trouble to run any filter calcs when no filters are activated..
 	double output=  !(state->ftpVol & 0x70) ? (double)(*out) :  
 		runFilter((double)(*in), (double)(*out), &(state->simBandPass[voice]), &(state->simLowPass[voice]), cutoff, resonance);
-	
+		
 	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)		
 	return round(output * state->vol / OUTPUT_SCALEDOWN); // SID output
 #else
@@ -180,6 +180,7 @@ int32_t Filter::getOutput(int32_t *in, int32_t *out, double cutoff, double reson
 	int32_t OUTPUT_SCALEDOWN = 0x6 * 0xf;	// hand tuned with "424"
 #ifdef USE_FILTER	
 	// save the trouble to run any filter calcs when no filters are activated..
+		
 	double output=  !(state->ftpVol & 0x70) ? (double)(*out) :  
 		runFilter((double)(*in), (double)(*out), &(state->bandPass), &(state->lowPass), cutoff, resonance);
 	
@@ -188,7 +189,7 @@ int32_t Filter::getOutput(int32_t *in, int32_t *out, double cutoff, double reson
 	output= extFilter(state, output, cyclesPerSample);
 	
 	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)		
-	return round(output  / OUTPUT_SCALEDOWN); // SID output
+	return round(output / OUTPUT_SCALEDOWN); // SID output
 #else
 	return (*out)* state->vol / OUTPUT_SCALEDOWN;
 #endif
@@ -240,7 +241,6 @@ void Filter::routeSignal(int32_t *voiceOut, int32_t *outf, int32_t *outo, uint8_
 	}
 #endif
 }
-
 
 double Filter::runFilter(double in, double output, double *bandPass, double *lowPass, double cutoff, double resonance) {
 	// derived from Hermit's filter implementation:

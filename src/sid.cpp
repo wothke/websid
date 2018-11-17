@@ -187,6 +187,8 @@ SID::SID() {
 
 	// hack
 	_osc3sim = (struct SimOsc3*) malloc(sizeof(struct SimOsc3));
+	
+	_volUpdates= _nmiVolChangeDisabled= _allowedMax= 0;
 }
 
 
@@ -218,41 +220,42 @@ uint32_t SID::getRingModCounter(uint8_t voice) {
 }
 
 void SID::resetEngine(uint32_t sampleRate, uint8_t isModel6581) {	
-	// base setting
-	memset((uint8_t*)_sid,0,sizeof(struct SidState));
-	memset((uint8_t*)_osc3sim,0,sizeof(struct SimOsc3));
+	// note: structs are NOT packed and contain additional padding..
 	
+	// reset _sid
+	memset((uint8_t*)_sid, 0, sizeof(struct SidState));	
+	resetModel(isModel6581);
 	_sid->sampleRate = sampleRate;
-	
 	_sid->cycleOverflow = 0;
 	_sid->cyclesPerSample = ((double)envClockRate()) / sampleRate;
-	
-	resetModel(isModel6581);
-	
-	// filter
-	_filter->reset(sampleRate);
 
-	// envelope generator
-	for (uint8_t i=0;i<3;i++) {
-		_env[i]->reset();
-	}
-
-	// oscillator / waveform stuff
-	memset((uint8_t*)_osc[0], 0, sizeof(struct Oscillator));
-	memset((uint8_t*)_osc[1], 0, sizeof(struct Oscillator));
-	memset((uint8_t*)_osc[2], 0, sizeof(struct Oscillator));
-
-	for (uint8_t i=0;i<3;i++) {
-		// note: by default the rest of _sid, _osc & _filter 
-		// above is set to 0
-		_osc[i]->noiseval = 0x7ffff8;		
+	for (uint8_t i=0; i<3; i++) {
+//		memset((uint8_t*)&_sid->voices[i], 0, sizeof(struct SidState::Voice));	// already included in _sid		
 		_sid->voices[i].notMuted= 1;
 		_sid->voices[i].prevWaveFormOut= 0x7fff;	// use center to avoid distortions through envelope scaling
 	}
 	
-//	for (uint8_t i= 0; i<0x17; i++) poke(i, 0xff);	// FIXME: this seems to be the recommended by ACID64 (not tested yet)
+	// reset _osc
+	for (uint8_t i=0; i<3; i++) {
+		memset((uint8_t*)_osc[i], 0, sizeof(struct Oscillator));
+		// note: by default the rest of _sid, _osc & _filter 
+		// above is set to 0
+		_osc[i]->noiseval = 0x7ffff8;
+	}
+	
+	// reset envelope generator
+	for (uint8_t i=0;i<3;i++) {
+		_env[i]->reset();
+	}
 
-	_nmiVolChangeDisabled= _allowedMax= _volUpdates= 0;
+	// reset filter
+	_filter->reset(sampleRate);
+
+	// reset hacks
+	memset((uint8_t*)_osc3sim, 0, sizeof(struct SimOsc3));
+	_nmiVolChangeDisabled= _allowedMax= _volUpdates= 0;	// just in case
+
+	//	for (uint8_t i= 0; i<0x17; i++) poke(i, 0xff);	// FIXME: this seems to be the recommended by ACID64 (not tested yet)
 }
 /*
 * While "_sid" data structure is automatically kept in sync by the emulator's memory access 
