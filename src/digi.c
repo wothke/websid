@@ -239,6 +239,9 @@ static uint8_t handleFreqModulationDigi(uint8_t voice, uint8_t reg, uint8_t valu
 	the "frequency hi-byte" (the whole sequence usually takes about 20-30 
 	cycles.. - exaxt limits still to be verified) .. possible variations: GATE 
 	is not set in step 2 and/or steps 3 and 4 are switched (see LMan - Vortex.sid)
+	
+	An unusual (currently unsupported) variation can be seen in Super_Carling_the_Spider_credits 
+	where 2 alternating NMIs are using 2 different voices for this..
 	*/
 	if (reg == 4) {	// waveform
 		value &= 0x19;	// mask all excess bits..

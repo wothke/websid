@@ -18,8 +18,8 @@
 * the easiest workaround is to directly run the digi-player loop as Main..
 */
 static void patchLameTuneIfNeeded(uint16_t *initAddr) {		
-	uint8_t lamePattern[]= {0xa2, 0x00,0xbd, 0x00, 0x0c};
-	if (((*initAddr) == 0x1000) && memMatch(0x1000, lamePattern, 5)) {
+	uint8_t pattern[]= {0xa2, 0x00,0xbd, 0x00, 0x0c};
+	if (((*initAddr) == 0x1000) && memMatch(0x1000, pattern, 5)) {
 		(*initAddr)= 0x112a;
 	}
 }
@@ -86,8 +86,8 @@ static void patchThatsAllFolksIfNeeded(uint16_t *initAddr) {
 * Unfortunately the emulator's timing glitches make it play more samples than are actually provided.
 */
 static void patchBloodMoneyIfNeeded(uint16_t *initAddr) {
-	uint8_t bloodPattern[]= {0xa4,0x2e,0x4c,0x0c,0xdc};
-	if (((*initAddr) == 0x080d) && memMatch(0x094B, bloodPattern, 5)) {
+	uint8_t pattern[]= {0xa4,0x2e,0x4c,0x0c,0xdc};
+	if (((*initAddr) == 0x080d) && memMatch(0x094B, pattern, 5)) {
 		memWriteRAM(0x0941, 0xad);	// just disable the IRQ digis and stick to the NMI playback
 		memWriteRAM(0x0937, 0xad);
 		memWriteRAM(0x093C, 0xad);
@@ -153,8 +153,8 @@ static void patchWonderlandIfNeeded(uint16_t *initAddr) {
 	;0E15    D0 52       BNE $0E69		<-- disable	
 	*/
 
-	uint8_t wonderPattern[]= {0x0D,0x12,0xD0,0xC9,0x2C,0xD0,0x52};
-	if (memMatch(0x0E10, wonderPattern, 7)) {
+	uint8_t pattern[]= {0x0D,0x12,0xD0,0xC9,0x2C,0xD0,0x52};
+	if (memMatch(0x0E10, pattern, 7)) {
 		memWriteRAM(0x15A7, 0xea);	// IRQ cycle timing patch  (somewhat reduces glitches..)
 		memWriteRAM(0x15A8, 0xea);
 	
@@ -179,8 +179,8 @@ static void patchWonderlandIfNeeded(uint16_t *initAddr) {
 
 static void patchThcmIfNeeded(uint16_t *initAddr) {
 	// "File Deleted" / "My Life" patch
-	uint8_t thcmPattern[]= {0xce, 0xb1, 0x0b, 0x68, 0x68, 0x68, 0x8c, 0x0d, 0xdd};
-	if (memMatch(0x0b4d, thcmPattern, 9)) {		
+	uint8_t pattern[]= {0xce, 0xb1, 0x0b, 0x68, 0x68, 0x68, 0x8c, 0x0d, 0xdd};
+	if (memMatch(0x0b4d, pattern, 9)) {		
 		// NMI interrupting MAIN during init not supported (i.e. the 3 stack 
 		// entries are never pushed and there is nothing to pull back)
 
@@ -192,7 +192,40 @@ static void patchThcmIfNeeded(uint16_t *initAddr) {
 	}
 }
 
+
+static void patchSuperCarlingSpider(uint16_t *initAddr) {
+	// "Super_Carling_the_Spider" patch (it remains to be seen if other songs are
+	// also using this digi approach.. a patch is use here since the song
+	// would otherwise block the player)
+	uint8_t pattern[]= {0x11, 0x8d, 0x0b, 0xd4, 0xa9, 0x09, 0x8d, 0x12, 0xd4, 0xad, 0xff};
+	if (((*initAddr) == 0x080d) && memMatch(0x0d1b, pattern, 11)) {	
+		memWriteRAM(0x081b, 0xa9);	// hardcode timer (the set 0x3 seems to be good for 155 NMIs per frame..)
+			
+		memWriteRAM(0x08D3, 0x4c);	// use IRQ2 directly as main	
+		memWriteRAM(0x08D4, 0x50);	
+		memWriteRAM(0x08D5, 0x09);	
+		
+		memWriteRAM(0x0c0e, 0xea);	// replace BRK in NMI (the branch timing is incorrect)
+		memWriteRAM(0x0c0f, 0xea);
+		memWriteRAM(0x0d0e, 0xea);
+		memWriteRAM(0x0d0f, 0xea);
+			
+		// the alternating 2-voice FREQ modulation digi approach is not currently
+		// detected.. patch it to something that is (i.e. use only 1 voice per NMI-vector
+		// and use the "standard pattern" with GATE). If this approach was more widely used
+		// then it would make sense to extend the detection logic - but for just this one
+		// song there is no need.
+		memWriteRAM(0x0c1d, 0x0b);
+		memWriteRAM(0x0c2b, 0x1);		
+		memWriteRAM(0x0d1d, 0x12);
+		memWriteRAM(0x0D2b, 0x1);
+	}
+}
+
 void hackIfNeeded(uint16_t *initAddr) {
+	
+	patchSuperCarlingSpider(initAddr);
+	
 	patchThcmIfNeeded(initAddr);
 	
 	patchMahoneyLatestIfNeeded(initAddr);
