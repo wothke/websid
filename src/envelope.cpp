@@ -9,6 +9,12 @@
  * emulation, but again some hacks are needed to keep things "in-sync" which are
  * not properly in-sync on the emulation level.
  *
+ * Glossary: When talking about "frames" in the comments in this file, it means 
+ * display frames (i.e. 50 or 60Hz screen refresh interval) as a measurement unit
+ * for elapsed time. (Tracker-musicians may also use "frame" for the "rows" in their
+ * tracker - but a row will only correspond to a display-frame in 1x speed songs
+ * whereas higher speed songs will play multiple rows per frame.)
+ *
  * <p>Credits:
  * <ul>
  * <li>Various docs found on the net provide the base for this implementation, this
@@ -60,20 +66,16 @@ struct EnvelopeState {
 	uint8_t zeroLock;  
 	uint8_t exponentialCounter;    
 
-	// ADSR bug detection plan A) try to correctly time & detect condition
+	//---- ADSR bug detection ---- 
+		// plan A) try to correctly time & detect condition
 	uint32_t lastCycles;
 	uint16_t simLFSR;		// base for CPU-side simulation
 	uint16_t origLFSR;
 	double overflow;
-	uint32_t rUppedTime;	// time that R was last increased from earlier 0 setting (within current frame)
-	uint8_t delayDetected;
 	
-	
-		// plan B) "detect intention" approach.. detect when player tries to avoid bug..
-	uint8_t triggerPlanB;			// force LSFR reset before next use
-	uint16_t adsrHist[3];		// ADSR settings of last 3 frames
-	
-	
+		// plan B) anticipative approach.. detect when player tries to avoid bug..
+	uint8_t triggerPlanB;		// force LSFR into delay-bug before next use
+	uint16_t adsrHist[2];		// ADSR settings of previous 2 frames
 };
 
 struct EnvelopeState* getState(Envelope *e) {	// this should rather be static - but "friend" wouldn't work then
@@ -88,59 +90,64 @@ uint8_t Envelope::sExponentialDelays[256];
 
 
 
-// plan B: while there are some songs that specifically rely on the ADSR-bug to strike, most
-// songs just want to avoid the bug and take precautions against it: A specific usage pattern 
-// is initiated before the note should actually be played, e.g.:
+// ADSR-delay-bug "plan B":
+// 
+// This anticipative approach does not try to correctly simulate LSFR counter at any given moment.
+// Instead it looks at what the music tracker is trying to do and resets a potentially "derailed" counter
+// back on track when detecting certain commonly used patterns:
+// 
+// While there are some songs that specifically rely on the ADSR-delay-bug to strike, most
+// songs just want to avoid the bug and take precautions against it: A specific usage pattern
+// is initiated to force the delay-bug *before* the note should actually be played. Musicians refer 
+// to this "feature" as "hard reset" and in their favorite tracker software most often deal with it
+// using specific ADSR setting / WF combinations they configure on a "per row" level.
 //
-// frame 0: ADSR is set such that bug will likely be triggered, e.h. 0000 or 0f00, etc
+// frame 0: ADSR is set such that bug will likely be triggered/that counter is caught in the
+//          lowest possible range afterwards, e.h. 0000 or 0f00, etc
 // 			(unfortunately musicians here rely on trial&error and they may use whatever they
-//          think sounds nice.. i.e. some settings may actually not disable the bug-delay 
+//          think sounds nice.. i.e. some settings may actually not disable the bug-delay
 //          completely => to reproduce those exact effects will not be possible with this hack here..)
-// frame 1: wait 1 frame (certain trackers allow to use different settings here.. e.g. Electric_Girls
-//          performs the setting 6 frames in advance..)
-// frame 2: set test&gate in waveform (plus whatever else..)
+// frame 1: wait 1 frame (for their "row" based configuration trackers allow to specify a respective
+//          time measured in "rows" so that it can be adjusted for higher-speed songs, e.g. Electric_Girls
+//          (3x speed) performs the "frame 0" setting 6 rows in advance..)
+// frame 2: set test&gate in waveform (plus whatever else..) to force the delay-bug, e.g. this complete
+//          frame will then be blocked, and also half of the next one.. (there are songs that use very
+//          similar patterns but without the GATE, e.g. Confusion_2015_Remix, but these are not currently 
+//          handled by "plan B" but by the regular "plan A" which fortunately seems to work well enough there)
+// frame 3: set the actual waveform that should be played.. (most players GATE this again while others
+//          directely RELEASE here - see Move_Me_Like_A_Movie)
 //
-// the expectation is that after step 2 the LFSR should be in a save position, i.e. 0, such 
-// that "play" in later frames will start immediately..
-//
-// musicians refer to this "feature" as "hard reset" and in their favorite tracker software most often 
-// deal with it as a "per frame" configuration, i.e. they are not aware what actually happens within 
-// "a frame" (and may think that the update order within a frame is not that important - but it is the reason 
-// for the "surprising" differences encountered when using different trackers that all seem to
-// support the "same" feature :-) Unless it is really used for a clean restart, the "available" settings
-// that the musician can use freely, may lead to all kinds of unpredictable effects - that the below 
-// hack will never be able to simulate.
+// Musicians usually are not aware what actually happens within "a row" (and may think that the update order 
+// within "a row" is not that important - but *it is* the reason for the "surprising" differences encountered 
+// when using different trackers that all seem to support the "same" feature :-) Unless it is really used 
+// for a clean restart, the "available" settings - that the musician can use freely - may lead to all kinds 
+// of unpredictable effects, that the below hack will never be able to correctly simulate.
 
 static uint8_t isBugTriggerPattern(uint16_t adsr) {
-	return (adsr == 0x0000) || (adsr == 0x0f00)|| (adsr == 0xf000);
+	return ((adsr & 0xff0f) == 0x0000) || (adsr == 0x0f00)|| (adsr == 0xf000);	// maybe different patterns / players must be handled separately
 }
 
-static void handlePlanB(struct EnvelopeState *state) {
-	// waveform with gate & test has been set: try to determine if this is "frame 2" in the
-	// above described scenario (based on what happend to adsrHist[])
+static void triggerPlanB(Envelope *env, struct EnvelopeState *state) {
+	// called when WF GATE/TEST is set in current frame, and the below check tries to determine if this
+	// is a "frame 2" (see above) scenario..
 	
-//	fprintf(stderr, "%X %X %X\n", state->adsrHist[0], state->adsrHist[1], state->adsrHist[2]);
-	
-	// the reset seems to disturb Electric_Girls timing so that delay no longer triggers
-	// for noise parts that should correctly be mutes/shortened..
-	
-	if (isBugTriggerPattern(state->adsrHist[1]) && 
-			(state->adsrHist[1] == state->adsrHist[2]) &&	// last frame "they then just waited"
-			(state->adsrHist[1] != state->adsrHist[0])) {	// after 2 frames the count should just continue cycling in the save/low range..
-		state->triggerPlanB= 1;
+	// 0: settings at end of frame t -2
+	// 1: settings at end of frame t -1	(i.e. previous frame)
+	if (isBugTriggerPattern(state->adsrHist[1]) && (state->adsrHist[1] == state->adsrHist[0]) ) {	// previous 2 frames used "safe" setting
+		state->triggerPlanB= 2;	// follow up on this for the next 2 frames
 	}
 }
 
-// called at the end of each frame: track registers used to detect music player's
-// attempt to avoid the ADSR-delay bug
-void Envelope::planB() {
+// called at the end of each *frame*: track registers used to detect a music player's
+// attempt to avoid/trigger the ADSR-delay-bug
+void Envelope::snapshotAdsrState() {
 	struct EnvelopeState *state= getState(this);
-	// easier to track the info at the end of a frame 
-	// then trying to capture it while the settings are made...
-	for (uint8_t i= 0; i<2; i++) {
+	// easier to track the info at the end of a frame
+	// than trying to capture it while the settings are made...
+	for (uint8_t i= 0; i<1; i++) {
 		state->adsrHist[i]= state->adsrHist[i+1];
 	}
-	state->adsrHist[2]= (((uint16_t)state->ad) << 8) | state->sr;
+	state->adsrHist[1]= (((uint16_t)state->ad) << 8) | state->sr;
 }
 
 Envelope::Envelope(SID *sid, uint8_t voice) {
@@ -178,8 +185,7 @@ void Envelope::poke(uint8_t reg, uint8_t val) {
 
 			uint8_t oldGate= _sid->getWave(_voice)&0x1;
 			uint8_t newGate= val & 0x01;
-			
-			
+						
 			if (!oldGate && newGate) {
 				simGateAdsrBug(0, state->ad >> 4);	// switch to 'attack'
 				/* 
@@ -190,8 +196,8 @@ void Envelope::poke(uint8_t reg, uint8_t val) {
 				state->envphase= Attack;				
 				state->zeroLock= 0;
 				
-				if ((val & 0x08)) {	// test bit set
-					handlePlanB(state);	// "plan B" ADSR bug detection
+				if ((val & 0x08)) {	// only use for this specific pattern (not for similar cases like Confusion 2015 Remix)
+					triggerPlanB(this, state);	// "plan B" ADSR bug detection
 				}				
 			} else if (oldGate && !newGate) {
 				simGateAdsrBug(1, state->sr & 0xf);	// switch to 'release'
@@ -243,7 +249,7 @@ void Envelope::reset() {
 	state->zeroLock= 1;
 	
 	// plan B
-	state->adsrHist[0]= state->adsrHist[1]= state->adsrHist[2]= 0xffff;	// 0 would be a bad default since is cannot be distinguished from real data
+	state->adsrHist[0]= state->adsrHist[1]= 0xffff;	// 0 would be a bad default since is cannot be distinguished from real data
 }
 
 void Envelope::resetConfiguration(uint32_t sampleRate) {
@@ -311,20 +317,41 @@ uint8_t Envelope::handleExponentialDelay() {
 	}
 	return result;
 }
+
+void Envelope::handleDelayBugPlanB() {
+	// this will override whatever the regular handling would have come up with..
+	// FIXME: only designed for 1x speed
+	
+	struct EnvelopeState *state= getState(this);
+	if (state->triggerPlanB) {		
+		// the delay-bug must be forced here, so that it will be done in about 1.5 frames and the
+		// ATTACK will actually start in the middle of the next frame
+		
+		if (state->triggerPlanB == 2) {
+			// t0: this is the "frame" where TEST/GATE has just been set to prepare for next note:
+			// normally the delay-bug should be immediately triggered, ensureing that
+			// the next note will start 1.5 frames later (e.g. see Relax_Magazine and Electric_Girl)
+			state->currentLFSR= sCounterPeriod[state->ad >> 4] + 1;	// force delay-bug
+		} else {
+			// t1: this is where the actual note is "attacked" or in some cases "released" one frame later:
+			// some songs (e.g. Move_Me_Like_A_Movie) use the very same pattern but
+			// apprently MUST NOT end in the delay-bug to sound correctly..
+						
+			// PROBLEM: previous frame was wrongly set into delay-bug mode, e.g. attack/delay may not have
+			// reached the sustain level that they would have normally..
+			if (state->envphase == Release) {	// HACK: guess that this is be a suitable criteria - which it might not be
+				state->currentLFSR= 0; // avoid delay-bug
+				state->envelopeOutput= state->sustain; // see Move_Me_Like_A_Movie
+			}
+		}
+		state->triggerPlanB-= 1;
+	}
+}
+
 void Envelope::updateEnvelope() {
+	
 	struct EnvelopeState *state= getState(this);
 		
-	if (state->triggerPlanB) {
-		// this will override whatever the regular handling might have come up with..
-		
-		// problem: Electric_Girl needs the delay-bug to strike after a  R=0->R=x->A=0 transition and this
-		// hack seems to disturb that..
-		if (!state->delayDetected) {
-			state->currentLFSR= 0;
-		}
-		state->triggerPlanB-= 1;	// the real "note" usually starts 1 frame *after* the gate&test frame
-	}
-	
 	/*
 	todo: step width here is 22 cycles - instead of 1; double check for overflow/rounding related issues  
 	
@@ -483,11 +510,22 @@ void Envelope::snapshotLFSR() {
 	state->lastCycles= 0; 
 	state->simLFSR= state->origLFSR= state->currentLFSR;
 	state->overflow= 0;
-	state->rUppedTime= 0;
-	state->delayDetected= 0;
 }
 
 /*
+	ADSR-delay-bug
+	--------------
+            Confusion_2015_Remix.sid: updates threshold then switches to lower threshold via GATE (handled via "plan A")
+            Trick'n'Treat.sid: horrible "shhhht-shhht" sounds when wrong/hacked handling..
+            K9_V_Orange_Main_Sequence.sid: creates "blips" when wrong/hacked handling
+            $11_Heaven.sid: creates audible clicks whem wrong/hacked handling
+            Eskimonika.sid: good test for false potitives
+            Monofail.sid
+            Blade_Runner_Main_Titles_2SID.sid
+            Move_Me_Like_A_Movie.sid: creates "false positives" that lead to muted voices
+			Macrocosm.sid  missing "base instrument" in voice 3 (20secs ff)
+
+
 	Note: the maximum ADSR-bug-condition duration is about 32k cycles/1.7 frames long, i.e. there are 
 	players that explicitily trigger the bug 2 frames in advance so they can then safely (without bug) 
 	start some new note 2 frames later. Therefore ADSR-bug handling must deal with multi-frame scenarios!
@@ -551,54 +589,32 @@ void dbgPrint(uint8_t dbgIdx, uint16_t newRate) {
 */
 void Envelope::simGateAdsrBug(uint8_t dbgIdx, uint16_t newRate) {
 	// CAUTION: this impl is only designed with IRQ handling in mind.. and presumes that previous SID output
-	// has been generated up to the moment that the IRQ handler (from which this SID setting is triggered) is 
+	// has been generated up to the moment that the IRQ handler (from which this SID setting is triggered) is
 	// called (the relative timing information used here depends on it..)
-	
-//	dbgPrint(dbgIdx, newRate);
 
+	// NOTE: different player routines use different register-write orders and timings.. many write the WF register after
+	// the SR register (sometimes as much as >50 cylces later) for ADSR-delay-bug critical timing (e.g. when - within same IRQ -
+	// some 0-limit is first increased and then again decreased, e.g. ADSR=00x0 -> SR=xA -> WF=09 - i.e. switching to 0-ATTACK
+	// via temporarry A-RELEASE) respective delays between these write-ops may be relevant to the triggering of the delay-bug
+	// condition (LSFR cycles in ~130 cycle range on lowest/0 setting). The below logic operates in sample-wide steps (i.e.
+	// about 22 cycles) and respective rounding/imprecision limits its reliability. Finally the timing environment for PSID
+	// isn't defined but on the most superficial terms, i.e. whether or not the LFSR counter is started from a suitable
+	// starting position is pure chance.
+	
 	struct EnvelopeState *state= getState(this);
-
-	if (dbgIdx == 4) {					// hack (see below)
-		// i.e. change of R
-	
-		uint8_t p= state->sr & 0xf;	// still the previous setting 
-		if ((p == 0) && (newRate > p)) {
-			// problem: some players first update SR to later (within the same frame/IRQ call) start
-			// a new wave with A=0, but due to the delay (e.g. in Electic_Girls the two operations are
-			// ca. 40 cycles appart - plus whatever badline-delays etc there may be.). It seems that at
-			// least in some cases (e.g. Electic_Girls) the LSFR is expected to already overflow the
- 			// 0-limit range used by the attack. (a 0-limit attack implies a LSFR limit of ca. 130 so 
-			// if the counter is >90 when SR is set, that would trigger the overflow..). The problem is
-			// most likely to occur when a A=0 is later used (longer periods would probably still covered
-			// the overflow..
-			state->rUppedTime= cpuCycles();	// only used within same IRQ call..
-		}
-	}
+	if (state->triggerPlanB) return;		// below would only get into the way..
 		
-	// these songs depend on the "un-hacked" logic below:
-	//            Confusion_2015_Remix.sid: updates threshold then switches to lower threshold via GATE
-	//            Trick'n'Treat.sid: horrible "shhhht-shhht" sounds when wrong/hacked handling..
-	//            K9_V_Orange_Main_Sequence.sid: creates "blips" when wrong/hacked handling
-	//            $11_Heaven.sid: creates audible clicks whem wrong/hacked handling
-	//            Eskimonika.sid: good test for false potitives
-	//            Monofail.sid
-	//            Blade_Runner_Main_Titles_2SID.sid
-	// for some reason this one requires hack - which conflicts with the above:
-	//            Move_Me_Like_A_Movie.sid: creates "false positives" that lead to muted voices
-	
-		
+	//	dbgPrint(dbgIdx, newRate);
+				
 	uint16_t oldThreshold= getCurrentThreshold();
-	uint16_t newThreshold= sCounterPeriod[newRate];		// XXX problem this is rounded to 22cycle-steps?
+	uint16_t newThreshold= sCounterPeriod[newRate];
 		
-	// probably a useless overkill to track the overflow: 
-	
+	// probably a useless overkill to track the overflow:
 	double e= ((double)cpuCycles() - state->lastCycles)/sCyclesPerSample + state->overflow;
 	uint32_t elapsed = floor(e);
 	state->overflow= e-elapsed; 
 //	elapsed = ceil(e);	//YYY 
 	
-	// FIXME todo: check if below special cases are still needed with added "plan B" impl
-
 	// simulate what happend since this method was last called...
 	uint16_t simLSFR = state->simLFSR;		// last state used by SID emu (that was cpuCycles() ago)
 	if (simLSFR < oldThreshold) {
@@ -610,53 +626,23 @@ void Envelope::simGateAdsrBug(uint8_t dbgIdx, uint16_t newRate) {
 	}			
 	
 	if (oldThreshold > newThreshold ) {	// only a reduction may lead to an overflow
-		// note: there seems to be some precision issue.. when using newThreshold+2 then the long mute sections in 
-		// Move_Me_Like_A_Movie.sid no longer occur - however there then are beeps in K9_V_Orange_Main_Sequence.sid
-		// but newThreshold+1 fixes Gloomy.sid but causes blips in HiFiSky.sid
-	
-	
-		// FIXME PROBLEM: below logic leads to false positive in Macrocosm.sid and is responsible for the missing 
-		// "base instrument" in voice 3 (20secs ff) .. for some reason the simLSFR seems to be so far off
-		// that even a newThreshold+3 still does NOT lead to good results:
+		// PROBLEM: logic still leads to false positive in some songs, i.e. this detection logic does not always work well..
 		
 		if (simLSFR >= newThreshold) {
 			// by setting currentLFSR to something equal or higher than newThreshold it is forced into "overflow territory"):
-	
-			// try to trigger bug for correct "overall duration" (see problem 2): when set to newThreshold then 
-			// the maximum of sLimitLFSR steps would be needed to get out of the bug, any higher value will still 
-			// tigger the bug but reduce the steps needed to get out of it..
 
-			if (dbgIdx == 0) {	// hack 			
-				// note: the same R=0 -> R=x -> A(GATE)=0 sequence is used by many songs - which "all" seem
-				// to work fine with the regular impl (many actually seem to depend on it) - but for some reason
-				// it doesn't work in Move_Me_Like_A_Movie.sid (the currently used test is fragile.. and conflicts 
-				// with other yet to be discovered examples are to be expected).. 
-				// todo: find root cause - maybe some lack of precision issue (see ~22 cycle step width)?	
-				uint16_t diff= simLSFR - newThreshold;
-				
-				// supposing this sequence is meant to ensure direct start of note (8 is hand-tuned.. lower causes 
-				// bleeps in K9_V_Orange_Main_Sequence)
-				if (state->rUppedTime && (newRate == 0) && ((state->sr & 0xf) >= 8) && (diff < 3)) {	// Trick'n'Treat: (diff < 3) 
-					// the hack is still wrongly used in Blade_Runner_Main_Titles_2SID but the effect seems neglegible
-					
-					state->currentLFSR= 0;	// Move_Me_Like_A_Movie.sid specific hack
-				} else {
-					state->delayDetected= 1;
-					state->currentLFSR= simLSFR;
-				}
-				state->rUppedTime= 0;
-			} else {
-				state->delayDetected= 1;
-				state->currentLFSR= simLSFR;	// this should be the correctly reduced bug time: newThreshold+(simLSFR-newThreshold)
-			}
+			// try to trigger bug for correct "overall duration" (see problem 2): when set to newThreshold then
+			// the maximum of sLimitLFSR steps would be needed to get out of the bug, any higher value will still
+			// tigger the bug but reduce the steps needed to get out of it..
+			
+			state->currentLFSR= simLSFR;	// this should be the correctly reduced bug time: newThreshold+(simLSFR-newThreshold)
 		}		
 	} else {
 		// some earlier setting might already have wrongly setup the bug-mode
 		if (simLSFR < newThreshold ) {	// false alarm.. restore
 			// flawed impl: the newThreshold might still be lower than what the SID emu
-			// had last been using. Just continuing with the origLFSR may (wrongly) result 
+			// had last been using. Just continuing with the origLFSR may (wrongly) result
 			// in bug-mode - depending on what the timing of the update actually was.
-			state->delayDetected= 0;
 			state->currentLFSR= state->origLFSR;	
 		}
 	}

@@ -316,10 +316,8 @@ static uint8_t musIsTrackEnd(uint8_t voice) {
 
 static uint32_t computeAudioSamples()  __attribute__((noinline));
 static uint32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
-	if (_musMode) {
-		if (musIsTrackEnd(0)) {
-			return -1;
-		}
+	if (_musMode && musIsTrackEnd(0)) {
+		return -1;
 	}
 	_numberOfSamplesRendered = 0;
 			
@@ -454,8 +452,15 @@ static uint16_t loadSIDFromMemory(void *pSidData,
     *play_addr = pData[12]<<8;
     *play_addr|= pData[13];
 
-    *subsongs = pData[0xf]-1;
-    *startsong = pData[0x11]-1;
+	uint16_t tracks= pData[0xf] | (((uint16_t)pData[0xe])<<8); // pointless using 2 bytes for a max of 256.. when the max of speed flags is 32..
+	if (tracks == 0) tracks= 1;
+	if (tracks > 0xff) tracks= 0xff;
+    *subsongs = tracks & 0xff;
+
+	uint16_t start= pData[0x11] | (((uint16_t)pData[0x10])<<8);
+	if (!start) start= 1;
+	if (start > tracks) start= tracks;
+    *startsong = (start & 0xff) - 1;	// start at index 0
 
 	if (*load_addr == 0) {
 		// original C64 binary file format
@@ -665,7 +670,6 @@ static uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t isMus, void * inBuffer
 
 		if (!loadSIDFromMemory(inputFileBuffer, &_loadAddr, &_loadEndAddr, &_initAddr, 
 				&_playAddr, &_maxSubsong, &_actualSubsong, &_playSpeed, inBufSize)) {
-			
 			return 1;	// could not load file
 		}
 	}

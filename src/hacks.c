@@ -223,7 +223,6 @@ static void patchSuperCarlingSpider(uint16_t *initAddr) {
 }
 
 void hackIfNeeded(uint16_t *initAddr) {
-	
 	patchSuperCarlingSpider(initAddr);
 	
 	patchThcmIfNeeded(initAddr);

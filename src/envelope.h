@@ -49,10 +49,11 @@ protected:
 	void poke(uint8_t reg, uint8_t val);
 	
 	/** 
-	* Hack uses for ADSR-bug detection.
+	* Hack used for ADSR-bug detection.
 	*/
 	void snapshotLFSR();
-	void planB();
+	void snapshotAdsrState();
+	void handleDelayBugPlanB();
 
 	
 	/**

@@ -88,7 +88,10 @@ public:
 	uint8_t getNumberOfVolumeChanges();
 	void disableVolumeChangeNMI(uint8_t mode);
 
-	void planB();
+	/**
+	* Used for ADSR-delay-bug handling "plan B".
+	*/
+	void snapshotAdsrState();
 protected:
 	friend class Envelope;
 	

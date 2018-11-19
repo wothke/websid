@@ -218,7 +218,6 @@ uint32_t SID::getRingModCounter(uint8_t voice) {
 		return _osc[voice]->counter;		
 	}
 }
-
 void SID::resetEngine(uint32_t sampleRate, uint8_t isModel6581) {	
 	// note: structs are NOT packed and contain additional padding..
 	
@@ -257,6 +256,7 @@ void SID::resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 
 	//	for (uint8_t i= 0; i<0x17; i++) poke(i, 0xff);	// FIXME: this seems to be the recommended by ACID64 (not tested yet)
 }
+
 /*
 * While "_sid" data structure is automatically kept in sync by the emulator's memory access 
 * implementation, the "_osc" and "_filter" helper structures are NOT - i.e. they need to 
@@ -845,6 +845,10 @@ void SID::writeMem(uint16_t addr, uint8_t value) {
 void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, double scale, uint8_t doClear) {
 	syncRegisterCache();
     
+	for (uint8_t voice=0; voice<3; voice++) {	// anticipative ADSR-delay handling..		
+		_env[voice]->handleDelayBugPlanB();
+	}
+
 	double cutoff, resonance;	// calc once here as an optimization
 	_filter->setupFilterInput(&cutoff, &resonance);
 
@@ -852,7 +856,7 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 	for (uint32_t bp=0; bp<len; bp++) {		
 		advanceOscillators();
 
-		int32_t outo= 0, outf= 0;	// outf and outo here end up with the sum of 3 voices..
+		int32_t outf= 0, outo= 0;	// outf and outo here end up with the sum of 3 voices..
 		
 		// generate the two output signals (filtered / non-filtered)
 		for (uint8_t voice=0; voice<3; voice++) {						
@@ -862,28 +866,27 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 			
 			// envelopeOutput has 8-bit and and outv 16	(Hermit's impl based on 16-bit wave output)		
 			// => scale back to signed 16bit
-			int32_t voiceOut= scale*_env[voice]->getOutput()/0xff*(((int32_t)outv)-0x8000) ;	
+			int32_t voiceOut= scale*_env[voice]->getOutput()/0xff*(((int32_t)outv)-0x8000);
 		
 			// now route the voice output to either the non-filtered or the
 			// filtered channel (with disabled filter outo is used)
-			
 			_filter->routeSignal(&voiceOut, &outf, &outo, voice, &(_sid->voices[voice].notMuted));
 
-			// trace output (always make it 16-bit)		
+			// trace output (always make it 16-bit)
 			if (synthTraceBufs) {
 				int16_t *voiceTraceBuffer= synthTraceBufs[voice];
 
 				int32_t o= 0, f= 0;
-				_filter->routeSignal(&voiceOut, &o, &f, voice, &(_sid->voices[voice].notMuted));	// redundant.. see above			
+				_filter->routeSignal(&voiceOut, &f, &o, voice, &(_sid->voices[voice].notMuted));	// redundant.. see above		
 				
-				*(voiceTraceBuffer+bp)= (int16_t)_filter->simOutput(voice, &o, &f, cutoff, resonance);			
+				*(voiceTraceBuffer+bp)= (int16_t)_filter->simOutput(voice, &f, &o, cutoff, resonance);
 			}
 		}
-		int32_t finalSample= simIsPollyTracker() ? 0 : _filter->getOutput(&outf, &outo, cutoff, resonance, _sid->cyclesPerSample);	// squelch PollyTracker pulse clicks..	
-		finalSample=  digiGenPsidSample(finalSample);		// recorded PSID digis are merged in directly 
-		
+		int32_t finalSample= simIsPollyTracker() ? 0 : _filter->getOutput(&outf, &outo, cutoff, resonance, _sid->cyclesPerSample);	// squelch PollyTracker pulse clicks..
+		finalSample=  digiGenPsidSample(finalSample);		// recorded PSID digis are merged in directly
+
 		if (!doClear) finalSample+= *(buffer+bp);
-		
+
 		// clipping (filter, multi-SID as well as PSID digi may bring output over the edge)
 		const int32_t clipValue = 32767;
 		if ( finalSample < -clipValue ) {
@@ -905,16 +908,16 @@ uint8_t SID::getWave(uint8_t voice) {
 uint8_t SID::getAD(uint8_t voice) {
 	return _env[voice]->getAD();
 }
+
 uint8_t SID::getSR(uint8_t voice) {
 	return _env[voice]->getSR();
 }
 
-void SID::planB() {
+void SID::snapshotAdsrState() {
 	for (uint8_t voice= 0; voice<3; voice++) {
-		_env[voice]->planB();
+		_env[voice]->snapshotAdsrState();
 	}
 }
-
 
 void SID::filterSamples(uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 	_filter->filterSamples(digiBuffer, len, voice);
@@ -997,10 +1000,10 @@ extern "C" void sidSynthRender(int16_t *buffer, uint32_t len, int16_t **synthTra
 	}
 }
 
-extern "C" void sidPlanB() {
+extern "C" void sidSnapshotAdsrState() {
 	for (uint8_t i= 0; i<_usedSIDs; i++) {
 		SID &sid= _sids[i];			
-		sid.planB();
+		sid.snapshotAdsrState();
 	}
 }
 

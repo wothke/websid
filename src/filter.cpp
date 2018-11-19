@@ -159,47 +159,40 @@ uint8_t Filter::getVolume() {
 }
 
 // voice output visualization works better if the effect of the filter is included
-int32_t Filter::simOutput(uint8_t voice, int32_t *in, int32_t *out, double cutoff, double resonance) {
+int32_t Filter::simOutput(uint8_t voice, int32_t *filterIn, int32_t *out, double cutoff, double resonance) {
 	struct FilterState* state= getState(this);
 	int32_t OUTPUT_SCALEDOWN = 0x6 * 0xf / 4;
 #ifdef USE_FILTER	
 	// save the trouble to run any filter calcs when no filters are activated..
-	double output=  !(state->ftpVol & 0x70) ? (double)(*out) :  
-		runFilter((double)(*in), (double)(*out), &(state->simBandPass[voice]), &(state->simLowPass[voice]), cutoff, resonance);
+	double output=  !(state->ftpVol & 0x70) ? (double)(*out + *filterIn) :
+		runFilter((double)(*filterIn), (double)(*out), &(state->simBandPass[voice]), &(state->simLowPass[voice]), cutoff, resonance);
 		
-	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)		
+	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)
 	return round(output * state->vol / OUTPUT_SCALEDOWN); // SID output
 #else
 	return (*out)* state->vol / OUTPUT_SCALEDOWN;
 #endif
 }
 
-int32_t Filter::getOutput(int32_t *in, int32_t *out, double cutoff, double resonance, double cyclesPerSample) {
+int32_t Filter::getOutput(int32_t *filterIn, int32_t *out, double cutoff, double resonance, double cyclesPerSample) {
 
 	struct FilterState* state= getState(this);
 	int32_t OUTPUT_SCALEDOWN = 0x6 * 0xf;	// hand tuned with "424"
 #ifdef USE_FILTER	
 	// save the trouble to run any filter calcs when no filters are activated..
-		
-	double output=  !(state->ftpVol & 0x70) ? (double)(*out) :  
-		runFilter((double)(*in), (double)(*out), &(state->bandPass), &(state->lowPass), cutoff, resonance);
+	double output=  !(state->ftpVol & 0x70) ? (double)(*out + *filterIn) :
+		runFilter((double)(*filterIn), (double)(*out), &(state->bandPass), &(state->lowPass), cutoff, resonance);
 	
 	output *= state->vol;
 
 	output= extFilter(state, output, cyclesPerSample);
 	
-	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)		
+	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)
 	return round(output / OUTPUT_SCALEDOWN); // SID output
 #else
 	return (*out)* state->vol / OUTPUT_SCALEDOWN;
 #endif
 }
-
-uint8_t Filter::isActive(uint8_t voice) {	
-	// NOTE: Voice 3 is not silenced by !v3ena if it is routed through the filter!
-	struct FilterState* state= getState(this);
-	return state->v3ena || (!state->v3ena && state->filter[voice]);
-}	
 
 void Filter::setupFilterInput(double *cutoff, double *resonance) {
 #ifdef USE_FILTER
@@ -225,7 +218,8 @@ void Filter::routeSignal(int32_t *voiceOut, int32_t *outf, int32_t *outo, uint8_
 	struct FilterState* state= getState(this);
 
 #ifdef USE_FILTER
-	if (((voice<2) || isActive(voice)) && (*notMuted)) {
+	if (((voice<2) || (state->v3ena || (!state->v3ena && state->filter[2]))) 	// voice 3 not silenced by !v3ena if routed through filter!
+			&& (*notMuted)) {
 		if (state->filter[voice]) {
 			// route to filter
 			(*outf)+= (*voiceOut);	
@@ -242,7 +236,7 @@ void Filter::routeSignal(int32_t *voiceOut, int32_t *outf, int32_t *outo, uint8_
 #endif
 }
 
-double Filter::runFilter(double in, double output, double *bandPass, double *lowPass, double cutoff, double resonance) {
+double Filter::runFilter(double filterIn, double output, double *bandPass, double *lowPass, double cutoff, double resonance) {
 	// derived from Hermit's filter implementation:
 	//	"FILTER: two integrator loop bi-quadratic filter, workings learned from resid code, but I kindof simplified the equations
 	//	 The phases of lowpass and highpass outputs are inverted compared to the input, but bandpass IS in phase with the input signal.
@@ -252,7 +246,7 @@ double Filter::runFilter(double in, double output, double *bandPass, double *low
 	// causing the first samples (of each frame) of that song to be rendered somewhat off.. and the filter probably just
 	// amplifies that error
 	struct FilterState* state= getState(this);
-	double tmp = in + (*bandPass) * resonance + (*lowPass);
+	double tmp = filterIn + (*bandPass) * resonance + (*lowPass);
 	
 	if (state->hiEna) { output -= tmp;} 
 	tmp = (*bandPass) - tmp * cutoff;

@@ -49,6 +49,6 @@ void sidWriteMem(uint16_t addr, uint8_t value);
 void sidResetVolumeChangeCount();
 uint8_t sidGetNumberOfVolumeChanges();
 void sidDisableVolumeChangeNMI(uint8_t disabled);
-void sidPlanB();
+void sidSnapshotAdsrState();
 
 #endif
