@@ -896,7 +896,6 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 		}				
 		*(buffer+bp)= (int16_t)finalSample;
     }
-	
 	// temp variables used during ADSR-bug detection
 	for (int i= 0; i<3; i++) { _env[i]->snapshotLFSR();}
 }

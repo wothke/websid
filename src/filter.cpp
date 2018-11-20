@@ -163,9 +163,7 @@ int32_t Filter::simOutput(uint8_t voice, int32_t *filterIn, int32_t *out, double
 	struct FilterState* state= getState(this);
 	int32_t OUTPUT_SCALEDOWN = 0x6 * 0xf / 4;
 #ifdef USE_FILTER	
-	// save the trouble to run any filter calcs when no filters are activated..
-	double output=  !(state->ftpVol & 0x70) ? (double)(*out + *filterIn) :
-		runFilter((double)(*filterIn), (double)(*out), &(state->simBandPass[voice]), &(state->simLowPass[voice]), cutoff, resonance);
+	double output=	runFilter((double)(*filterIn), (double)(*out), &(state->simBandPass[voice]), &(state->simLowPass[voice]), cutoff, resonance);
 		
 	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)
 	return round(output * state->vol / OUTPUT_SCALEDOWN); // SID output
@@ -179,9 +177,7 @@ int32_t Filter::getOutput(int32_t *filterIn, int32_t *out, double cutoff, double
 	struct FilterState* state= getState(this);
 	int32_t OUTPUT_SCALEDOWN = 0x6 * 0xf;	// hand tuned with "424"
 #ifdef USE_FILTER	
-	// save the trouble to run any filter calcs when no filters are activated..
-	double output=  !(state->ftpVol & 0x70) ? (double)(*out + *filterIn) :
-		runFilter((double)(*filterIn), (double)(*out), &(state->bandPass), &(state->lowPass), cutoff, resonance);
+	double output= 	runFilter((double)(*filterIn), (double)(*out), &(state->bandPass), &(state->lowPass), cutoff, resonance);
 	
 	output *= state->vol;
 
@@ -248,15 +244,21 @@ double Filter::runFilter(double filterIn, double output, double *bandPass, doubl
 	struct FilterState* state= getState(this);
 	double tmp = filterIn + (*bandPass) * resonance + (*lowPass);
 	
-	if (state->hiEna) { output -= tmp;} 
-	tmp = (*bandPass) - tmp * cutoff;
-	(*bandPass) = tmp;
-	
-	if (state->bandEna) { output -= tmp; }
-	tmp = (*lowPass) + tmp * cutoff;
-	(*lowPass) = tmp;
-	
-	if (state->lowEna) { output += tmp; }	
+	if (!(state->ftpVol & 0x70)) { 
+		// FIX bug in Hermit's impl: when neither high, band, nor lowpass is active then the 
+		// 'output'(i.e. unfiltered signal) was returned and 'filterIn' was completely ignored!
+		output+= filterIn; 	// see Dancing_in_the_Moonlight
+	} else {		
+		if (state->hiEna) { output -= tmp;} 
+		tmp = (*bandPass) - tmp * cutoff;
+		(*bandPass) = tmp;
+		
+		if (state->bandEna) { output -= tmp; }
+		tmp = (*lowPass) + tmp * cutoff;
+		(*lowPass) = tmp;
+		
+		if (state->lowEna) { output += tmp; }
+	}
 	return output;
 }
 

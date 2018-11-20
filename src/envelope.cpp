@@ -133,7 +133,7 @@ static void triggerPlanB(Envelope *env, struct EnvelopeState *state) {
 	
 	// 0: settings at end of frame t -2
 	// 1: settings at end of frame t -1	(i.e. previous frame)
-	if (isBugTriggerPattern(state->adsrHist[1]) && (state->adsrHist[1] == state->adsrHist[0]) ) {	// previous 2 frames used "safe" setting
+	if (isBugTriggerPattern(state->adsrHist[1]) && isBugTriggerPattern(state->adsrHist[0]) ) {	// previous 2 frames used "safe" setting, see Double_Trouble for song that switches this pattern
 		state->triggerPlanB= 2;	// follow up on this for the next 2 frames
 	}
 }
@@ -333,13 +333,14 @@ void Envelope::handleDelayBugPlanB() {
 			// the next note will start 1.5 frames later (e.g. see Relax_Magazine and Electric_Girl)
 			state->currentLFSR= sCounterPeriod[state->ad >> 4] + 1;	// force delay-bug
 		} else {
-			// t1: this is where the actual note is "attacked" or in some cases "released" one frame later:
-			// some songs (e.g. Move_Me_Like_A_Movie) use the very same pattern but
-			// apprently MUST NOT end in the delay-bug to sound correctly..
-						
-			// PROBLEM: previous frame was wrongly set into delay-bug mode, e.g. attack/delay may not have
-			// reached the sustain level that they would have normally..
-			if (state->envphase == Release) {	// HACK: guess that this is be a suitable criteria - which it might not be
+			// t1: this is where the actual note is "attacked" or in some cases "released" one frame later
+									
+			// HACK: Move_Me_Like_A_Movie uses the same pattern but on the NOISE-instances
+			// the bug MUST strike whereas it MUST NOT on others.. (for NOISE the idea usually seems
+			// to be that the delay-bug is used to shorten it) FIXME: find proper fix
+			if ((state->envphase == Release) && !(_sid->getWave(_voice)&0x80)) {	
+				// PROBLEM: previous frame was wrongly set into delay-bug mode, e.g. attack/delay may not have
+				// reached the sustain level that they would have normally..
 				state->currentLFSR= 0; // avoid delay-bug
 				state->envelopeOutput= state->sustain; // see Move_Me_Like_A_Movie
 			}

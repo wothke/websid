@@ -89,8 +89,10 @@ static uint8_t _digiEnabled = 1;
 
 static uint32_t _traceSID= 0;
 
-// make it large enough for data of 8 screens (for NTSC 8*735 would be sufficient)
-#define BUFLEN 8*882
+//#define BUFLEN 8*882	// make it large enough for data of 8 screens (for NTSC 8*735 would be sufficient)
+
+#define BUFLEN 96000/50	// keep it down to one screen to allow for more direct feedback to WebAudio side..
+
 static uint32_t _soundBufferLen= BUFLEN;
 static int16_t _soundBuffer[BUFLEN];
 	// SID debug buffers corresponding to _soundBuffer
@@ -229,12 +231,12 @@ static void resetAudioBuffers() {
 	// song with original 60 hz playback.. adjust number of samples to play it faster.	
 
 	if(_ntscMode && envIsRasterDrivenPSID()) { 
-		_numberOfSamplesPerCall= 735; 		// NTSC: 735*60=44100
+		_numberOfSamplesPerCall= _sampleRate/60; 		// NTSC: 735*60=44100
 	} else {
-		_numberOfSamplesPerCall= 882; 		// PAL: 882*50=44100
+		_numberOfSamplesPerCall= _sampleRate/50; 		// PAL: 882*50=44100
 	}
-	_chunkSize= _numberOfSamplesPerCall*8; 	// e.g. data for 8 50hz screens (0.16 secs)
-
+//	_chunkSize= _numberOfSamplesPerCall*8; 	// e.g. data for 8 50hz screens (0.16 secs)
+	_chunkSize= _numberOfSamplesPerCall; 	// WebAudio side can still aggregate these..
 	// just to make sure these is no garbage left
 	memset(_voice1Buffer, 0, sizeof(int16_t)*BUFLEN);
 	memset(_voice2Buffer, 0, sizeof(int16_t)*BUFLEN);
@@ -623,15 +625,15 @@ static uint16_t loadComputeSidplayerData(uint8_t *musSongFile, uint32_t musSongF
 	return 1;
 }
 
-static uint32_t loadSidFile(uint32_t isMus, void * inBuffer, uint32_t inBufSize)  __attribute__((noinline));
-static uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t isMus, void * inBuffer, uint32_t inBufSize) {
+static uint32_t loadSidFile(uint32_t isMus, void * inBuffer, uint32_t inBufSize, uint32_t sampleRate)  __attribute__((noinline));
+static uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t isMus, void * inBuffer, uint32_t inBufSize, uint32_t sampleRate) {
 	uint8_t *inputFileBuffer= (uint8_t *)inBuffer;	
 	
 	if (!isMus && (inBufSize < 0x7c)) return 1;	// we need at least a header..
 
 	memResetKernelROM();		// read only (only need to do this once)
 
-    _sampleRate= 44100;		// TODO: extend API & use actual target sample rate
+    _sampleRate= sampleRate > 96000 ? 48000 : sampleRate; // see hardcoded BUFLEN
 	_initAddr= 0;
 	_playAddr= 0;
 	_loadEndAddr= 0;
