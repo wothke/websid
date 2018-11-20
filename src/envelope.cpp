@@ -130,12 +130,22 @@ static uint8_t isBugTriggerPattern(uint16_t adsr) {
 static void triggerPlanB(Envelope *env, struct EnvelopeState *state) {
 	// called when WF GATE/TEST is set in current frame, and the below check tries to determine if this
 	// is a "frame 2" (see above) scenario..
-	
+		
 	// 0: settings at end of frame t -2
 	// 1: settings at end of frame t -1	(i.e. previous frame)
 	if (isBugTriggerPattern(state->adsrHist[1]) && isBugTriggerPattern(state->adsrHist[0]) ) {	// previous 2 frames used "safe" setting, see Double_Trouble for song that switches this pattern
 		state->triggerPlanB= 2;	// follow up on this for the next 2 frames
 	}
+		
+	// note: Hermit's tactic for this is simpler: trigger delay-bug whenever previous
+	// RELEASE limit is smaller than the current one
+	// (it does seem to also work well - but the Move_Me_Like_A_Movie issue remains...
+	// keep this in mind in case other problem songs show up)
+	/*
+	if ((state->adsrHist[1]&0xf) < (state->sr&0xf)) {
+		state->triggerPlanB= 2;	// follow up on this for the next 2 frames
+	}
+	*/
 }
 
 // called at the end of each *frame*: track registers used to detect a music player's

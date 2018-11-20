@@ -41,7 +41,7 @@ struct FilterState {
     uint8_t  v3ena;
     uint8_t  vol;
 	
-	uint8_t filter[3];	// activation per voice
+	uint8_t filterEnabled[3];	// activation per voice
 	
 	// derived from Hermit's filter implementation: see http://hermit.sidrip.com/jsSID.html
 	double lowPass;		// previous "low pass" output
@@ -105,7 +105,7 @@ void Filter::reset(uint32_t sampleRate) {
 	// init "filter" structures
 	memset((uint8_t*)state, 0, sizeof(struct FilterState));
 	
-    state->cutoffRatio8580 = ((double)-2.0) * 3.1415926535897932385 * (12500.0 / 256) / sampleRate,
+    state->cutoffRatio8580 = ((double)-2.0) * 3.1415926535897932385 * (12500.0 / 256) / sampleRate;
     state->cutoffRatio6581 = ((double)-2.0) * 3.1415926535897932385 * (20000.0 / 256) / sampleRate;
 //	state->bandPass = 0;	// redundant
 //	state->lowPass = 0;
@@ -133,7 +133,7 @@ void Filter::poke(uint8_t reg, uint8_t val) {
 				state->resFtv = val;		
 		
 				for (uint8_t voice=0; voice<3; voice++) {
-					state->filter[voice]  = getBit(val, voice);
+					state->filterEnabled[voice]  = getBit(val, voice);
 				}
 	
 			break; 
@@ -190,6 +190,41 @@ int32_t Filter::getOutput(int32_t *filterIn, int32_t *out, double cutoff, double
 #endif
 }
 
+//#define USE_C_MATH
+
+// for some reason Hermit's JavaScript impl does seem to sound different (in some situations)
+// though the filter impl should be identical (maybe some border-base in math impls?)
+
+#ifndef USE_C_MATH
+#include <emscripten.h>
+// note: direct use of the original JavaScript Math functions does NOT seem to make any
+// difference - nor does the use of "-s BINARYEN_TRAP_MODE='js'": yet for some reason (not 
+// identified) Hermit's filter/player seems to sound differently (e.g. 7D_Funkt) and SID model
+// switches do not seem to make an audible difference here..
+#endif
+
+static double myExp(double in) {
+#ifdef USE_C_MATH
+	return exp(in);
+#else
+	double out= EM_ASM_DOUBLE({
+		return Math.exp($0);
+	}, in);
+	return out;
+#endif
+}
+
+static double myPow(double i1, double i2) {
+#ifdef USE_C_MATH
+	return pow(i1, i2);
+#else
+	double out= EM_ASM_DOUBLE({
+		return Math.pow($0, $1);
+	}, i1, i2);
+	return out;
+#endif
+}
+
 void Filter::setupFilterInput(double *cutoff, double *resonance) {
 #ifdef USE_FILTER
 	struct FilterState* state= getState(this);
@@ -198,12 +233,12 @@ void Filter::setupFilterInput(double *cutoff, double *resonance) {
 	(*cutoff) = ((double)(state->cutoffLow & 0x7)) / 8 +  state->cutoffHigh + 0.2;	// why the +0.2 ?
 		
 	if (!_sid->isModel6581()) {
-		(*cutoff) = 1.0 - exp((*cutoff) * state->cutoffRatio8580);
-		(*resonance) = pow(2.0, ((4.0 - (state->resFtv >> 4)) / 8));
+		(*cutoff) = 1.0 - myExp((*cutoff) * state->cutoffRatio8580);
+		(*resonance) = myPow(2.0, ((4.0 - (state->resFtv >> 4)) / 8));
 				
 	} else {
 		if ((*cutoff) < 24.0) { (*cutoff) = 0.035; }
-		else { (*cutoff) = 1.0 - 1.263 * exp((*cutoff) * state->cutoffRatio6581); }
+		else { (*cutoff) = 1.0 - 1.263 * myExp((*cutoff) * state->cutoffRatio6581); }
 		(*resonance) = (state->resFtv > 0x5F) ? 8.0 / (state->resFtv >> 4) : 1.41;
 	}
 #endif
@@ -214,15 +249,17 @@ void Filter::routeSignal(int32_t *voiceOut, int32_t *outf, int32_t *outo, uint8_
 	struct FilterState* state= getState(this);
 
 #ifdef USE_FILTER
-	if (((voice<2) || (state->v3ena || (!state->v3ena && state->filter[2]))) 	// voice 3 not silenced by !v3ena if routed through filter!
-			&& (*notMuted)) {
-		if (state->filter[voice]) {
+	if ((!state->v3ena && (voice == 2) && !state->filterEnabled[2]) || !(*notMuted)) {
+		// voice 3 not silenced by !v3ena if routed through filter!
+	} else {
+		// regular routing
+		if (state->filterEnabled[voice]) {
 			// route to filter
 			(*outf)+= (*voiceOut);	
 		} else {
 			// route directly to output
 			(*outo)+= (*voiceOut);
-		}
+		}		
 	}
 #else
 	// Don't use filters, just mix all voices together
@@ -274,7 +311,7 @@ void Filter::filterSamples(uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 #ifdef USE_FILTER
 #ifdef USE_DIGIFILTER
 	struct FilterState* state= getState(this);
-	if (state->filter[voice]) {
+	if (state->filterEnabled[voice]) {
 		uint32_t unsignedOut;
 		double in, output;
 
