@@ -545,7 +545,6 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 //	cpuReSyncTotalCycles(envClockRate()/envFPS());	
 	
 	sidSnapshotAdsrState();	// ADSR-delay bug handling
-	
 	return retVal;
 }
 

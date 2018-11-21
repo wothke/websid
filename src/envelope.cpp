@@ -35,6 +35,7 @@
 extern "C" {
 #include "env.h"
 #include "cpu.h"
+#include "hacks.h"
 }
 #include "sid2.h"
 
@@ -134,8 +135,18 @@ static void triggerPlanB(Envelope *env, uint8_t wf, struct EnvelopeState *state)
 	// previous 2 frames used "safe" setting, see Double_Trouble for song that switches this pattern
 		// 0: settings at end of frame t -2
 		// 1: settings at end of frame t -1	(i.e. previous frame)
+		
 	if (isBugTriggerPattern(state->adsrHist[1]) && isBugTriggerPattern(state->adsrHist[0]) 
-		&& !(state->ad&0xf0)) {	// low chance for higher levels to trigger the bug .. who would take that risk then?
+		&& (
+			// A) typical pattern using TEST bit - these songs DO NOT like the B) detection (e.g. Monofail, Boombox Alley)
+			(wf&0x8 && !(state->ad&0xf0)) ||
+			// B) alternative pattern: some directly set a WF (e.g. Lessons_In_Love)
+			((wf&0xf0) && (
+				( (state->ad>>4) < (state->adsrHist[1] >>12) ) ||	// reduced A	
+				( (state->ad>>4) < (state->sr&0xf) )				// reduced R->A - assumed update order: SR then WF - breaks Monofail / Lessions_In_Love needs it..
+			))
+			)
+		) {
 	
 		state->triggerPlanB= 2;	// follow up on this for the next 2 frames
 	}
@@ -383,24 +394,17 @@ void Envelope::updateEnvelope() {
 		case Attack: {                          // Phase 0 : Attack
 			if (triggerLFSR_Threshold(state->attack, &state->currentLFSR) && !state->zeroLock) {	
 				// inc volume when threshold is reached						
-					if (state->envelopeOutput < 0xff) {
-					
-					// FIXME check for undesireble side-effects of this hack..
-					
-						/* see Alien.sid: "full envelopeOutput level" GATE off/on sequences 
-						   within same IRQ will cause undesireable overflow.. this might not 
-						   be a problem in cycle accurate emulations.. but here it is (we 
-						   only see a 20ms snapshot)
-						*/
-						state->envelopeOutput= (state->envelopeOutput + 1) & 0xff;	// increase volume
-					}							
-				
-					state->exponentialCounter = 0;
+				if (!hackEnvFlip() || (state->envelopeOutput < 0xff)) {	// see Alien.sid
+					// release->attack combo can flip 0xff to 0x0 (e.g. Acke.sid - voice3)
+					state->envelopeOutput= (state->envelopeOutput + 1) & 0xff;	// increase volume
+				}							
+			
+				state->exponentialCounter = 0;
 
-					if (state->envelopeOutput == 0xff) {
-						state->envphase = Decay;
-					}							
-				}
+				if (state->envelopeOutput == 0xff) {
+					state->envphase = Decay;
+				}							
+			}
 			break;
 		}
 		case Decay: {                   	// Phase 1 : Decay      

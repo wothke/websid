@@ -192,7 +192,6 @@ static void patchThcmIfNeeded(uint16_t *initAddr) {
 	}
 }
 
-
 static void patchSuperCarlingSpider(uint16_t *initAddr) {
 	// "Super_Carling_the_Spider" patch (it remains to be seen if other songs are
 	// also using this digi approach.. a patch is use here since the song
@@ -255,7 +254,28 @@ static void patchFutureComposerIfNeeded(uint16_t *initAddr) {
 	}
 }
 
+static uint8_t _hackEnvFlip;
+
+static void hackAlienIfNeeded(uint16_t *initAddr) {
+	// Alien.sid: resets WF within the same frame. The respectice RELEASE->ATTACK transitionin
+	// causes a 0xff to 0x00 flip. In a cycle exact emulation the few cycles between RELEASE AND NEW ATTACK 
+	// might be enough to get env counter down from the 0xff level before the next ATTACK 
+	// to avoid the flip to 0x00.. here it doesn't work so it has to be disabled..
+
+	_hackEnvFlip= 0;
+	
+	uint8_t pattern[]= {0xad, 0x1c, 0xd4, 0x8d, 0x16, 0xd4};
+	if (((*initAddr) == 0x908B) && memMatch(0x90C2, pattern, 6)) {
+		_hackEnvFlip= 1;
+	}
+}
+
+uint8_t hackEnvFlip() {
+	return _hackEnvFlip;
+}
+
 void hackIfNeeded(uint16_t *initAddr) {
+	hackAlienIfNeeded(initAddr);
 	
 	patchFutureComposerIfNeeded(initAddr);
 	

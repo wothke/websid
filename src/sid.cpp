@@ -270,13 +270,12 @@ void SID::syncRegisterCache() {
     for (uint8_t voice=0; voice<3; voice++) {
 		_env[voice]->syncState();
 	}
-	
+
 	// oscillators
     for (uint8_t voice=0; voice<3; voice++) {
         _osc[voice]->pulse= (_sid->voices[voice].pulse & 0xfff) << 4;	// // 16 MSB pulse needed
 				
         _osc[voice]->wave= _sid->voices[voice].wave;
-
         _osc[voice]->freqIncSample= round(_sid->cyclesPerSample * _sid->voices[voice].freq);	// per 1-sample interval (e.g. ~22 cycles)
         _osc[voice]->freqIncCycle= ((uint32_t)_sid->voices[voice].freq);		
     }
@@ -406,6 +405,8 @@ void SID::calcPulseBase(uint8_t voice, uint32_t *tmp, uint32_t *pw) {
 uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// elementary pulse
 	if (isTestBit(voice)) return 0xffff;	// pulse start position
 	
+	//int32_t wfout = ((_osc[voice]->counter>>8 > _osc[voice]->pulse)-1); // plain impl
+
 #ifdef USE_PULSE_DECAY	
 	uint32_t p= (_osc[voice]->pulse <<8);	// i.e. 24-bit /low-byte always 0
 	int32_t pos= (_osc[voice]->counter - p);	// current position in the pulse (increases in "frequency" steps..)
@@ -455,7 +456,6 @@ uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// e
 		if (wfout < 0) { wfout = 0; }
 #endif
 	} 
-	
 	return wfout;
 }	
 

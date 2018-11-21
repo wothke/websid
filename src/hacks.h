@@ -24,5 +24,6 @@
  */
 void hackIfNeeded(uint16_t *initAddr);	
 
+uint8_t hackEnvFlip();
 
 #endif
