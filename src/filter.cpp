@@ -127,10 +127,10 @@ static uint8_t getBit(uint32_t val, uint8_t b) { return (uint8_t) ((val >> b) & 
 void Filter::poke(uint8_t reg, uint8_t val) {
 	struct FilterState* state= getState(this); 
 	switch (reg) {
-        case 0x15: { state->cutoffLow = val; break; }
+        case 0x15: { state->cutoffLow = val & 0x7; break; }
         case 0x16: { state->cutoffHigh = val; break; }
         case 0x17: { 
-				state->resFtv = val;		
+				state->resFtv = val & 0xf7;	// ignore FiltEx		
 		
 				for (uint8_t voice=0; voice<3; voice++) {
 					state->filterEnabled[voice]  = getBit(val, voice);
@@ -230,16 +230,16 @@ void Filter::setupFilterInput(double *cutoff, double *resonance) {
 	struct FilterState* state= getState(this);
 	
 	// weird scale.. - using the "lo" register as a fractional part..	
-	(*cutoff) = ((double)(state->cutoffLow & 0x7)) / 8 +  state->cutoffHigh + 0.2;	// why the +0.2 ?
+	(*cutoff) = ((double)(state->cutoffLow)) / 8 +  state->cutoffHigh + 0.2;	// why the +0.2 ? should max not be 256?
 		
 	if (!_sid->isModel6581()) {
 		(*cutoff) = 1.0 - myExp((*cutoff) * state->cutoffRatio8580);
-		(*resonance) = myPow(2.0, ((4.0 - (state->resFtv >> 4)) / 8));
+		(*resonance) = myPow(2.0, ((4.0 - (state->resFtv >> 4)) / 8));				// i.e. 1.41 to 0.39
 				
 	} else {
 		if ((*cutoff) < 24.0) { (*cutoff) = 0.035; }
 		else { (*cutoff) = 1.0 - 1.263 * myExp((*cutoff) * state->cutoffRatio6581); }
-		(*resonance) = (state->resFtv > 0x5F) ? 8.0 / (state->resFtv >> 4) : 1.41;
+		(*resonance) = (state->resFtv > 0x5F) ? 8.0 / (state->resFtv >> 4) : 1.41;	// i.e. 1.41 to 0.53
 	}
 #endif
 }

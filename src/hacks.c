@@ -222,7 +222,43 @@ static void patchSuperCarlingSpider(uint16_t *initAddr) {
 	}
 }
 
+static void patchFutureComposerIfNeeded(uint16_t *initAddr) {
+	// hack: FutureComposer v1.0 in some cases (see Luca's songs) seems to perform 2x
+	// updates of filter (etc) from same IRQ and even with respective handling the 
+	// songs sound terrible (maybe some flaw of the filter impl). 			
+
+	// it proved to be a bad idea trying to add some "hack" within the regular emulation
+	// logic - which produced undesirable side-effects in other songs therefore 
+	// the below now just patches specific songs and disables the respective volume
+	// and filter settings..
+	
+	uint8_t pattern[]= {0x8a, 0x18, 0x6d, 0x68, 0x21, 0x8d, 0x17, 0xd4};
+	if (((*initAddr) == 0x01800) && memMatch(0x1c46, pattern, 8)) {
+		memWriteRAM(0x1AE2, 0x20);	// use below sub instead of the original sta $d400,y
+		memWriteRAM(0x1AE3, 0x00);
+		memWriteRAM(0x1AE4, 0x04);
+
+			// supress d418 settings (Y register points to the SID register to update)
+		memWriteRAM(0x0400, 0x48);	// pha
+		memWriteRAM(0x0401, 0x98);	// tya
+		memWriteRAM(0x0402, 0xc9);	// cmp #$17
+		memWriteRAM(0x0403, 0x17);
+		memWriteRAM(0x0404, 0xb0);	// bcs $040b
+		memWriteRAM(0x0405, 0x05);
+		memWriteRAM(0x0406, 0x68);	// pla
+		memWriteRAM(0x0407, 0x99);	// sta $d400,y
+		memWriteRAM(0x0408, 0x00);
+		memWriteRAM(0x0409, 0xd4);
+		memWriteRAM(0x040a, 0x60);	// rts
+		memWriteRAM(0x040b, 0x68);	// pla
+		memWriteRAM(0x040c, 0x60);	// rts
+	}
+}
+
 void hackIfNeeded(uint16_t *initAddr) {
+	
+	patchFutureComposerIfNeeded(initAddr);
+	
 	patchSuperCarlingSpider(initAddr);
 	
 	patchThcmIfNeeded(initAddr);

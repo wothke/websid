@@ -124,28 +124,21 @@ uint8_t Envelope::sExponentialDelays[256];
 // of unpredictable effects, that the below hack will never be able to correctly simulate.
 
 static uint8_t isBugTriggerPattern(uint16_t adsr) {
-	return ((adsr & 0xff0f) == 0x0000) || (adsr == 0x0f00)|| (adsr == 0xf000);	// maybe different patterns / players must be handled separately
+	return (adsr & 0xf00f) == 0x0000;	// maybe different patterns / players must be handled separately
 }
 
-static void triggerPlanB(Envelope *env, struct EnvelopeState *state) {
-	// called when WF GATE/TEST is set in current frame, and the below check tries to determine if this
+static void triggerPlanB(Envelope *env, uint8_t wf, struct EnvelopeState *state) {
+	// called when WF GATE is set in current frame, and the below check tries to determine if this
 	// is a "frame 2" (see above) scenario..
-		
-	// 0: settings at end of frame t -2
-	// 1: settings at end of frame t -1	(i.e. previous frame)
-	if (isBugTriggerPattern(state->adsrHist[1]) && isBugTriggerPattern(state->adsrHist[0]) ) {	// previous 2 frames used "safe" setting, see Double_Trouble for song that switches this pattern
+	
+	// previous 2 frames used "safe" setting, see Double_Trouble for song that switches this pattern
+		// 0: settings at end of frame t -2
+		// 1: settings at end of frame t -1	(i.e. previous frame)
+	if (isBugTriggerPattern(state->adsrHist[1]) && isBugTriggerPattern(state->adsrHist[0]) 
+		&& !(state->ad&0xf0)) {	// low chance for higher levels to trigger the bug .. who would take that risk then?
+	
 		state->triggerPlanB= 2;	// follow up on this for the next 2 frames
 	}
-		
-	// note: Hermit's tactic for this is simpler: trigger delay-bug whenever previous
-	// RELEASE limit is smaller than the current one
-	// (it does seem to also work well - but the Move_Me_Like_A_Movie issue remains...
-	// keep this in mind in case other problem songs show up)
-	/*
-	if ((state->adsrHist[1]&0xf) < (state->sr&0xf)) {
-		state->triggerPlanB= 2;	// follow up on this for the next 2 frames
-	}
-	*/
 }
 
 // called at the end of each *frame*: track registers used to detect a music player's
@@ -206,9 +199,7 @@ void Envelope::poke(uint8_t reg, uint8_t val) {
 				state->envphase= Attack;				
 				state->zeroLock= 0;
 				
-				if ((val & 0x08)) {	// only use for this specific pattern (not for similar cases like Confusion 2015 Remix)
-					triggerPlanB(this, state);	// "plan B" ADSR bug detection
-				}				
+				triggerPlanB(this, val, state);	// "plan B" ADSR bug detection
 			} else if (oldGate && !newGate) {
 				simGateAdsrBug(1, state->sr & 0xf);	// switch to 'release'
 				/* 

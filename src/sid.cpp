@@ -188,7 +188,7 @@ SID::SID() {
 	// hack
 	_osc3sim = (struct SimOsc3*) malloc(sizeof(struct SimOsc3));
 	
-	_volUpdates= _nmiVolChangeDisabled= _allowedMax= 0;
+	_volUpdates= _nmiVolChangeDisabled= 0;
 }
 
 
@@ -252,7 +252,7 @@ void SID::resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 
 	// reset hacks
 	memset((uint8_t*)_osc3sim, 0, sizeof(struct SimOsc3));
-	_nmiVolChangeDisabled= _allowedMax= _volUpdates= 0;	// just in case
+	_nmiVolChangeDisabled= _volUpdates= 0;	// just in case
 
 	//	for (uint8_t i= 0; i<0x17; i++) poke(i, 0xff);	// FIXME: this seems to be the recommended by ACID64 (not tested yet)
 }
@@ -771,42 +771,11 @@ void SID::poke(uint8_t reg, uint8_t val) {
 		case 0x18: {
 			_volUpdates++;	// base for hacks
 			
-			if ((cpuGetProgramMode() != NMI_OFFSET_MASK)) {	// // use changes made from main or IRQ
-
-			// hack: FutureComposer v1.0 in some cases (see Luca's songs) seems to perform 2x
-			// updates of filter (etc) from same IRQ and even with respective handling the 
-			// songs sound terrible (probably some flaw of the filter impl). 			
-			// goal: disable filter *only* in respective scenarios:
-			
-				uint8_t usesFilter= ((val>>4) != 0x0);
-				if ((_volUpdates > 1) && usesFilter) {
-				
-				// trying to avoid false positives (e.g. some digis may still get in here.. but that 
-				// doesn't hurt). problem: this hack may easily create false positives, e.g.
-				// songs like Neverending_Story!
-				
-				if(_allowedMax < 5) {
-					_allowedMax+= 1;	// some songs come here during init
-						_filter->poke(reg, val); 
-				} else {
-					// test cases:
-					// - Kids_Arent_Allright & Why_Dont_You_Get_A_Job
-					// - Allen_Kim_Eriksen -Theme_01: false positive; makes 3 additional settings.. not more
-				
-					// the voice3enable flag AND the volume here lead to massive up/downs. it seems				
-					// there is no point to keep anything from the original settings.. everything 
-					// sounds worse than this hard coded setting..
-					_filter->poke(reg, 0b01111111 );	// FIXME retry if filter impl ever were to be changed
-				} 
-				} else {
-					// no use of filter
-					_filter->poke(reg, val);
-				}				
-			} else if (!_nmiVolChangeDisabled){		// NMI volume/filter changes
+			if ((cpuGetProgramMode() != NMI_OFFSET_MASK) || !_nmiVolChangeDisabled) {
 				_filter->poke(reg, val);
 			}
 		}
-			}
+	}
 
     switch (reg) {		
         case 0x0: { // Set frequency: Low byte
