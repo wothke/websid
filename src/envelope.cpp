@@ -436,8 +436,9 @@ void Envelope::updateEnvelope() {
 			if (triggerLFSR_Threshold(state->release, &state->currentLFSR) 
 				&& handleExponentialDelay() && !state->zeroLock) { 		// dec volume when threshold is reached
 
-					state->envelopeOutput= (state->envelopeOutput - 1) & 0xff;	// decrease volume
-				}
+				// FIXME: is potential "flip" used by any songs?
+				state->envelopeOutput= (state->envelopeOutput - 1) & 0xff;	// decrease volume
+			}
 			break;
 		}
 	}

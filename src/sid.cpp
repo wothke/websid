@@ -377,12 +377,12 @@ uint16_t SID::createTriangleOutput(uint8_t voice) {
 }			
 uint16_t SID::createSawOutput(uint8_t voice) {	// test with Alien or Kawasaki_Synthesizer_Demo
 	// Hermit's "anti-aliasing" - FIXME XXX with the added external filter this may no longer make sense
-	uint32_t wfout = _osc[voice]->counter >> 8;	// top 16-bits
+	double wfout = _osc[voice]->counter >> 8;	// top 16-bits
 	double step = ((double)_osc[voice]->freqIncSample) / 0x1200000;
 	
 	if (step != 0) {
-		wfout += round(wfout * step);
-		if (wfout > 0xffff) wfout = 0xffff - round (((double)(wfout - 0x10000)) / step);
+		wfout += wfout * step;
+		if (wfout > 0xffff) wfout = 0xffff - (wfout - 0x10000) / step;
 	}
 	return wfout;
 }
@@ -397,68 +397,35 @@ void SID::calcPulseBase(uint8_t voice, uint32_t *tmp, uint32_t *pw) {
 	(*tmp) = _osc[voice]->counter >> 8;			// 16 MSB needed
 }
 
-
-// flawed hack used to simulate the "highpass filter effect" of the originally 
-// missing "external filter" 
-//#define USE_PULSE_DECAY
-
 uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// elementary pulse
 	if (isTestBit(voice)) return 0xffff;	// pulse start position
 	
-	//int32_t wfout = ((_osc[voice]->counter>>8 > _osc[voice]->pulse)-1); // plain impl
-
-#ifdef USE_PULSE_DECAY	
-	uint32_t p= (_osc[voice]->pulse <<8);	// i.e. 24-bit /low-byte always 0
-	int32_t pos= (_osc[voice]->counter - p);	// current position in the pulse (increases in "frequency" steps..)
-
-	uint32_t x= (0xffff-_osc[voice]->freqIncCycle);	
-	double drop= ((double)x)/0xffff/_osc[voice]->freqIncCycle; 
-	
-	uint16_t s= (_osc[voice]->counter >= p) ? 
-					floor(drop*pos) : 		// 0xffff side
-					floor(drop*_osc[voice]->counter);		// 0x0 side
-#endif		
-	// old "no-frills" impl:
-//	return  (pos >= 0) ? 0xffff-s:  s;
+//	int32_t wfout = ((_osc[voice]->counter>>8 > _osc[voice]->pulse)-1); // plain impl
 
 	// Hermit's "anti-aliasing" pulse
 	
 	// note: the smaller the step, the slower the phase shift, e.g. ramp-up/-down rather than 
 	// immediate switch (current setting does not cause much of an effect - use "0.1*" to make it obvious )
-	double step=  2 * 256.0 / (((double)_osc[voice]->freqIncSample)/(1 << 16));
+	// larger steps cause "sizzling noise" 
+	double step=  ((double)256.0) / (_osc[voice]->freqIncSample >> 16);
 	
-	// larger steps cause "sizzling noise" and the step used here is 2x what Hermit is using 
-	// in his player.. (not sure it this "anti-aliasing" is really doing more good that harm..)
-		
+	double lim;
 	int32_t wfout;
 	if (tmp < pw) {	// rising edge (i.e. 0x0 side)	(in graph this is: TOP)
-		wfout = round((0xffff - pw) * step);
-		if (wfout > 0xffff) { wfout = 0xffff; }
-		wfout = wfout - round((pw - tmp) * step);
+		lim = (0xffff - pw) * step;
+		if (lim > 0xffff) { lim = 0xffff; }
+		wfout = lim - (pw - tmp) * step;
 		if (wfout < 0) { wfout = 0; }
-		
-#ifdef USE_PULSE_DECAY	
-		wfout+= s;
-#endif
-		// "tmp" are the low 16 bits of counter
-		
 	} else {//falling edge (i.e. 0xffff side)		(in graph this is: BOTTOM)
-		wfout += pw * step;
-		if (wfout > 0xffff) { wfout = 0xffff; }
-		wfout = round((0xffff - tmp) * step) - wfout;		
-
+		lim = pw * step;
+		if (lim > 0xffff) { lim = 0xffff; }
+		wfout = (0xffff - tmp) * step - lim;
 		if (wfout >= 0) { wfout = 0xffff; }
-		
 		wfout &= 0xffff;
-		
-#ifdef USE_PULSE_DECAY	
-		wfout-= s;
-		if (wfout < 0) { wfout = 0; }
-#endif
-	} 
+	}
+	
 	return wfout;
 }	
-
 
 // combined noise-waveform will feed back into noiseval shift-register potentially clearing
 // bits that are used for the "noiseout" (no others.. and not setting!)
