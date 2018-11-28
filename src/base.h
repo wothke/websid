@@ -11,4 +11,7 @@ typedef unsigned short uint16_t;
 typedef signed long int32_t;
 typedef unsigned long uint32_t;
 
+// debug: trace what is happending on ADSR level
+//#define DBG_TRACE_ADSR	1	// ID of voice to trace
+
 #endif

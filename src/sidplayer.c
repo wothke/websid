@@ -26,6 +26,7 @@
 #include <stdlib.h> 
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 
 #include "cia.h"	
 #include "vic.h"	
@@ -77,7 +78,7 @@ static uint8_t _ntscMode= 0;
 static uint8_t _compatibility;
 static uint8_t _basicProg;
 static uint32_t _clockRate;
-static uint8_t _fps;
+static double _fps;
 
 static uint32_t _sampleRate;
 
@@ -214,7 +215,7 @@ uint8_t envCurrentSongSpeed() {
 uint32_t envClockRate() {
 	return _clockRate;
 }
-int8_t envFPS(){
+double envFPS(){
 	return _fps;
 }
 
@@ -228,8 +229,9 @@ int8_t envIsRasterDrivenPSID() {
 }
 
 static void resetAudioBuffers() {
-	// song with original 60 hz playback.. adjust number of samples to play it faster.	
-
+	
+	// number of samples corresponding to one simulated frame/screen
+	// (granularity of emulation is 1 screen)
 	if(_ntscMode && envIsRasterDrivenPSID()) { 
 		_numberOfSamplesPerCall= _sampleRate/60; 		// NTSC: 735*60=44100
 	} else {
@@ -276,17 +278,24 @@ static void resetAudioBuffers() {
 	_numberOfSamplesToRender = 0;	
 }
 
-static void resetTimings() {	
-	if(_ntscMode) {		
-		_fps= 60;
-		_cyclesPerRaster= 65;			// NTSC
-		_linesPerScreen = 263;
-		_clockRate= 1022727;
+static void resetTimings(uint8_t isNTSC) {
+	// note: clocking is derived from the targetted video standard.
+	// 14.31818MHz (NTSC) respectively of 17.734475MHz (PAL) - divide by 4 for respective 
+	// color subcarrier: 3.58Mhz NTSC,  4.43MHz PAL.
+	// the 8.18MHz (NTSC) respectively 7.88MHz (PAL) "dot clock" is derived from the above
+	// system clock is finally "dot clock" divided by 8
+	if(isNTSC) {
+		// NTSC
+		_fps= 59.826;
+		_cyclesPerRaster= 65;
+		_linesPerScreen = 263;	// with  520 pixels
+		_clockRate= 1022727;	// system clock (14.31818MHz/14)
 	} else {
-		_fps= 50;
-		_cyclesPerRaster= 63;			// PAL	
-		_linesPerScreen = 312;
-		_clockRate= 985248;
+		// PAL
+		_fps= 50.125;
+		_cyclesPerRaster= 63;	
+		_linesPerScreen = 312;	// with 504 pixels
+		_clockRate= 985249;		// system clock (17.734475MHz/18)
 	}
 	/*
 	hack: correct cycle handling would consider badlines, usage of sprites, 
@@ -304,7 +313,7 @@ static void resetTimings() {
 	// NTSC: 17095	/ PAL: 19656		
 	_totalCyclesPerScreen= _cyclesPerRaster*_linesPerScreen- badlineCycles;			
 	// NTSC: 1025700 (clock would be: 1022727);		/ PAL: 982800 (clock would be: 985248);			
-	_totalCyclesPerSec= _totalCyclesPerScreen*_fps;	
+	_totalCyclesPerSec= round(((double)_totalCyclesPerScreen)*_fps);	
 }
 
 static uint8_t musIsTrackEnd(uint8_t voice) {
@@ -680,7 +689,7 @@ static uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t isMus, void * inBuffer
 	if (_basicProg) rsidStartFromBasic(&_initAddr);
 	
 	// global settings that depend on the loaded music file
-	resetTimings();
+	resetTimings(_ntscMode);
 	
 	loadResult[0]= &_loadAddr;
 	loadResult[1]= &_playSpeed;
@@ -736,7 +745,7 @@ static uint8_t envSetNTSC(uint8_t isNTSC)  __attribute__((noinline));
 static uint8_t EMSCRIPTEN_KEEPALIVE envSetNTSC(uint8_t isNTSC) {
 	_ntscMode= isNTSC;
 	
-	resetTimings();
+	resetTimings(isNTSC);
 	resetAudioBuffers();
 
 	return 0;

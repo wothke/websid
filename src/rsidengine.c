@@ -34,6 +34,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 
 #include "rsidengine.h"
 
@@ -314,6 +315,10 @@ static void processMain(uint32_t cyclesPerScreen, uint32_t startTime, int32_t ti
 	}
 }
 
+#ifdef DBG_TRACE_ADSR
+uint16_t _frameCount;
+#endif
+
 static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall, int16_t **synthTraceBufs) {
 	setupVolumeHack();
 
@@ -485,6 +490,9 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 * @return 		1: if digi data available   0: if not
 */
 uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall, int16_t **synthTraceBufs) {	
+#ifdef DBG_TRACE_ADSR
+	fprintf(stderr, "frame %d\n", _frameCount++);
+#endif
 	digiFetchOverflowData();
 		
 	initCycleCount(0, 0);
@@ -524,7 +532,7 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 		runScreenSimulation(synthBuffer, cyclesPerScreen, samplesPerCall, synthTraceBufs);
 		
 //		retVal= digiRenderSamples(digiBuffer, cyclesPerScreen, samplesPerCall);	// FIXME this change might break stuff
-		retVal= digiRenderSamples(digiBuffer, envClockRate()/envFPS(), samplesPerCall);
+		retVal= digiRenderSamples(digiBuffer, round(((double)envClockRate())/envFPS()), samplesPerCall);
 	} else {
 		// legacy PSID mode: one "IRQ" call per screen refresh (a PSID may actually setup CIA 1 
 		// timers but without wanting to use them - e.g. ZigZag.sid track2). note: most files from the
@@ -567,6 +575,10 @@ void rsidReset(uint32_t sampleRate, uint8_t compatibility)
 	vicReset(envIsRSID(), NO_INT);
 	
 	sidReset(sampleRate, envSIDAddresses(), envSID6581s(), compatibility, overflowFrames, 1);
+	
+#ifdef DBG_TRACE_ADSR
+	_frameCount= 0;
+#endif	
 }
 
 void rsidLoadSongBinary(uint8_t *src, uint16_t destAddr, uint32_t len) {

@@ -112,7 +112,7 @@ private:
 	
 	// oscillator handling
 	void syncOscillator(uint8_t voice);
-	void advanceOscillators();
+	uint16_t advanceOscillators();
 		// hack: fake osc3 read-out
 	uint8_t useOscPollingHack();
 	void simStartOscillatorVoice3(uint8_t voice, uint8_t val);

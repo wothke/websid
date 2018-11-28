@@ -140,7 +140,6 @@ void Filter::poke(uint8_t reg, uint8_t val) {
 			}
         case 0x18: { 
 				state->ftpVol = val;
-
 #ifdef USE_FILTER
 				state->lowEna = getBit(val,4);	// lowpass
 				state->bandEna = getBit(val,5);	// bandpass
@@ -163,7 +162,7 @@ int32_t Filter::simOutput(uint8_t voice, int32_t *filterIn, int32_t *out, double
 	struct FilterState* state= getState(this);
 	int32_t OUTPUT_SCALEDOWN = 0x6 * 0xf / 4;
 #ifdef USE_FILTER	
-	double output=	runFilter((double)(*filterIn), (double)(*out), &(state->simBandPass[voice]), &(state->simLowPass[voice]), cutoff, resonance);
+	double output=	runFilter((double)-(*filterIn), (double)(*out), &(state->simBandPass[voice]), &(state->simLowPass[voice]), cutoff, resonance);
 		
 	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)
 	return round(output * state->vol / OUTPUT_SCALEDOWN); // SID output
@@ -176,8 +175,11 @@ int32_t Filter::getOutput(int32_t *filterIn, int32_t *out, double cutoff, double
 
 	struct FilterState* state= getState(this);
 	int32_t OUTPUT_SCALEDOWN = 0x6 * 0xf;	// hand tuned with "424"
-#ifdef USE_FILTER	
-	double output= 	runFilter((double)(*filterIn), (double)(*out), &(state->bandPass), &(state->lowPass), cutoff, resonance);
+#ifdef USE_FILTER
+
+	// note: filter impl seems to invert the data (see 2012_High-Score_Power_Ballad where two voices playing
+	// the same notes cancelled each other out..)
+	double output= 	runFilter((double)-(*filterIn), (double)(*out), &(state->bandPass), &(state->lowPass), cutoff, resonance);
 	
 	output *= state->vol;
 

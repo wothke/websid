@@ -78,7 +78,7 @@ static uint8_t getBit(uint32_t val, uint8_t b) { return (uint8_t) ((val >> b) & 
 struct SidState {
 	uint8_t isModel6581;
 	uint8_t level_DC;
-	uint32_t sampleRate;	// e.g. 44100
+	uint32_t sampleRate;	// target playback sample rate (e.g. what the browser is using)
 
 	double cycleOverflow;
 	double cyclesPerSample;
@@ -312,7 +312,7 @@ void SID::syncOscillator(uint8_t voice) {
 		_osc[destVoice]->counter = 0;
 	}
 }
-void SID::advanceOscillators() {
+uint16_t SID::advanceOscillators() {
 /*	
 	// this original HARD SYNC impl from TinySID was quite wrong .. but actually
 	// one doesn't hear much of a difference to the correct one!
@@ -354,6 +354,7 @@ void SID::advanceOscillators() {
 			syncOscillator(voice);
 		}	
 	}
+	return cycles;
 }
 
 // ------------------------- wave form generation ----------------------------
@@ -374,7 +375,7 @@ uint16_t SID::createTriangleOutput(uint8_t voice) {
 	uint32_t tmp = getRingModCounter(voice);
     uint32_t wfout = (tmp ^ (tmp & 0x800000 ? 0xffffff : 0)) >> 7;
 	return wfout & 0xffff;
-}			
+}
 uint16_t SID::createSawOutput(uint8_t voice) {	// test with Alien or Kawasaki_Synthesizer_Demo
 	// Hermit's "anti-aliasing" - FIXME XXX with the added external filter this may no longer make sense
 	double wfout = _osc[voice]->counter >> 8;	// top 16-bits
@@ -581,6 +582,7 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 
 uint8_t SID::useOscPollingHack() {
 	// so far it has only been tested for main-loop
+	// (Raveloop14_xm would also need something for its IRQ use.. not done yet)
 	return cpuGetProgramMode() == MAIN_OFFSET_MASK;
 }
 void SID::simStartOscillatorVoice3(uint8_t voice, uint8_t val) {
@@ -619,7 +621,7 @@ uint8_t SID::simIsPollyTracker() {
 }
 
 uint8_t SID::simReadD41B() {
-	_osc3sim->inUse= 1;
+	_osc3sim->inUse= 1;	// Raveloop14_xm is also using this..
 	
 	if (_osc3sim->waveform == 0x40) {
 		return  simReadPulsedD41B();
@@ -790,7 +792,7 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 
 	// now render the buffer
 	for (uint32_t bp=0; bp<len; bp++) {		
-		advanceOscillators();
+		uint16_t cycles= advanceOscillators();
 
 		int32_t outf= 0, outo= 0;	// outf and outo here end up with the sum of 3 voices..
 		
@@ -798,7 +800,7 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 		for (uint8_t voice=0; voice<3; voice++) {						
 			uint16_t outv = createWaveOutput(voice);
 
-			_env[voice]->updateEnvelope();
+			_env[voice]->updateEnvelope(cycles);
 			
 			// envelopeOutput has 8-bit and and outv 16	(Hermit's impl based on 16-bit wave output)		
 			// => scale back to signed 16bit

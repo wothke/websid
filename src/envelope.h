@@ -34,9 +34,9 @@ protected:
 	void reset();
 
 	/**
-	* Forwards time by the duration of one sample.
+	* Forwards time by the specified duration.
 	*/
-	void updateEnvelope();
+	void updateEnvelope(uint16_t cycles);
 	
 	/**
 	* Updates redundantly kept state information 
@@ -75,7 +75,6 @@ private:
 		// --- ADSR-bug
 	uint16_t getCurrentThreshold();
 	void simGateAdsrBug(uint8_t scenario, uint16_t newRate);
-	int32_t clocksToSamples(int32_t clocks);
 
 	
 private:
@@ -85,9 +84,8 @@ private:
 	class SID* _sid;
 	uint8_t _voice;
 
-	static double sCyclesPerSample;	// redundancy used to avoid repeated calcs
-	static uint32_t sLimitLFSR; // the original cycle counter would be 15-bit (here samples are counted & counter is rescaled accordingly)
-	static uint32_t sCounterPeriod[16];
+	static uint16_t sLimitLFSR; // 15-bit like original
+	static uint16_t sCounterPeriod[16];
 	static uint8_t sExponentialDelays[256];
 };
 

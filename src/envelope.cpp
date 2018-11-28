@@ -56,10 +56,10 @@ struct EnvelopeState {
 
 	uint8_t envphase;
 
-    uint32_t attack;	// for 255 steps
-    uint32_t decay;		// for 255 steps
-    uint32_t sustain;
-    uint32_t release;
+    uint16_t attack;	// for 255 steps
+    uint16_t decay;		// for 255 steps
+    uint16_t sustain;
+    uint16_t release;
 
 	uint8_t envelopeOutput;
 	
@@ -72,11 +72,12 @@ struct EnvelopeState {
 	uint32_t lastCycles;
 	uint16_t simLFSR;		// base for CPU-side simulation
 	uint16_t origLFSR;
-	double overflow;
 	
 		// plan B) anticipative approach.. detect when player tries to avoid bug..
 	uint8_t triggerPlanB;		// force LSFR into delay-bug before next use
 	uint16_t adsrHist[2];		// ADSR settings of previous 2 frames
+	uint8_t wf;					// only used for detection
+	uint16_t wfHist[2];			// waveform settings of previous 2 frames
 };
 
 struct EnvelopeState* getState(Envelope *e) {	// this should rather be static - but "friend" wouldn't work then
@@ -84,9 +85,8 @@ struct EnvelopeState* getState(Envelope *e) {	// this should rather be static - 
 }
 
 // what garbage language needs this... (to avoid "unresolved symbols")
-double Envelope::sCyclesPerSample;
-uint32_t Envelope::sLimitLFSR;
-uint32_t Envelope::sCounterPeriod[16];
+uint16_t Envelope::sLimitLFSR;
+uint16_t Envelope::sCounterPeriod[16];
 uint8_t Envelope::sExponentialDelays[256];
 
 
@@ -135,20 +135,22 @@ static void triggerPlanB(Envelope *env, uint8_t wf, struct EnvelopeState *state)
 	// previous 2 frames used "safe" setting, see Double_Trouble for song that switches this pattern
 		// 0: settings at end of frame t -2
 		// 1: settings at end of frame t -1	(i.e. previous frame)
-		
 	if (isBugTriggerPattern(state->adsrHist[1]) && isBugTriggerPattern(state->adsrHist[0]) 
 		&& (
 			// A) typical pattern using TEST bit - these songs DO NOT like the B) detection (e.g. Monofail, Boombox Alley)
-			(wf&0x8 && !(state->ad&0xf0)) ||
+			(wf&0x8 && !(state->ad&0xf0) ) ||
 			// B) alternative pattern: some directly set a WF (e.g. Lessons_In_Love)
 			((wf&0xf0) && (
 				( (state->ad>>4) < (state->adsrHist[1] >>12) ) ||	// reduced A	
 				( (state->ad>>4) < (state->sr&0xf) )				// reduced R->A - assumed update order: SR then WF - breaks Monofail / Lessions_In_Love needs it..
 			))
 			)
-		) {
-	
+		) {	
 		state->triggerPlanB= 2;	// follow up on this for the next 2 frames
+	} else if ((state->wfHist[1]&0x8) && (state->adsrHist[1]&0xf) && (state->ad>>4 == 0)) {
+		// other pattern, e.g. used in Magical_World_Remix (below is hand-tuned for this song:
+		// apparently only a partial-frame delay is expected - which shortens the noise)
+		state->triggerPlanB= 0x50;	// i.e. 0x5000 => delay for 0x3000 cycles..
 	}
 }
 
@@ -160,8 +162,11 @@ void Envelope::snapshotAdsrState() {
 	// than trying to capture it while the settings are made...
 	for (uint8_t i= 0; i<1; i++) {
 		state->adsrHist[i]= state->adsrHist[i+1];
+		state->wfHist[i]= state->wfHist[i+1];
+		
 	}
 	state->adsrHist[1]= (((uint16_t)state->ad) << 8) | state->sr;
+	state->wfHist[1]= state->wf;
 }
 
 Envelope::Envelope(SID *sid, uint8_t voice) {
@@ -192,11 +197,17 @@ void Envelope::poke(uint8_t reg, uint8_t val) {
 	// problem: correctly the below updates should occur cpuCycles() into the next SID-
 	// rendering but with the current impl the SID-rendering will use the updated 
 	// state *immediately*..
-	
+#ifdef DBG_TRACE_ADSR
+	struct EnvelopeState *s= getState(this);
+	if(_voice == DBG_TRACE_ADSR) fprintf(stderr, "  %X %X set %X=%X\n", s->origLFSR, s->simLFSR, reg, val);
+#endif
+
 	switch (reg) {
         case 0x4: {
 			struct EnvelopeState *state= getState(this);
 
+			state->wf= val;	// for planB detection
+			
 			uint8_t oldGate= _sid->getWave(_voice)&0x1;
 			uint8_t newGate= val & 0x01;
 						
@@ -226,7 +237,7 @@ void Envelope::poke(uint8_t reg, uint8_t val) {
         case 0x5: {		// set AD		
 			struct EnvelopeState *state= getState(this);
 
-			if (state->envphase != Release) {	// reminder: S keeps using the D threshold
+			if ((state->envphase != Release) && (state->ad != val)) {	// reminder: S keeps using the D threshold
 				if (state->envphase == Attack) {
 					simGateAdsrBug(2, val >> 4);
 				} else {
@@ -239,7 +250,7 @@ void Envelope::poke(uint8_t reg, uint8_t val) {
         case 0x6: {		// set SR
 			struct EnvelopeState *state= getState(this);
 
-			if (state->envphase == Release) {
+			if ((state->envphase == Release) && (state->sr != val)) {
 				simGateAdsrBug(4, val & 0xf);
 			}			
 			state->sr = val; 
@@ -264,9 +275,7 @@ void Envelope::reset() {
 	state->adsrHist[0]= state->adsrHist[1]= 0xffff;	// 0 would be a bad default since is cannot be distinguished from real data
 }
 
-void Envelope::resetConfiguration(uint32_t sampleRate) {
-	sCyclesPerSample = ((double)envClockRate()) / sampleRate;
-	
+void Envelope::resetConfiguration(uint32_t sampleRate) {	
 	// The ATTACK rate determines how rapidly the output of a voice rises from zero to peak amplitude when 
 	// the envelope generator is gated (time/cycle in ms). The respective gradient is used whether the attack is 
 	// actually started from 0 or from some higher level. The terms "attack time", "decay time" and 
@@ -274,25 +283,30 @@ void Envelope::resetConfiguration(uint32_t sampleRate) {
 	// some fixed gradients, and the actual decay or release may complete much sooner, e.g. depending
 	// on the selected "sustain" level.
 	// note: decay/release times are 3x longer (implemented via exponentialCounter)
-	const int32_t attackTimes[16]  =	{
+	const uint16_t attackTimes[16]  =	{
 		2, 8, 16, 24, 38, 56, 68, 80, 100, 240, 500, 800, 1000, 3000, 5000, 8000
 	};
 	
 	/* 
-	in regular SID, 15-bit LFSR counter counts cpu-clocks, problem here is the lack of 
-	cycle by cycle SID emulation (only have a SID snapshot every ~20ms to work with) 
-	during rendering the computing granularity then is 'one sample' (not 'one cpu cycle'
-	- but around 20).. instead of still trying to simulate a 15-bit cycle-counter a 
-	sample-counter is used directly
+	in regular SID, 15-bit LFSR is clocked each cycle and it is a shift-register and not a 
+	counter.. see residfp for more correct modelling.
+	problem here is the lack of cycle by cycle, CPU/SID synchronized emulation (only have a 
+	SID snapshot every ~20ms to work with from the CPU perspective) 
+	during rendering the computing granularity then is 'one sample' (not 'one clock cycle'
+	- but around 20).. 
 	*/
-	sLimitLFSR= round(((double)0x7fff)/sCyclesPerSample) + 1;	// original counter was 15-bit
+	sLimitLFSR= 0x8000;	// original counter was 15-bit
 	
 	uint16_t i;
 	for (i=0; i<16; i++) {
 		// counter must reach respective threshold before envelope value is incremented/decremented								
 		// note: attack times are in millis & there are 255 steps for envelope..
 		
-		sCounterPeriod[i]= floor(((double)envClockRate())/(255*1000) * attackTimes[i] / sCyclesPerSample)+1;	// in samples
+		// would be more logical if actual system clock was used here.. but probably CBM did 
+		// not care to create separate NTSC/PAL SID versions and the respective limits are 
+		// just hard coded.. see Egypt.sid
+		sCounterPeriod[i]= floor(((double)1000000/1000)/255 * attackTimes[i]) + 1;
+//		sCounterPeriod[i]= ceil(((double)1000000/1000)/256 * attackTimes[i] + 0.5);	// similar impl in resid
 	}
 	
 	// lookup table for decay rates
@@ -333,13 +347,15 @@ uint8_t Envelope::handleExponentialDelay() {
 void Envelope::handleDelayBugPlanB() {
 	// this will override whatever the regular handling would have come up with..
 	// FIXME: only designed for 1x speed
-	
 	struct EnvelopeState *state= getState(this);
 	if (state->triggerPlanB) {		
 		// the delay-bug must be forced here, so that it will be done in about 1.5 frames and the
 		// ATTACK will actually start in the middle of the next frame
 		
-		if (state->triggerPlanB == 2) {
+		if (state->triggerPlanB > 3) {
+			state->currentLFSR= state->triggerPlanB << 8;	// use configured as high-byte 
+			state->triggerPlanB= 1; // reset below
+		} else if (state->triggerPlanB == 2) {
 			// t0: this is the "frame" where TEST/GATE has just been set to prepare for next note:
 			// normally the delay-bug should be immediately triggered, ensureing that
 			// the next note will start 1.5 frames later (e.g. see Relax_Magazine and Electric_Girl)
@@ -361,8 +377,7 @@ void Envelope::handleDelayBugPlanB() {
 	}
 }
 
-void Envelope::updateEnvelope() {
-	
+void Envelope::updateEnvelope(uint16_t cycles) {
 	struct EnvelopeState *state= getState(this);
 		
 	/*
@@ -384,67 +399,71 @@ void Envelope::updateEnvelope() {
 	the counter keeps counting until it again reaches the threshold after a wrap-around.. 
 	(see sidPoke() for specific ADSR-bug handling)
 	*/
-	if (++state->currentLFSR >= sLimitLFSR) {
-		state->currentLFSR= 0;
+	
+	for (uint16_t i= 0; i<cycles; i++) {
+		if (++state->currentLFSR >= sLimitLFSR) {
+			state->currentLFSR= 0;
+		}
+		
+		uint8_t previousEnvelopeOutput = state->envelopeOutput;
+					
+		switch (state->envphase) {
+			case Attack: {                          // Phase 0 : Attack
+				if (triggerLFSR_Threshold(state->attack, &state->currentLFSR) && !state->zeroLock) {	
+					// inc volume when threshold is reached						
+					if (!hackEnvFlip() || (state->envelopeOutput < 0xff)) {	// see Alien.sid
+						// release->attack combo can flip 0xff to 0x0 (e.g. Acke.sid - voice3)
+						state->envelopeOutput= (state->envelopeOutput + 1) & 0xff;	// increase volume
+					}							
+				
+					state->exponentialCounter = 0;
+
+					if (state->envelopeOutput == 0xff) {
+						state->envphase = Decay;
+					}							
+				}
+				break;
+			}
+			case Decay: {                   	// Phase 1 : Decay      
+				if (triggerLFSR_Threshold(state->decay, &state->currentLFSR) 
+						&& handleExponentialDelay() && !state->zeroLock) { 	// dec volume when threshold is reached
+					
+						if (state->envelopeOutput != state->sustain) {
+							state->envelopeOutput= (state->envelopeOutput - 1) & 0xff;	// decrease volume
+						} else {
+							state->envphase = Sustain;
+						}
+					}	
+				break;
+			}
+			case Sustain: {                        // Phase 2 : Sustain
+				triggerLFSR_Threshold(state->decay, &state->currentLFSR);	// keeps using the decay threshold!
+			
+				// when S is set higher during the "sustain" phase, then this will NOT cause the level to go UP! 
+				// (see http://sid.kubarth.com/articles/interview_bob_yannes.html)
+	 
+		//		if (state->envelopeOutput != state->sustain) {	// old impl... lets see if this breaks something..
+				if (state->envelopeOutput > state->sustain) {
+					state->envphase = Decay;
+				}
+				break;
+			}					
+			case Release: {                          // Phase 3 : Release
+				// this phase must be explicitly triggered by clearing the GATE bit..
+				if (triggerLFSR_Threshold(state->release, &state->currentLFSR) 
+					&& handleExponentialDelay() && !state->zeroLock) { 		// dec volume when threshold is reached
+
+					// FIXME: is potential "flip" used by any songs?
+					state->envelopeOutput= (state->envelopeOutput - 1) & 0xff;	// decrease volume
+				}
+				break;
+			}
+		}
+		if ((state->envelopeOutput == 0) && (previousEnvelopeOutput > state->envelopeOutput)) {
+			state->zeroLock = 1;	// new "attack" phase must be started to unlock
+		}
 	}
 	
-	uint8_t previousEnvelopeOutput = state->envelopeOutput;
-				
-	switch (state->envphase) {
-		case Attack: {                          // Phase 0 : Attack
-			if (triggerLFSR_Threshold(state->attack, &state->currentLFSR) && !state->zeroLock) {	
-				// inc volume when threshold is reached						
-				if (!hackEnvFlip() || (state->envelopeOutput < 0xff)) {	// see Alien.sid
-					// release->attack combo can flip 0xff to 0x0 (e.g. Acke.sid - voice3)
-					state->envelopeOutput= (state->envelopeOutput + 1) & 0xff;	// increase volume
-				}							
-			
-				state->exponentialCounter = 0;
-
-				if (state->envelopeOutput == 0xff) {
-					state->envphase = Decay;
-				}							
-			}
-			break;
-		}
-		case Decay: {                   	// Phase 1 : Decay      
-			if (triggerLFSR_Threshold(state->decay, &state->currentLFSR) 
-					&& handleExponentialDelay() && !state->zeroLock) { 	// dec volume when threshold is reached
-				
-					if (state->envelopeOutput != state->sustain) {
-						state->envelopeOutput= (state->envelopeOutput - 1) & 0xff;	// decrease volume
-					} else {
-						state->envphase = Sustain;
-					}
-				}	
-			break;
-		}
-		case Sustain: {                        // Phase 2 : Sustain
-			triggerLFSR_Threshold(state->decay, &state->currentLFSR);	// keeps using the decay threshold!
-		
-			// when S is set higher during the "sustain" phase, then this will NOT cause the level to go UP! 
-			// (see http://sid.kubarth.com/articles/interview_bob_yannes.html)
- 
-	//		if (state->envelopeOutput != state->sustain) {	// old impl... lets see if this breaks something..
-			if (state->envelopeOutput > state->sustain) {
-				state->envphase = Decay;
-			}
-			break;
-		}					
-		case Release: {                          // Phase 3 : Release
-			// this phase must be explicitly triggered by clearing the GATE bit..
-			if (triggerLFSR_Threshold(state->release, &state->currentLFSR) 
-				&& handleExponentialDelay() && !state->zeroLock) { 		// dec volume when threshold is reached
-
-				// FIXME: is potential "flip" used by any songs?
-				state->envelopeOutput= (state->envelopeOutput - 1) & 0xff;	// decrease volume
-			}
-			break;
-		}
-	}
-	if ((state->envelopeOutput == 0) && (previousEnvelopeOutput > state->envelopeOutput)) {
-		state->zeroLock = 1;	// new "attack" phase must be started to unlock
-	}
 }
 
 /*
@@ -506,17 +525,11 @@ uint16_t Envelope::getCurrentThreshold() {
 	}
 	return threshold;
 }
-// util for envelope generator LFSR counter
-int32_t Envelope::clocksToSamples(int32_t clocks) {
-	struct EnvelopeState *state= getState(this);
-	return round(((float)clocks)/sCyclesPerSample);
-}
 
 void Envelope::snapshotLFSR() {
 	struct EnvelopeState *state= getState(this);
 	state->lastCycles= 0; 
 	state->simLFSR= state->origLFSR= state->currentLFSR;
-	state->overflow= 0;
 }
 
 /*
@@ -616,18 +629,25 @@ void Envelope::simGateAdsrBug(uint8_t dbgIdx, uint16_t newRate) {
 	uint16_t oldThreshold= getCurrentThreshold();
 	uint16_t newThreshold= sCounterPeriod[newRate];
 		
-	// probably a useless overkill to track the overflow:
-	double e= ((double)cpuCycles() - state->lastCycles)/sCyclesPerSample + state->overflow;
-	uint32_t elapsed = floor(e);
-	state->overflow= e-elapsed; 
-//	elapsed = ceil(e);	//YYY 
+	uint16_t elapsed = cpuCycles() - state->lastCycles;
+	
+	
+// FIXME: THE PROBLEM IS NOT JUST TO CHECK IF OVERFLOW AREA IS ENTERED BEFORE A SETTING IS CHANGED
+// BUT ALSO IF OVERFLOW MIGHT BE EXITED BEFORE CHANGE.. 	
+	
 	
 	// simulate what happend since this method was last called...
 	uint16_t simLSFR = state->simLFSR;		// last state used by SID emu (that was cpuCycles() ago)
 	if (simLSFR < oldThreshold) {
+#ifdef DBG_TRACE_ADSR
+	if(_voice == DBG_TRACE_ADSR) fprintf(stderr, "  < %X + %X mod %X = %X\n", simLSFR, elapsed, oldThreshold, (simLSFR + elapsed) % oldThreshold);
+#endif
 		// might have reached the threshold during elapsed time
 		simLSFR= (simLSFR + elapsed) % oldThreshold;
 	} else {
+#ifdef DBG_TRACE_ADSR
+	if(_voice == DBG_TRACE_ADSR) fprintf(stderr, "  >= %X + %X mod %X = %X\n", simLSFR, elapsed, sLimitLFSR, (simLSFR + elapsed) % sLimitLFSR);
+#endif
 		// already in overflow.. so let it do the full circle
 		simLSFR= (simLSFR + elapsed) % sLimitLFSR;
 	}			
@@ -635,18 +655,26 @@ void Envelope::simGateAdsrBug(uint8_t dbgIdx, uint16_t newRate) {
 	if (oldThreshold > newThreshold ) {	// only a reduction may lead to an overflow
 		// PROBLEM: logic still leads to false positive in some songs, i.e. this detection logic does not always work well..
 		
-		if (simLSFR >= newThreshold) {
-			// by setting currentLFSR to something equal or higher than newThreshold it is forced into "overflow territory"):
+		if ((simLSFR >= newThreshold) && (state->currentLFSR < newThreshold)) {	
+			// by setting currentLFSR to something equal or higher than newThreshold it is forced into "overflow territory").
+			// if counter was already in delay-territory then there is no need to adjust it.. 
 
 			// try to trigger bug for correct "overall duration" (see problem 2): when set to newThreshold then
 			// the maximum of sLimitLFSR steps would be needed to get out of the bug, any higher value will still
 			// tigger the bug but reduce the steps needed to get out of it..
+
+#ifdef DBG_TRACE_ADSR
+	if(_voice == DBG_TRACE_ADSR) fprintf(stderr, "  SET %X\n", simLSFR);
+#endif
 			
 			state->currentLFSR= simLSFR;	// this should be the correctly reduced bug time: newThreshold+(simLSFR-newThreshold)
 		}		
 	} else {
 		// some earlier setting might already have wrongly setup the bug-mode
 		if (simLSFR < newThreshold ) {	// false alarm.. restore
+#ifdef DBG_TRACE_ADSR
+	if(_voice == DBG_TRACE_ADSR) fprintf(stderr, "  RESTORE %X\n", state->origLFSR);
+#endif
 			// flawed impl: the newThreshold might still be lower than what the SID emu
 			// had last been using. Just continuing with the origLFSR may (wrongly) result
 			// in bug-mode - depending on what the timing of the update actually was.
@@ -654,7 +682,7 @@ void Envelope::simGateAdsrBug(uint8_t dbgIdx, uint16_t newRate) {
 		}
 	}
 	
-	// update base (in case there are more updates later)
+	// update base (in case there are more updates from same IRQ later)
 	state->lastCycles= cpuCycles();	
 	state->simLFSR = simLSFR;
 }
