@@ -430,7 +430,7 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 				
 				// FIXME: multi-frame IRQ handling would be necessary to deal with songs like: Musik_Run_Stop.sid	
 				uint32_t usedCycles= processInterrupt(IRQ_OFFSET_MASK, getIrqVector(), tIrq, _irqTimeout);
-				
+
 				// flaw: IRQ might have switched off NMI, e.g. Vicious_SID_2-Blood_Money.sid
 				if (usedCycles >=_irqTimeout) { // IRQ gets aborted due to a timeout
 					if (cpuIrqFlag()) {
@@ -450,9 +450,17 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 				if (availableIrqCycles <= 0) {
 					availableIrqCycles= 0;		// see unsigned use below
 				}
+				
 				currentIrqTimer= forwardToNextInterrupt(getIrqTimerMode(CIA1), CIA1, availableIrqCycles);
-							
-				tIrq+= currentIrqTimer;		// will be garbage on last run..	
+				tIrq+= currentIrqTimer;		// will be garbage on last run..
+				
+				if (envIsTimerDrivenPSID() && (currentIrqTimer != NO_INT))  {
+					if(usedCycles > currentIrqTimer) {
+						currentIrqTimer= NO_INT;	// hack for Eye_of_the_Tiger
+					}
+				}
+				// some dumbshit timer-PSIDs do not ackn IRQ (MasterComposer rips & Automatas.sid)
+				if(envIsTimerDrivenPSID())  { ciaReadMem(0xdc0d); }
 			}
 		}
 
@@ -528,7 +536,7 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 		// substracted on the following screen. however a test with a 
 		// respective feature showed that some songs (e.g. Cycles.sid, 
 		// Wonderland XII part1.sid) fail miserably when it is used..
-				
+		
 		runScreenSimulation(synthBuffer, cyclesPerScreen, samplesPerCall, synthTraceBufs);
 		
 //		retVal= digiRenderSamples(digiBuffer, cyclesPerScreen, samplesPerCall);	// FIXME this change might break stuff
@@ -544,8 +552,8 @@ uint8_t rsidProcessOneScreen(int16_t *synthBuffer, uint8_t *digiBuffer, uint32_t
 		int32_t cycleLimit= cyclesPerScreen*3;		// was originally -1
 		uint32_t c= processInterrupt(IRQ_OFFSET_MASK, getIrqVector(), 0, cycleLimit);
 		
-		sidSynthRender(synthBuffer, samplesPerCall, synthTraceBufs);	
-		digiClearBuffer();		
+		sidSynthRender(synthBuffer, samplesPerCall, synthTraceBufs);
+		digiClearBuffer();
 		
 		retVal= 0;
 	}
@@ -603,8 +611,8 @@ void rsidPlayTrack(uint32_t sampleRate, uint8_t compatibility, uint16_t *pInitAd
 	// if initAddr call does not complete then it is likely in an endless loop / maybe digi player
 	// FIXME use CYCLELIMIT only for PSID: unfortunately RSIDs like Wonderland_XII-Digi_part_1.sid still 
 	// need some kind of startup phase
-	_mainProgStatus= callMain((*pInitAddr), actualSubsong, 0, !envIsRSID()? CYCLELIMIT : 200000);		
-
+	_mainProgStatus= callMain((*pInitAddr), actualSubsong, 0, !envIsRSID()? CYCLELIMIT : 200000);
+	
 	ciaResetPsid60Hz();
 	
 	/*

@@ -152,6 +152,7 @@ void cpuRegRestore(uint8_t i, uint8_t light) {
 #define rel 13
 
 // enum of all c64 operations
+// not yet implemented: ane, sha, shs, shx, shy
 enum {
 	adc, alr, anc, and, ane, arr, asl, bcc, bcs, beq, bit, bmi, bne, bpl, brk, bvc, 
     bvs, clc, cld, cli, clv, cmp, cpx, cpy, dcp, dec, dex, dey, eor, inc, inx, iny, 
@@ -160,7 +161,8 @@ enum {
 	shy, slo, sre, sta, stx, sty, tax, tay, tsx, txa, txs, tya,
 	l_a, c_a// additional pseudo ops used for D012 polling hack (replaces 2 jam ops..)
 };
-	
+
+
 static uint16_t isClass2(int32_t cmd) {
 	switch (cmd) {
 		case adc:
@@ -533,7 +535,7 @@ void cpuParse(void)
 			setflags(FLAG_V, (~(in1 ^ in2))&(in1 ^ _a)&0x80);
 			}
             break;
-		case alr: 		// used in Raveloop14_xm.sid (that song has other issues though)
+		case alr: 		// aka ASR - Kukle.sid, Raveloop14_xm.sid (that song has other issues though)
 			//	ALR #{imm} = AND #{imm} + LSR
             _bval=getaddr(opc, mode);
 			_a= _a&_bval;
@@ -543,7 +545,7 @@ void cpuParse(void)
 			
             setflags(FLAG_Z, !_a);
             setflags(FLAG_N, _a&0x80);
-        case anc:	// used by Axelf.sid (Crowther), Whats_Your_Lame_Excuse.sid, Probing_the_Crack_with_a_Hook.sid
+        case anc:	// Kukle.sid, Axelf.sid (Crowther), Whats_Your_Lame_Excuse.sid, Probing_the_Crack_with_a_Hook.sid
             _bval=getaddr(opc, mode);
 			_a= _a&_bval;
 			
@@ -730,7 +732,7 @@ void cpuParse(void)
             setflags(FLAG_Z,!_y);
             setflags(FLAG_N,_y&0x80);
             break;
-        case isb: {
+        case isb: {	// aka ISC
 			// inc
             _bval=getaddr(opc, mode);
             _bval++;
@@ -782,7 +784,7 @@ void cpuParse(void)
             _pc=_wval;
             break;
 		case lax:
-			// e.g. Vicious_SID_2-15638Hz.sid
+			// e.g. Vicious_SID_2-15638Hz.sid, Kukle.sid
             _a=getaddr(opc, mode);
 			_x= _a;
             setflags(FLAG_Z,!_a);
@@ -818,7 +820,7 @@ void cpuParse(void)
             _wval>>=1;
             setaddr(opc,mode,(uint8_t)_wval);
             setflags(FLAG_Z,!_wval);
-            setflags(FLAG_N,_wval&0x80);
+            setflags(FLAG_N,_wval&0x80);	// always clear?
             setflags(FLAG_C,_bval&1);
             break;
         case nop:
@@ -938,21 +940,22 @@ void cpuParse(void)
 			setflags(FLAG_V, (~(in1 ^ in2))&(in1 ^ _a)&0x80);
 			}
             break;
-        case sax:				// e.g. Vicious_SID_2-15638Hz.sid
+        case sax:				// aka AXS; e.g. Vicious_SID_2-15638Hz.sid, Kukle.sid
 			getaddr(opc, mode);	 // make sure the PC is advanced correctly
             _bval=_a&_x;
 			setaddr(opc,mode,_bval);
+			// no flags are affected; registers unchanged
             break;
-		case sbx:	// used in Artefacts.sid, Whats_Your_Lame_Excuse.sid, Probing_the_Crack_with_a_Hook.sid
+		case sbx: // somtimes called SAX; used in Kukle.sid, Artefacts.sid, Whats_Your_Lame_Excuse.sid, Probing_the_Crack_with_a_Hook.sid
 			// affects N Z and C (like CMP)
 			_bval=getaddr(opc, mode);
-			
-            setflags(FLAG_C,(_x&_a)>=_bval);
 
-			_x=(_x&_a)-_bval;
+            setflags(FLAG_C,(_x&_a)>=_bval);	// affects the carry but NOT the overflow
+			
+			_x=((_x&_a)-_bval) & 0xff;	// _a unchanged (calc not affected by input carry)
 
             setflags(FLAG_Z,!_x);		// _a == _bval
-            setflags(FLAG_N,_x&0x80);	// _a < _bval		
+            setflags(FLAG_N,_x&0x80);	// _a < _bval
 			break;
         case sec:
             setflags(FLAG_C,1);

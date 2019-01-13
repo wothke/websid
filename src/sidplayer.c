@@ -361,7 +361,7 @@ static uint32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 			}
 			if (!_soundStarted) {
 				// broken sounds might become irresponsive without this brake
-				_skipSilenceLoop = (_skipSilenceLoop - 10) | 1; 
+				_skipSilenceLoop = (_skipSilenceLoop>10) ? (_skipSilenceLoop - 10) : 1; 
 			}
 			
 			if (!_digiEnabled) hasDigi= 0;

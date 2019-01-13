@@ -617,7 +617,7 @@ uint8_t SID::simReadPulsedD41B() {
 	return (simOsc3Counter() > p) ? 0 : 1;
 }
 uint8_t SID::simIsPollyTracker() {
-	return _osc3sim->inUse && !digiIsIceGuysMode();	// exclude false positive
+	return _osc3sim->inUse && !digiIsIceGuysMode() && !envIsFilePSID();	// exclude false positive
 }
 
 uint8_t SID::simReadD41B() {

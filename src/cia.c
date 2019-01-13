@@ -422,7 +422,7 @@ static uint32_t intForwardToNextCiaInterrupt(struct Timer *t, uint32_t timeLimit
 
 uint32_t ciaForwardToNextInterrupt(uint8_t ciaIdx, uint32_t timeLimit) {
 	// must not be used for PSID (see Synth_Sample_III.sid tracks >3)
-	if (!envIsPSID() && cpuIrqFlag() && (ciaIdx == 0)) return _failMarker; // no IRQ while I-flag is set (NMI cannot be masked)
+	if (!envIsPSID() && cpuIrqFlag() && (ciaIdx == 0)) { return _failMarker; }// no IRQ while I-flag is set (NMI cannot be masked)
 	
 	struct Timer *t= &(_cia[ciaIdx]);
 	return   intForwardToNextCiaInterrupt(t, timeLimit);	
