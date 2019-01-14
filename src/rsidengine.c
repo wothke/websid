@@ -408,7 +408,7 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 				// validity/duration of respectice NMI-volume infos..
 				
 				nmiCycles+= processInterrupt(NMI_OFFSET_MASK, getNmiVector(), tNmi, cyclesPerScreen);
-							
+					
 				availableNmiCycles-= currentNmiTimer;		
 
 				if (availableNmiCycles <= 0) {
@@ -430,7 +430,6 @@ static void runScreenSimulation(int16_t *synthBuffer, uint32_t cyclesPerScreen, 
 				
 				// FIXME: multi-frame IRQ handling would be necessary to deal with songs like: Musik_Run_Stop.sid	
 				uint32_t usedCycles= processInterrupt(IRQ_OFFSET_MASK, getIrqVector(), tIrq, _irqTimeout);
-
 				// flaw: IRQ might have switched off NMI, e.g. Vicious_SID_2-Blood_Money.sid
 				if (usedCycles >=_irqTimeout) { // IRQ gets aborted due to a timeout
 					if (cpuIrqFlag()) {

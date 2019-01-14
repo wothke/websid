@@ -179,7 +179,7 @@ void memSet(uint16_t addr, uint8_t value) {
 }
 
 const static uint8_t _irqHandlerFF48[19] ={0x48,0x8A,0x48,0x98,0x48,0xBA,0xBD,0x04,0x01,0x29,0x10,0xEA,0xEA,0xEA,0xEA,0xEA,0x6C,0x14,0x03};
-const static uint8_t _irqHandlerEA7E[9] ={0xAD,0x0D,0xDC,0x68,0xA8,0x68,0xAA,0x68,0x40};
+const static uint8_t _irqHandlerEA7C[11] ={0xE6,0xA2,0xAD,0x0D,0xDC,0x68,0xA8,0x68,0xAA,0x68,0x40};
 const static uint8_t _nmiHandlerFE43[5] ={0x78,0x6c,0x18,0x03,0x40};
 const static uint8_t _irqEndHandlerFEBC[6] ={0x68,0xa8,0x68,0xaa,0x68,0x40};
 
@@ -194,7 +194,7 @@ void memResetKernelROM() {
 	
     memcpy(&_kernal_rom[0x1f48], _irqHandlerFF48, 19);	// $ff48 irq routine
     memset(&_kernal_rom[0x0a31], 0xea, 0x4d);			// $ea31 fill some NOPs		(FIXME: nops may take longer than original..)
-    memcpy(&_kernal_rom[0x0a7e], _irqHandlerEA7E, 9);	// $ea31 return sequence
+    memcpy(&_kernal_rom[0x0a7C], _irqHandlerEA7C, 11);	// $ea31 return sequence with added 0xa2 increment to sim time of day (see P_A_S_S_Demo_3.sid)
     memcpy(&_kernal_rom[0x1e43], _nmiHandlerFE43, 4);	// $fe43 nmi handler
     memcpy(&_kernal_rom[0x1ebc], _irqEndHandlerFEBC, 4);	// $febc irq return sequence (e.g. used by Contact_Us_tune_2)
 	
