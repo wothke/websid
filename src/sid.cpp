@@ -516,15 +516,6 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 			uint32_t tmp = _osc[voice]->counter >> 12;
 			outv = combinedWF(voice, _wave.TriSaw_8580, tmp, 1);	// tmp 12 MSB
 		} 
-
-		if (!combined || !(ctrl & NOISE_BITMASK)) {
-			/* for the rest mix the oscillators with an AND operation as stated in
-				the SID's reference manual - even if this is absolutely wrong. */
-		
-			if (ctrl & TRI_BITMASK)  outv &= createTriangleOutput(voice);					
-			if (ctrl & SAW_BITMASK)  outv &= createSawOutput(voice);
-			if (ctrl & PULSE_BITMASK) outv &= plsout;
-		}
 		
 		if (ctrl & NOISE_BITMASK)   {
 			if (ctrl & 0x70) {	// combined waveform with noise
@@ -555,15 +546,22 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 			} else {
 				outv &= createNoiseOutput(voice);
 			}
-		} 
+		} else if (!combined) {
+			/* for the rest mix the oscillators with an AND operation as stated in
+				the SID's reference manual - even if this is absolutely wrong. */
 		
-			// emulate waveform 00 floating wave-DAC 
-			if (ctrl & 0xf0) {	// TODO: find testcase song where this is relevant.. 
-				_sid->voices[voice].prevWaveFormOut= outv;
-			} else {
-				// no waveform set						
-				outv= _sid->voices[voice].prevWaveFormOut;		// old impl: outv &= _sid->level_DC;			
-			}	
+			if (ctrl & TRI_BITMASK)  outv &= createTriangleOutput(voice);					
+			if (ctrl & SAW_BITMASK)  outv &= createSawOutput(voice);
+			if (ctrl & PULSE_BITMASK) outv &= plsout;
+		}
+		
+		// emulate waveform 00 floating wave-DAC 
+		if (ctrl & 0xf0) {	// TODO: find testcase song where this is relevant.. 
+			_sid->voices[voice].prevWaveFormOut= outv;
+		} else {
+			// no waveform set						
+			outv= _sid->voices[voice].prevWaveFormOut;		// old impl: outv &= _sid->level_DC;			
+		}	
 		
 		
 	} else {
