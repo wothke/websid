@@ -263,12 +263,13 @@ static void hackAlienIfNeeded(uint16_t *initAddr) {
 	// to avoid the flip to 0x00.. here it doesn't work so it has to be disabled..
 
 	_hackEnvFlip= 0;
-	
+
+/* no longer needed (with addition of release->attack tracking)
 	uint8_t alienPattern[]= {0xad, 0x1c, 0xd4, 0x8d, 0x16, 0xd4};
 	if (((*initAddr) == 0x908B) && memMatch(0x90C2, alienPattern, 6)) {
 		_hackEnvFlip= 1;
 	}
-	
+*/
 	// Friday_the_13th.. same problem
 	uint8_t fridayPattern[]= {0xd, 0x7, 0x8, 0x8d, 0xb, 0xd4};
 	if (((*initAddr) == 0xEF08) && memMatch(0xF175, fridayPattern, 6)) {

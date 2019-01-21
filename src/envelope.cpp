@@ -55,6 +55,7 @@ struct EnvelopeState {
 	uint8_t sr;
 
 	uint8_t envphase;
+	uint8_t enableFlip;
 
     uint16_t attack;	// for 255 steps
     uint16_t decay;		// for 255 steps
@@ -221,6 +222,8 @@ void Envelope::poke(uint8_t reg, uint8_t val) {
 				state->envphase= Attack;				
 				state->zeroLock= 0;
 				
+				state->enableFlip= 1;
+				
 				triggerPlanB(this, val, state);	// "plan B" ADSR bug detection
 			} else if (oldGate && !newGate) {
 				simGateAdsrBug(1, state->sr & 0xf);	// switch to 'release'
@@ -324,7 +327,6 @@ void Envelope::resetConfiguration(uint32_t sampleRate) {
 	}
 }
 uint8_t Envelope::triggerLFSR_Threshold(uint16_t threshold, uint16_t *end) {
-
 	// check if LFSR threshold was reached
 	if (threshold == (*end)) {
 		(*end)= 0; // reset counter
@@ -406,14 +408,19 @@ void Envelope::updateEnvelope(uint16_t cycles) {
 		}
 		
 		uint8_t previousEnvelopeOutput = state->envelopeOutput;
-					
+		
 		switch (state->envphase) {
 			case Attack: {                          // Phase 0 : Attack
 				if (triggerLFSR_Threshold(state->attack, &state->currentLFSR) && !state->zeroLock) {	
 					// inc volume when threshold is reached						
-					if (!hackEnvFlip() || (state->envelopeOutput < 0xff)) {	// see Alien.sid
+					if ((!hackEnvFlip() && state->enableFlip) || (state->envelopeOutput < 0xff)) {	// see Alien.sid, Friday_the_13th, Dawn.sid
+					
 						// release->attack combo can flip 0xff to 0x0 (e.g. Acke.sid - voice3)
 						state->envelopeOutput= (state->envelopeOutput + 1) & 0xff;	// increase volume
+						
+#ifdef DBG_TRACE_ADSR
+	if ((_voice == DBG_TRACE_ADSR) && (state->envelopeOutput == 0)) fprintf(stderr, "  flip 0\n");
+#endif
 					}							
 				
 					state->exponentialCounter = 0;
@@ -430,6 +437,10 @@ void Envelope::updateEnvelope(uint16_t cycles) {
 					
 						if (state->envelopeOutput != state->sustain) {
 							state->envelopeOutput= (state->envelopeOutput - 1) & 0xff;	// decrease volume
+							
+#ifdef DBG_TRACE_ADSR
+	if ((_voice == DBG_TRACE_ADSR) && (state->envelopeOutput == 0)) fprintf(stderr, "  decay 0\n");
+#endif
 						} else {
 							state->envphase = Sustain;
 						}
@@ -455,15 +466,23 @@ void Envelope::updateEnvelope(uint16_t cycles) {
 
 					// FIXME: is potential "flip" used by any songs?
 					state->envelopeOutput= (state->envelopeOutput - 1) & 0xff;	// decrease volume
+					
+#ifdef DBG_TRACE_ADSR
+	if ((_voice == DBG_TRACE_ADSR) && (state->envelopeOutput == 0)) fprintf(stderr, "  release 0\n");
+#endif
+					
 				}
 				break;
 			}
 		}
 		if ((state->envelopeOutput == 0) && (previousEnvelopeOutput > state->envelopeOutput)) {
 			state->zeroLock = 1;	// new "attack" phase must be started to unlock
+#ifdef DBG_TRACE_ADSR
+	if (_voice == DBG_TRACE_ADSR) fprintf(stderr, "  set lock zero\n");
+#endif
+			
 		}
 	}
-	
 }
 
 /*
@@ -530,6 +549,8 @@ void Envelope::snapshotLFSR() {
 	struct EnvelopeState *state= getState(this);
 	state->lastCycles= 0; 
 	state->simLFSR= state->origLFSR= state->currentLFSR;
+	
+	state->enableFlip= 0;	// release->attack combo may trigger env flip from 0xff to 0
 }
 
 /*

@@ -483,7 +483,7 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 	uint8_t ctrl= _osc[voice]->wave;
 		
 	if (_sid->voices[voice].notMuted) {
-		int8_t combined= 0;
+		int8_t combined= 0;	// flags some specifically handled "combined waveforms" (not all)
 		
 		// use special handling for certain combined waveforms				
 		uint16_t plsout;
