@@ -249,7 +249,9 @@ static uint16_t _wval;
 
 static uint8_t getaddr(uint8_t opc, int32_t mode)
 {
-	// reads all the bytes belonging to the operation and advances the pc accordingly
+	// reads all the bytes belonging to the operation and advances the pc accordingly;
+	// handles any "page boundary crossing" related timing adjustments..
+	
     uint16_t ad,ad2;  
     switch(mode)
     {
@@ -316,6 +318,10 @@ static void setaddr(uint8_t opc, int32_t mode, uint8_t val)
 {
 	// note: orig impl only covered the modes used by "regular" ops but
 	// for the support of illegal ops there are some more..
+	
+	// note: only used after "getaddr" and any addressing mode related "timing" handling
+	// is already performed there, i.e. NO timing adjustments (see page boundary crossing) are 
+	// REQUIRED here!
     uint16_t ad,ad2;
     switch(mode)
     {
@@ -325,33 +331,27 @@ static void setaddr(uint8_t opc, int32_t mode, uint8_t val)
             memSet(ad,val);
             return;
         case abx:
-        case aby:
+        case aby:		// added
             ad=memGet(_pc-2);
             ad|=memGet(_pc-1)<<8;
 	        ad2=ad +(mode==abx?_x:_y);
             memSet(ad2,val);
             return;
-        case idx:
+        case idx:			// added
 			// indexed indirect, e.g. LDA ($10,X)
-            ad=memGet(_pc++);
+            ad=memGet(_pc-1);	 // original impl pc increment seemed wrong here!!!
             ad+=_x;
             ad2=memGet(ad&0xff);
             ad++;
             ad2|=memGet(ad&0xff)<<8;
 			memSet(ad2,val);
             return;
-        case idy:
+        case idy:			// added
 			// indirect indexed, e.g. LDA ($20),Y
-            ad=memGet(_pc++);
+            ad=memGet(_pc-1);
             ad2=memGet(ad);
             ad2|=memGet((ad+1)&0xff)<<8;
-            ad=ad2+_y;
-			
-			if (isClass2(_opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00))) {
-				// page boundary crossed
-				_cycles++;
-				_totalCycles++;				
-			}
+            ad=ad2+_y;			
 			memSet(ad,val);
             return;
         case zpg:
@@ -359,7 +359,7 @@ static void setaddr(uint8_t opc, int32_t mode, uint8_t val)
             memSet(ad,val);
             return;
         case zpx:
-        case zpy:
+        case zpy:		// added
             ad=memGet(_pc-1);
 	        ad+=(mode==zpx?_x:_y);
             memSet(ad&0xff,val);
@@ -980,17 +980,19 @@ void cpuParse(void)
             setflags(FLAG_Z,!_a);
             setflags(FLAG_N,_a&0x80);			
             break;
-        case sre:      		// see Spasmolytic_part_6.sid
-			// lsr
-            _bval=getaddr(opc, mode); 
+        case sre:      		// aka LSE; see Spasmolytic_part_6.sid, Halv_2_2.sid
+			// like SLO but shifting right and with eor
+			// copied section from 'lsr'
+            _bval=getaddr(opc, mode);
 			_wval=(uint8_t)_bval;
             _wval>>=1;
             setaddr(opc,mode,(uint8_t)_wval);
             setflags(FLAG_Z,!_wval);
             setflags(FLAG_N,_wval&0x80);
             setflags(FLAG_C,_bval&1);
-			// + eor
+			// + copied section from 'eor'
             _bval=_wval & 0xff;
+			
             _a^=_bval;
             setflags(FLAG_Z,!_a);
             setflags(FLAG_N,_a&0x80);

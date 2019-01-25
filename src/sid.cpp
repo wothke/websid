@@ -71,6 +71,11 @@ static uint8_t getBit(uint32_t val, uint8_t b) { return (uint8_t) ((val >> b) & 
 #define PULSE_BITMASK 	0x40		
 #define NOISE_BITMASK 	0x80
 
+const uint8_t MAX_SID_CHIPS= 3;
+static uint8_t _usedSIDs= 0;
+static SID _sids[MAX_SID_CHIPS];	// allocate the maximum.. some may then just remain unused..
+
+
 // -------- keep private structs hidden here - no point to expose these implementation details in the header file -----------
 //          these are the structs from old C impl - which could eventually be furter refactored
 
@@ -86,7 +91,7 @@ struct SidState {
     struct Voice {
         uint8_t wave;
 		uint16_t freq;
-        uint16_t pulse;
+        uint16_t pulse;		// 12-bit "pulse width" from respective SID registers
  
 		// add-ons snatched from Hermit's implementation
 		double prevWavData;				// combined waveform handling
@@ -107,10 +112,10 @@ struct SimOsc3 {
 
 // internal oscillator def
 struct Oscillator {
-    uint32_t freqIncSample;		// osc increment per sample 
+    double freqIncSample;		// osc increment per sample
     uint32_t freqIncCycle;		// osc increment per cycle
 	
-    uint32_t pulse;
+    uint32_t pulse;				// 16-bit "pulse width" replicated from Voice struct (<<4 shifted for convenience)
     uint8_t wave;
 	
     uint32_t counter;		// 24-bit as in the original
@@ -226,7 +231,7 @@ void SID::resetEngine(uint32_t sampleRate, uint8_t isModel6581) {
 	resetModel(isModel6581);
 	_sid->sampleRate = sampleRate;
 	_sid->cycleOverflow = 0;
-	_sid->cyclesPerSample = ((double)envClockRate()) / sampleRate;
+	_sid->cyclesPerSample = ((double)envClockRate()) / sampleRate;	// corresponds to Hermit's clk_ratio
 
 	for (uint8_t i=0; i<3; i++) {
 //		memset((uint8_t*)&_sid->voices[i], 0, sizeof(struct SidState::Voice));	// already included in _sid		
@@ -273,10 +278,11 @@ void SID::syncRegisterCache() {
 
 	// oscillators
     for (uint8_t voice=0; voice<3; voice++) {
-        _osc[voice]->pulse= (_sid->voices[voice].pulse & 0xfff) << 4;	// // 16 MSB pulse needed
+        _osc[voice]->pulse= ((uint32_t)_sid->voices[voice].pulse) << 4;	// 16 MSB pulse needed (input is 12-bit)
 				
         _osc[voice]->wave= _sid->voices[voice].wave;
-        _osc[voice]->freqIncSample= round(_sid->cyclesPerSample * _sid->voices[voice].freq);	// per 1-sample interval (e.g. ~22 cycles)
+		
+        _osc[voice]->freqIncSample= _sid->cyclesPerSample * _sid->voices[voice].freq;	// per 1-sample interval (e.g. ~22 cycles)
         _osc[voice]->freqIncCycle= ((uint32_t)_sid->voices[voice].freq);		
     }
 }
@@ -379,7 +385,7 @@ uint16_t SID::createTriangleOutput(uint8_t voice) {
 uint16_t SID::createSawOutput(uint8_t voice) {	// test with Alien or Kawasaki_Synthesizer_Demo
 	// Hermit's "anti-aliasing" - FIXME XXX with the added external filter this may no longer make sense
 	double wfout = _osc[voice]->counter >> 8;	// top 16-bits
-	double step = ((double)_osc[voice]->freqIncSample) / 0x1200000;
+	double step = _osc[voice]->freqIncSample / 0x1200000;
 	
 	if (step != 0) {
 		wfout += wfout * step;
@@ -390,26 +396,31 @@ uint16_t SID::createSawOutput(uint8_t voice) {	// test with Alien or Kawasaki_Sy
 void SID::calcPulseBase(uint8_t voice, uint32_t *tmp, uint32_t *pw) {
 	// based on Hermit's impl
 	(*pw) = _osc[voice]->pulse;						// 16 bit
-	(*tmp) = _osc[voice]->freqIncSample >> 9;	// 15 MSB needed
+	(*tmp) = ((uint32_t)_osc[voice]->freqIncSample) >> 9;	// 15 MSB needed
 	
 	if ((0 < (*pw)) && ((*pw) < (*tmp))) { (*pw) = (*tmp); }
 	(*tmp) ^= 0xffff;
-	if ((*pw) > (*tmp)) (*pw) = (*tmp);
+	if ((*pw) > (*tmp)) { (*pw) = (*tmp); }
 	(*tmp) = _osc[voice]->counter >> 8;			// 16 MSB needed
 }
 
 uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// elementary pulse
 	if (isTestBit(voice)) return 0xffff;	// pulse start position
 	
-//	int32_t wfout = ((_osc[voice]->counter>>8 > _osc[voice]->pulse)-1); // plain impl
-
+	// int32_t wfout = ((_osc[voice]->counter>>8 > _osc[voice]->pulse)-1); // plain impl
+	
 	// Hermit's "anti-aliasing" pulse
 	
 	// note: the smaller the step, the slower the phase shift, e.g. ramp-up/-down rather than 
 	// immediate switch (current setting does not cause much of an effect - use "0.1*" to make it obvious )
-	// larger steps cause "sizzling noise" 
-	double step=  ((double)256.0) / (_osc[voice]->freqIncSample >> 16);
+	// larger steps cause "sizzling noise"
 	
+	
+	// test: Touch_Me.sid - for some reason avoiding the "division by zero" actually breaks this song..
+//	double step= ((double)256.0) / (_osc[voice]->freqIncSample / (1<<16));	// Hermit's original shift-impl was prone to division-by-zero
+
+    double step = 256 / (((uint32_t)_osc[voice]->freqIncSample) >> 16); //simple pulse, most often used waveform, make it sound as clean as possible without oversampling
+
 	double lim;
 	int32_t wfout;
 	if (tmp < pw) {	// rising edge (i.e. 0x0 side)	(in graph this is: TOP)
@@ -424,7 +435,6 @@ uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// e
 		if (wfout >= 0) { wfout = 0xffff; }
 		wfout &= 0xffff;
 	}
-	
 	return wfout;
 }	
 
@@ -611,7 +621,7 @@ uint8_t SID::simReadSawtoothD41B() {
 }
 uint8_t SID::simReadPulsedD41B() {
 	// simulate pulse voice 3 oscillator level based on elapsed time	
-	uint32_t p= (((uint32_t)_sid->voices[2].pulse) & 0xfff) << 12;
+	uint32_t p= ((uint32_t)_sid->voices[2].pulse) << 12;
 	return (simOsc3Counter() > p) ? 0 : 1;
 }
 uint8_t SID::simIsPollyTracker() {
@@ -728,6 +738,7 @@ void SID::poke(uint8_t reg, uint8_t val) {
 	if ((reg >= 0x4) && (reg <= 0x6)) {
 		_env[voice]->poke(reg, val);
 	}
+	
 	// writes that impact the filter
     switch (reg) {		
 		case 0x15:
@@ -773,8 +784,16 @@ void SID::poke(uint8_t reg, uint8_t val) {
 
 void SID::writeMem(uint16_t addr, uint8_t value) {
 	if (!digiDetectSample(addr, value)) {
-		poke(addr&0x1f, value);		// i.e. needed for 5-Channel_Digi-Tune			
-		memWriteIO(addr, value);	// forget the mirroring stuff.. just messes with additional SIDs	
+		poke(addr&0x1f, value);		// i.e. needed for 5-Channel_Digi-Tune
+		memWriteIO(addr, value);
+
+		// some crappy songs like Aliens_Symphony.sid actually use d5xx instead of d4xx for their SID
+		// settings.. i.e. they use mirrored addresses that might actually be used by additional SID chips.
+		// always map to standard address to ease debug output handling, e.g. visualization in DeepSid
+		if (_usedSIDs == 1) {
+			addr= 0xd400 | (addr&0x1f);
+			memWriteIO(addr, value);
+		}
 	}
 }
 
@@ -857,10 +876,6 @@ void SID::snapshotAdsrState() {
 void SID::filterSamples(uint8_t *digiBuffer, uint32_t len, int8_t voice) {
 	_filter->filterSamples(digiBuffer, len, voice);
 }
-
-const uint8_t MAX_SID_CHIPS= 3;
-static uint8_t _usedSIDs= 0; 
-static SID _sids[MAX_SID_CHIPS];	// allocate the maximum.. some may then just remain unused..
 
 /**
 * Use a simple map to later find which IO access matches which SID (saves annoying if/elses later):

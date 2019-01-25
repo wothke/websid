@@ -234,6 +234,8 @@ void Envelope::poke(uint8_t reg, uint8_t val) {
 				// see http://www.sidmusic.org/sid/sidtech2.html
 				*/
 				state->envphase= Release;
+			} else {
+				// repeating the existing GATE status does NOT change a running attack/decay/sustain-phase or release-phase
 			}
 			break;
 		}
@@ -292,7 +294,7 @@ void Envelope::resetConfiguration(uint32_t sampleRate) {
 	
 	/* 
 	in regular SID, 15-bit LFSR is clocked each cycle and it is a shift-register and not a 
-	counter.. see residfp for more correct modelling.
+	counter.. see http://blog.kevtris.org/?p=13 for more correct modelling.
 	problem here is the lack of cycle by cycle, CPU/SID synchronized emulation (only have a 
 	SID snapshot every ~20ms to work with from the CPU perspective) 
 	during rendering the computing granularity then is 'one sample' (not 'one clock cycle'
