@@ -191,6 +191,15 @@ SidTracer = (function(){ var $this = function(outputSize) {
 		getRegisterSID: function(reg) {
 			return (typeof(this._backendAdapter) == 'undefined') ? 'undefined' : this._backendAdapter.getRegisterSID(reg);
 		},
+		getDigiType: function(reg) {
+			return (typeof(this._backendAdapter) == 'undefined') ? 'undefined' : this._backendAdapter.getDigiType();
+		},
+		getDigiTypeDesc: function(reg) {
+			return (typeof(this._backendAdapter) == 'undefined') ? 'undefined' : this._backendAdapter.getDigiTypeDesc();
+		},
+		getDigiRate: function(reg) {
+			return (typeof(this._backendAdapter) == 'undefined') ? 'undefined' : this._backendAdapter.getDigiRate();
+		},
 	
 	
 	// ------------------------- private utility functions ---------------------------
@@ -245,9 +254,9 @@ SidTracer = (function(){ var $this = function(outputSize) {
 /*
 * Example for how to access SID register data.
 */
-RegDisplay = function(spanId, getDataFunc) {
+RegDisplay = function(spanId, tracer) {
 		this.span = document.getElementById(spanId);
-		this.getData= getDataFunc;
+		this.sidTracer= tracer;
 };
 
 RegDisplay.prototype = {
@@ -255,9 +264,12 @@ RegDisplay.prototype = {
 		window.requestAnimationFrame(this.redraw.bind(this));
 	},
 	redrawText: function() {
-		this.span.innerHTML =	"d400: "+this.getData(0).toString(16)+
-								" d401: "+this.getData(1).toString(16)+ 
-								"... d404: "+this.getData(4).toString(16)+" ..";
+		this.span.innerHTML = (!this.sidTracer.getDigiType() ? "" :
+								"'"+this.sidTracer.getDigiTypeDesc() +"' digi samples rate " +this.sidTracer.getDigiRate() +" Hz; "
+								)+
+								"d400: "+this.sidTracer.getRegisterSID(0).toString(16)+
+								" d401: "+this.sidTracer.getRegisterSID(1).toString(16)+ 
+								"... d404: "+this.sidTracer.getRegisterSID(4).toString(16)+" ..";
 	},
 	redraw: function() {
 		this.redrawText();
@@ -265,10 +277,179 @@ RegDisplay.prototype = {
 	}
 };
 
+/**
+* Code losely based on C# implementation of SidWiz2 by RushJet1 & Rolf R Bakke (see respctice Form1.cs).
+*
+* note: original implementation included logic for multi-voice/-column layout whereas this implementation 
+* renders exactely one voice and always uses 1 column. Instead of rendering a 
+* complete sample file this implementation only renders the frame corresponding to the currently played music.
+*
+* note: the maximum "scale" that can be used is limited by the size of the sample data array passed to "draw()". 
+* In order to use the maximum scale make sure the player delivers 16k of sample data..
+* 
+* note: original implementation used 0-255 integer range sample data - while a -1 to 1 float range is used here.
+*/
+SidWiz = function(width, height, ctx, altsync) {
+	// graphics context to draw in:
+	this._resX= width;
+	this._resY= height;
+	this.ctx= ctx;
+	
+	this._voiceData= null;	// new data is fed in for each frame
+	
+	this._altSync= altsync;	// enable "alt sync" impl for the voice
+
+	this._scales = [0.125, 0.25, 0.5, 1, 2, 4,   8,   16  ];
+	this._centers= [32,    16,   8,   4, 2, 1,   0.5, 0.25];		
+};
+
+SidWiz.prototype = {
+	getTriggerLevel: function(jua, jac, offset) {
+		// scan for peak values
+		var yMax= -1;    	// was 0                                  
+		var yMin= 1;		// was 255
+		var juaHalf= Math.floor(jua/2);
+		var s= juaHalf-jac;
+		for (var h = s; h <= (juaHalf+jac); h++) {	// uses 2 center frames.. ? 
+			var value = this._voiceData[offset+h];
+			if (value > yMax) { yMax = value; }
+			if (value < yMin) { yMin = value; }
+		}
+		return ((yMin + yMax) / 2);   //the middle line of the waveform
+	},
+	draw: function(data, scaleIdx) {
+		var sampleRate= window._gPlayerAudioCtx.sampleRate;	// anyway depends on 'ticker' infrastructure from scriptprocessor_player.js (so this addition doesn't hurt)
+		
+		this._voiceData= data;
+	
+		var scale= this._scales[scaleIdx];
+		var center= this._centers[scaleIdx];
+
+		// note: the crappy variable naming of the original implementation has been
+		// largely preserved to ease complarisons..
+		
+		var jumpAmount = (sampleRate / 60);         	// samples per frame (no need to use browser's actual framerate)		
+		var jua = jumpAmount * Math.floor(1+ scale);	// jua is the size of sample data used per frame
+				
+		var oldY2 = 0; 
+		var newY2 = 0;
+		var newX = 0;
+		var oldX = 0;	// was called "oldZ" in original impl (probably to reflect its use in 3-byte pixel logic)
+			
+		// offset to the position of the 1st sample 
+		// note: the below logic expects that "jua" samples can be read starting at that position 
+		var offset = (data.length - jua);
+
+		//jac is the search window
+		var jac = jumpAmount;
+		
+		var triggerLevel= this.getTriggerLevel(jua, jac, offset);
+		
+		var c= scaleIdx <=4 ? 0 : 2*jac;	// correction seems to be needed to properly position the displayed range...
+		
+		var frameTriggerOffset = 0;
+		
+		// syncronization
+		if (this._altSync == false) {
+			var one= 2.0 / 255;		// adjust original logic to the sample data range used here..
+			var triggerLevelM= triggerLevel - one;
+			var triggerLevelP= triggerLevel + one;
+			
+			frameTriggerOffset = jac;
+			
+			while (this._voiceData[offset+c+frameTriggerOffset] < (triggerLevelP) && frameTriggerOffset < jac * 2) frameTriggerOffset++;
+			while (this._voiceData[offset+c+frameTriggerOffset] >= (triggerLevelM) && frameTriggerOffset < jac * 2) frameTriggerOffset++;
+			if (frameTriggerOffset == jac * 2) frameTriggerOffset = 0;
+			
+		} else {
+			var distances = [];	// array of arrays
+			var qx = jac;
+			while ((this._voiceData[offset+qx] >= triggerLevel) && (qx < jac * 2)) qx++;
+			var ctr;
+			while (qx < jac * 2) {
+				ctr = qx;
+				var isUp = false;
+				//find point where crosses midline
+				if (this._voiceData[offset+qx] < triggerLevel) {
+					while ((this._voiceData[offset+qx] < triggerLevel) && (qx < jac * 2)) qx++;
+					isUp = true;
+				} else { 
+					while ((this._voiceData[offset+qx] >= triggerLevel) && (qx < jac * 2)) qx++; 
+				}
+
+				//add point to data
+				if (!isUp) {
+					var data = [qx - ctr, qx];	// difference, position of the offset
+					distances.push(data);
+				}
+			} 
+			
+			ctr = 0; //count of highest values
+			var highest = [0, 0]; //this will be the highest value
+			
+			var data;
+			for (data of distances) {
+				if (data[0] > highest[0]) {
+					highest= [data[0], data[1]];
+					ctr = 1;
+				} else if (data[0] == highest[0]) {
+					highest.push(data[1]);
+					ctr++;
+				}
+			}
+			//at this point "highest" should be a list where the first value is the difference, and the rest are points in order where the difference occurred
+			//ctr is the number of same values. if more than 95% it's probably a square wave 
+			if (ctr != 1) ctr = Math.ceil(ctr / 2.0);
+			frameTriggerOffset = highest[ctr];
+		}
+	
+		// draw waveform	
+		var oldY2;		// previous y coord
+		for (var x = 0; (x / (scale / 2)) < this._resX; x++) {         
+			var vdPos = frameTriggerOffset + c + x - Math.floor(this._resX / center); // note: stabilization causes first "c" samples to be "unusable", i.e. skip them
+
+			if (vdPos < 0) { vdPos = 0; }
+			var vdSet = this._voiceData[offset+vdPos];
+			
+			var y = Math.floor((vdSet+1)/2 * this._resY);	// use full available height (calc adjusted to sample range used here) 
+
+			if (x == 0) {
+				oldY2 = y;
+			}
+			
+			newY2 = y;
+			
+			if (oldY2 > this._resY) oldY2 = this._resY;
+			if (newY2 > this._resY) newY2 = this._resY;
+			if (newY2 < 0) newY2 = 0;
+			if (oldY2 < 0) oldY2 = 0;
+
+			newX = Math.floor(2*x/scale);	// called "z" in original code
+			
+			if (oldY2 > newY2) { //waveform moved down
+				var t = oldY2;
+				oldY2 = newY2;
+				newY2 = t;
+			}
+								
+			// draw line
+			if (x == 0) {
+				this.ctx.moveTo(newX, this._resY-newY2);
+			} else {
+				this.ctx.lineTo(newX, this._resY-newY2);
+			}			
+			
+			oldX = newX;
+			oldY2 = y;
+		}
+	}
+};
+
+
 /*
 * Example for basic use/rendering of streamed "add-on" data.
 */
-VoiceDisplay = function(divId, getDataFunc) {
+VoiceDisplay = function(divId, getDataFunc, altsync) {
 	this.WIDTH= 512;
 	this.HEIGHT= 80;
 
@@ -278,7 +459,9 @@ VoiceDisplay = function(divId, getDataFunc) {
 	this.canvas = document.getElementById(this.divId);
 	this.ctx = this.canvas.getContext('2d');
 	this.canvas.width = this.WIDTH;
-	this.canvas.height = this.HEIGHT;		
+	this.canvas.height = this.HEIGHT;
+
+	this.sidWiz= new SidWiz(this.WIDTH, this.HEIGHT, this.ctx, altsync);	
 };
 
 VoiceDisplay.prototype = {
@@ -289,7 +472,7 @@ VoiceDisplay.prototype = {
 		this.redrawGraph();		
 		this.reqAnimationFrame();	
 	},
-	redrawGraph: function() {
+	redrawGraph: function(osciloscopeMode, zoom) {
 		var data= this.getData();
 		
 		try {
@@ -301,19 +484,28 @@ VoiceDisplay.prototype = {
 		this.ctx.strokeStyle = "rgba(1, 0, 0, 1.0)";
 		this.ctx.save();
 
-		var rescale= this.WIDTH/data.length;
-		this.ctx.scale(rescale, 1);	// fit all the data into the visible area
+		if (!osciloscopeMode) {
+			// zooming performed by changing abount of delivered data
+			var rescale= this.WIDTH/data.length;
+			this.ctx.scale(rescale, 1);	// fit all the data into the visible area
+		}			
 		
 		this.ctx.beginPath();
-		for (var i = 0; i < data.length; i++) {
-			var scale= (data[i]+1)/2;
-			var magnitude = scale*this.HEIGHT;
+				
+		if (osciloscopeMode) {
+			this.sidWiz.draw(data, 2+zoom);
+		} else {
+			for (var i = 0; i < data.length; i++) {
+				var scale= (data[i]+1)/2;
+				var magnitude = scale*this.HEIGHT;
 
-			if (i == 0) {
-				this.ctx.moveTo(i, magnitude);
-			} else {
-				this.ctx.lineTo(i, magnitude);
-			}			
+				// invert Y or graphs will be upside down
+				if (i == 0) {
+					this.ctx.moveTo(i, this.canvas.height-magnitude);
+				} else {
+					this.ctx.lineTo(i, this.canvas.height-magnitude);
+				}			
+			}
 		}
 		this.ctx.stroke();		
 		this.ctx.restore();

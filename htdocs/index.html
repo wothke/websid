@@ -46,11 +46,15 @@ var	songDisplay;
 var sidDisplay;
 
 SidDisplay = function (sidTracer, canvId1,canvId2,canvId3,canvId4, spanId) {
-	this.v1 = new VoiceDisplay(canvId1, function() { return sidTracer.getDataVoice1();});
-	this.v2 = new VoiceDisplay(canvId2, function() { return sidTracer.getDataVoice2();});
-	this.v3 = new VoiceDisplay(canvId3, function() { return sidTracer.getDataVoice3();});
-	this.v4 = new VoiceDisplay(canvId4, function() { return sidTracer.getDataVoice4();});
-	this.regs= new RegDisplay(spanId, function(reg) { return sidTracer.getRegisterSID(reg);});
+	this.sidTracer = sidTracer;
+	this.osciloscopeMode= true;
+	this.zoom= 5;
+	
+	this.v1 = new VoiceDisplay(canvId1, function() { return sidTracer.getDataVoice1();}, false);
+	this.v2 = new VoiceDisplay(canvId2, function() { return sidTracer.getDataVoice2();}, false);
+	this.v3 = new VoiceDisplay(canvId3, function() { return sidTracer.getDataVoice3();}, false);
+	this.v4 = new VoiceDisplay(canvId4, function() { return sidTracer.getDataVoice4();}, true);
+	this.regs= new RegDisplay(spanId, sidTracer);
 };
 
 SidDisplay.prototype = {
@@ -58,13 +62,25 @@ SidDisplay.prototype = {
 		window.requestAnimationFrame(this.redraw.bind(this));
 	},
 	redraw: function() {
-		this.v1.redrawGraph();		
-		this.v2.redrawGraph();		
-		this.v3.redrawGraph();		
-		this.v4.redrawGraph();		
+		this.v1.redrawGraph(this.osciloscopeMode, this.zoom);		
+		this.v2.redrawGraph(this.osciloscopeMode, this.zoom);		
+		this.v3.redrawGraph(this.osciloscopeMode, this.zoom);		
+		this.v4.redrawGraph(this.osciloscopeMode, this.zoom);		
 		this.regs.redrawText();		
 		this.reqAnimationFrame();	
-	},	
+	},
+	toggleMode: function() {
+		this.osciloscopeMode= !this.osciloscopeMode;
+		if (this.osciloscopeMode) window.sidTracer.setOutputSize(16384);	// always use max
+	},
+	setZoom: function(i) {
+		this.zoom= i;
+		if ( !this.osciloscopeMode) {
+			window.sidTracer.setOutputSize(246 << i);
+		} else {
+			window.sidTracer.setOutputSize(16384);	// always use max
+		}
+	}	
 };
 
 	
@@ -99,7 +115,7 @@ function doOnPlayerReady() {
 }
 
 function init() {
-	window.sidTracer= new SidTracer(8192);
+	window.sidTracer= new SidTracer(16384);
 		
 	// --------------------------- SID music player -----------------------
 	var basePath= '';		// not needed here
@@ -177,7 +193,7 @@ function init() {
 	// limit rendering to 50% of the available time (Tiny'R'Sid is fast so there is no need ..)
 	songDisplay= new SongDisplay(new SIDDisplayAccessor((function(){return playerControls.getSongInfo();})), 
 								[0xF6D565], 0, 0.5, (function(){playerControls.animate()}));
-	sidDisplay= new SidDisplay(sidTracer, 'voice1Canvas', 'voice2Canvas', 'voice3Canvas', 'voice4Canvas', 'sidRegDump');
+	window.sidDisplay= new SidDisplay(sidTracer, 'voice1Canvas', 'voice2Canvas', 'voice3Canvas', 'voice4Canvas', 'sidRegDump');
 
 	if (playerReady) playerControls.playNextSong();	// player was ready before it could trigger the playback
 }
@@ -210,10 +226,17 @@ function init() {
   <div id="sidVoiceDigi">digi&nbsp;&nbsp;&nbsp;<canvas id="voice4Canvas" width="80" height="512"></canvas></div>  
   <div"><span id="sidRegDump"></span></div>  
   <div class="slidecontainer">
+  <input type="checkbox" id="oscope" checked> Sidwiz mode &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;  
   Zoom: <input type="range" min="1" max="5" value="5" class="slider" id="zoom" onchange="function(e){ this.setVolume(gain.value/255); }">
+  
   <script>
 	var slider = document.getElementById("zoom");
-	slider.onchange = function(e){ window.sidTracer.setOutputSize(246 << slider.value)  };		
+	slider.onchange = function(e){ window.sidDisplay.setZoom(parseInt(slider.value)); };		
+	
+	var oscope = document.getElementById("oscope");
+	oscope.onchange = function(e) { window.sidDisplay.toggleMode(); };		
+
+	
   </script>
 </div>
 

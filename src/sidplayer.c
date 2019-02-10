@@ -126,6 +126,9 @@ static uint32_t _numberOfSamplesToRender = 0;
 
 static uint8_t _soundStarted, _skipSilenceLoop;
 
+static int8_t _digiDiagnostic;
+static int16_t _digiPreviousRate;
+static int16_t _digiAverageRate;
 
 // ------ song specific infos
 	// 0: _loadAddr;
@@ -344,7 +347,15 @@ static uint32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 			for (uint8_t i= 0; i<_skipSilenceLoop; i++) {	// too much seeking might block too long?
 				hasDigi= rsidProcessOneScreen(_synthBuffer, _digiBuffer, 
 						_totalCyclesPerScreen, _numberOfSamplesPerCall, _synthTraceBuffers);
-							
+				
+				if (hasDigi) {
+					DigiType t= digiGetType();
+					uint16_t rate= digiGetRate();
+					_digiDiagnostic= t;
+					_digiAverageRate = (_digiPreviousRate + rate) >> 1;	// average out frame overflow issues
+					_digiPreviousRate= rate;
+				}
+				
 				_soundStarted|= hasDigi;
 				
 				if (!_soundStarted) {
@@ -432,6 +443,7 @@ static uint32_t EMSCRIPTEN_KEEPALIVE playTune(uint32_t selectedTrack, uint32_t t
 	
 	_actualSubsong= (selectedTrack >= _maxSubsong) ? _actualSubsong : selectedTrack;
 	_digiEnabled = 1;
+	_digiDiagnostic= _digiAverageRate= _digiPreviousRate= 0;
 	
 	_soundStarted= 0;
 	_skipSilenceLoop= 100;
@@ -781,4 +793,18 @@ static uint16_t EMSCRIPTEN_KEEPALIVE getRAM(uint16_t addr) {
 	return  memReadRAM(addr);
 }
 
+static uint16_t getDigiType() __attribute__((noinline));
+static uint16_t EMSCRIPTEN_KEEPALIVE getDigiType() {
+	return (_digiDiagnostic > 0) ? _digiDiagnostic : 0;
+}
+
+static const char * getDigiTypeDesc() __attribute__((noinline));
+static const char * EMSCRIPTEN_KEEPALIVE getDigiTypeDesc() {
+	return (_digiDiagnostic > 0) ? digiGetTypeDesc() : "";
+}
+
+uint16_t getDigiRate() __attribute__((noinline));
+uint16_t EMSCRIPTEN_KEEPALIVE getDigiRate() {
+	return (_digiDiagnostic > 0) ? _digiAverageRate : 0;
+}
 

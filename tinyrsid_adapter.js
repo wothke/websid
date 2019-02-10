@@ -182,6 +182,18 @@ SIDBackendAdapter = (function(){ var $this = function () {
 		},
 		getRAM: function(offset) {
 			return this.Module.ccall('getRAM', 'number', ['number'], [offset]);
+		},
+		/**
+		* Diagnostics digi-samples (if any).
+		*/
+		getDigiType: function() {
+			return this.Module.ccall('getDigiType', 'number');
+		},
+		getDigiTypeDesc: function() {
+			return this.getExtAsciiString(this.Module.ccall('getDigiTypeDesc', 'number'));
+		},
+		getDigiRate: function() {
+			return this.Module.ccall('getDigiRate', 'number');
 		}
 	});	return $this; })();
 	
