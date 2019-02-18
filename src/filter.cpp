@@ -158,15 +158,18 @@ uint8_t Filter::getVolume() {
 }
 
 // voice output visualization works better if the effect of the filter is included
-int32_t Filter::simOutput(uint8_t voice, int32_t *filterIn, int32_t *out, double cutoff, double resonance) {
+int32_t Filter::simOutput(uint8_t voice, uint8_t isFiltered, int32_t *filterIn, int32_t *out, double cutoff, double resonance) {
 	struct FilterState* state= getState(this);
-	int32_t OUTPUT_SCALEDOWN = 0x6 * 0xf / 4;
 #ifdef USE_FILTER	
 	double output=	runFilter((double)-(*filterIn), (double)(*out), &(state->simBandPass[voice]), &(state->simLowPass[voice]), cutoff, resonance);
 		
 	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)
+	// (using a reduced OUTPUT_SCALEDOWN risks integer overflow - see A_Desire_Welcome.sid - 
+	// but allows to amplify otherwise badly visible graphs..)
+	double OUTPUT_SCALEDOWN = 0x6 * 0xf / (isFiltered ? 1.3 : 4.0);	// 
 	return round(output * state->vol / OUTPUT_SCALEDOWN); // SID output
 #else
+	int32_t OUTPUT_SCALEDOWN = 0x6 * 0xf;
 	return (*out)* state->vol / OUTPUT_SCALEDOWN;
 #endif
 }
@@ -246,7 +249,7 @@ void Filter::setupFilterInput(double *cutoff, double *resonance) {
 #endif
 }
 
-void Filter::routeSignal(int32_t *voiceOut, int32_t *outf, int32_t *outo, uint8_t voice, uint8_t *notMuted) {
+uint8_t Filter::routeSignal(int32_t *voiceOut, int32_t *outf, int32_t *outo, uint8_t voice, uint8_t *notMuted) {
 // note: compared to other emus output volume is quite high.. maybe better reduce it a bit?
 	struct FilterState* state= getState(this);
 
@@ -257,10 +260,12 @@ void Filter::routeSignal(int32_t *voiceOut, int32_t *outf, int32_t *outo, uint8_
 		// regular routing
 		if (state->filterEnabled[voice]) {
 			// route to filter
-			(*outf)+= (*voiceOut);	
+			(*outf)+= (*voiceOut);
+			return 1;
 		} else {
 			// route directly to output
 			(*outo)+= (*voiceOut);
+			return 0;
 		}		
 	}
 #else
@@ -269,6 +274,7 @@ void Filter::routeSignal(int32_t *voiceOut, int32_t *outf, int32_t *outo, uint8_
 		(*outo)+= (*voiceOut); 
 	}
 #endif
+	return 0;
 }
 
 double Filter::runFilter(double filterIn, double output, double *bandPass, double *lowPass, double cutoff, double resonance) {

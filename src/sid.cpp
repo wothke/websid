@@ -831,10 +831,10 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 			if (synthTraceBufs) {
 				int16_t *voiceTraceBuffer= synthTraceBufs[voice];
 
-				int32_t o= 0, f= 0;
-				_filter->routeSignal(&voiceOut, &f, &o, voice, &(_sid->voices[voice].notMuted));	// redundant.. see above		
+				int32_t o= 0, f= 0;	// isolated from other voices
+				uint8_t isFiltered= _filter->routeSignal(&voiceOut, &f, &o, voice, &(_sid->voices[voice].notMuted));	// redundant.. see above		
 				
-				*(voiceTraceBuffer+bp)= (int16_t)_filter->simOutput(voice, &f, &o, cutoff, resonance);
+				*(voiceTraceBuffer+bp)= (int16_t)_filter->simOutput(voice, isFiltered, &f, &o, cutoff, resonance);
 			}
 		}
 		int32_t finalSample= simIsPollyTracker() ? 0 : _filter->getOutput(&outf, &outo, cutoff, resonance, _sid->cyclesPerSample);	// squelch PollyTracker pulse clicks..
