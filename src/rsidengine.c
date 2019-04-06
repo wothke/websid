@@ -215,6 +215,8 @@ static uint32_t forwardToNextInterrupt(enum TimerType timerType, uint8_t ciaIdx,
 	}
 }
 
+static int16_t * _synthTraceBufferSections[3];
+
 static void renderSynth(int16_t *synthBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall, uint32_t fromTime, uint32_t toTime, int16_t **synthTraceBufs){
 	if (fromTime < cyclesPerScreen) {
 		if (toTime > cyclesPerScreen) toTime= cyclesPerScreen;
@@ -223,7 +225,12 @@ static void renderSynth(int16_t *synthBuffer, uint32_t cyclesPerScreen, uint16_t
 		uint16_t len= (toTime - fromTime)*scale;
 		if(len) {
 			uint16_t startIdx= fromTime*scale;
-			sidSynthRender(&synthBuffer[startIdx], len+1, synthTraceBufs);
+
+			_synthTraceBufferSections[0]= &synthTraceBufs[0][startIdx];
+			_synthTraceBufferSections[1]= &synthTraceBufs[1][startIdx];
+			_synthTraceBufferSections[2]= &synthTraceBufs[2][startIdx];
+			
+			sidSynthRender(&synthBuffer[startIdx], len+1, _synthTraceBufferSections);
 		}
 	}
 }
