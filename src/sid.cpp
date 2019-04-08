@@ -625,11 +625,13 @@ uint8_t SID::simReadPulsedD41B() {
 	return (simOsc3Counter() > p) ? 0 : 1;
 }
 uint8_t SID::simIsPollyTracker() {
-	return _osc3sim->inUse && !digiIsIceGuysMode() && !envIsFilePSID();	// exclude false positive
+	// igore 1x setting - which some songs do in init.. (see Master_of_the_Lamps)
+	return (_osc3sim->inUse > 1) && !digiIsIceGuysMode() && !envIsFilePSID();	// exclude false positive
 }
 
 uint8_t SID::simReadD41B() {
-	_osc3sim->inUse= 1;	// Raveloop14_xm is also using this..
+	if (_osc3sim->inUse < 2)
+		_osc3sim->inUse+= 1;	// Raveloop14_xm is also using this.. and so is Master_of_the_Lamps
 	
 	if (_osc3sim->waveform == 0x40) {
 		return  simReadPulsedD41B();
