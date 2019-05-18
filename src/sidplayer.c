@@ -96,19 +96,15 @@ static uint32_t _traceSID= 0;
 
 static uint32_t _soundBufferLen= BUFLEN;
 static int16_t _soundBuffer[BUFLEN];
-	// SID debug buffers corresponding to _soundBuffer
-static int16_t _voice1Buffer[BUFLEN];
-static int16_t _voice2Buffer[BUFLEN];
-static int16_t _voice3Buffer[BUFLEN];
-static int16_t _voice4Buffer[BUFLEN];
 
+	// SID debug buffers corresponding to _soundBuffer
+#define MAX_VOICES 9								// max 3 sids*3 voices + 1 digi channel
+#define MAX_SCOPE_BUFFERS 10								// max 3 sids*3 voices + 1 digi channel
+static int16_t* _scopeBuffers[MAX_SCOPE_BUFFERS];		// output "scope" streams corresponding to final audio buffer
 
 // these buffers are "per frame" i.e. 1 screen refresh, e.g. 822 samples
 static int16_t * _synthBuffer= 0;
 
-static int16_t * _synthBufferVoice1= 0;
-static int16_t * _synthBufferVoice2= 0;
-static int16_t * _synthBufferVoice3= 0;
 static int16_t ** _synthTraceBuffers= 0;
 
 // only contains the digi data for 1 screen .. 
@@ -226,7 +222,6 @@ int8_t envIsTimerDrivenPSID() {
 	return ((envIsPSID() == 1) && (envCurrentSongSpeed() == 1));
 }
 
-
 int8_t envIsRasterDrivenPSID() {
 	return ((envIsPSID() == 1) && (envCurrentSongSpeed() == 0));
 }
@@ -243,39 +238,46 @@ static void resetAudioBuffers() {
 //	_chunkSize= _numberOfSamplesPerCall*8; 	// e.g. data for 8 50hz screens (0.16 secs)
 	_chunkSize= _numberOfSamplesPerCall; 	// WebAudio side can still aggregate these..
 	// just to make sure these is no garbage left
-	memset(_voice1Buffer, 0, sizeof(int16_t)*BUFLEN);
-	memset(_voice2Buffer, 0, sizeof(int16_t)*BUFLEN);
-	memset(_voice3Buffer, 0, sizeof(int16_t)*BUFLEN);
-	memset(_voice4Buffer, 0, sizeof(int16_t)*BUFLEN);
 	
+	if (_scopeBuffers[0] == 0) {
+		// alloc once.. like in old statically allocated impl..
+		for (int i= 0; i<MAX_SCOPE_BUFFERS; i++) {
+			_scopeBuffers[i]= (int16_t*) calloc(sizeof(int16_t), BUFLEN);
+		}
+	} else {
+		for (int i= 0; i<MAX_SCOPE_BUFFERS; i++) {
+			memset(_scopeBuffers[i], 0, sizeof(int16_t)*BUFLEN);
+		}
+	}
+
 	if (_synthBuffer) free(_synthBuffer);
 	if (_digiBuffer)	free(_digiBuffer);
 
 	_synthBuffer= (int16_t*)malloc(sizeof(int16_t)*_numberOfSamplesPerCall + 1);
 	_digiBuffer= (uint8_t*)malloc(sizeof(uint8_t)*_numberOfSamplesPerCall + 1);	
 	
-	// debug output (corresponding to _synthBuffer)
-	if (_synthBufferVoice1) free(_synthBufferVoice1);
-	if (_synthBufferVoice2) free(_synthBufferVoice2);
-	if (_synthBufferVoice3) free(_synthBufferVoice3);
-	if (_synthTraceBuffers) free(_synthTraceBuffers);
+	// trace output (corresponding to _synthBuffer)
+	if (_synthTraceBuffers) {
+		for (int i= 0; i<MAX_VOICES; i++) {
+			if (_synthTraceBuffers[i]) { free(_synthTraceBuffers[i]); _synthTraceBuffers[i]= 0; }
+		}
+		free(_synthTraceBuffers); _synthTraceBuffers= 0;
+	}	
 
 	if (_traceSID) {	// availability of _synthTraceBuffers controls if SID will generate the respective output
-		_synthBufferVoice1= (int16_t*)calloc(sizeof(int16_t),_numberOfSamplesPerCall + 1);	
-		_synthBufferVoice2= (int16_t*)calloc(sizeof(int16_t),_numberOfSamplesPerCall + 1);	
-		_synthBufferVoice3= (int16_t*)calloc(sizeof(int16_t),_numberOfSamplesPerCall + 1);	
+		if (!_synthTraceBuffers) _synthTraceBuffers= (int16_t**)calloc(sizeof(int16_t*), MAX_VOICES);
 		
-		_synthTraceBuffers= (int16_t**)malloc(sizeof(int16_t*)*3);
+		for (int i= 0; i<MAX_VOICES; i++) {
+			_synthTraceBuffers[i]= (int16_t*)calloc(sizeof(int16_t),_numberOfSamplesPerCall + 1);			
+		}		
 		
-		_synthTraceBuffers[0]= _synthBufferVoice1;
-		_synthTraceBuffers[1]= _synthBufferVoice2;
-		_synthTraceBuffers[2]= _synthBufferVoice3;
 	} else {
-		_synthBufferVoice1= 0;	
-		_synthBufferVoice2= 0;	
-		_synthBufferVoice3= 0;	
-
-		_synthTraceBuffers= 0;	// disables respective SID rendering
+		if (_synthTraceBuffers) {
+			for (int i= 0; i<MAX_VOICES; i++) {
+				if (_synthTraceBuffers[i]) { free(_synthTraceBuffers[i]); _synthTraceBuffers[i]= 0; }
+			}		
+			free(_synthTraceBuffers); _synthTraceBuffers= 0;	// disables respective SID rendering
+		}
 	}
 	_numberOfSamplesRendered = 0;
 	_numberOfSamplesToRender = 0;	
@@ -393,13 +395,14 @@ static uint32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 			*/
 	
 			if (_traceSID) {
-				// do the same for the respecive voice traces
-				memcpy(&_voice1Buffer[_numberOfSamplesRendered], &_synthBufferVoice1[sampleBufferIdx], sizeof(int16_t)*availableSpace);
-				memcpy(&_voice2Buffer[_numberOfSamplesRendered], &_synthBufferVoice2[sampleBufferIdx], sizeof(int16_t)*availableSpace);
-				memcpy(&_voice3Buffer[_numberOfSamplesRendered], &_synthBufferVoice3[sampleBufferIdx], sizeof(int16_t)*availableSpace);
-					
-				memset(&_voice4Buffer[_numberOfSamplesRendered], 0, availableSpace*sizeof(int16_t)); // clear buffer so that existing "merge" can be reused
-				digiMergeSampleData(hasDigi, &_voice4Buffer[_numberOfSamplesRendered], &_digiBuffer[sampleBufferIdx], availableSpace);			
+				int sidVoices= sidGetNumber()*3;			
+				// do the same for the respective voice traces
+				for (int i= 0; i<sidVoices; i++) {
+					memcpy(&(_scopeBuffers[i][_numberOfSamplesRendered]), &(_synthTraceBuffers[i][sampleBufferIdx]), sizeof(int16_t)*availableSpace);
+				}
+				// append digi channel at the end
+				memset(&(_scopeBuffers[sidVoices][_numberOfSamplesRendered]), 0, availableSpace*sizeof(int16_t)); // clear buffer so that existing "merge" can be reused
+				digiMergeSampleData(hasDigi, &(_scopeBuffers[sidVoices][_numberOfSamplesRendered]), &_digiBuffer[sampleBufferIdx], availableSpace);			
 			}
 			sampleBufferIdx += availableSpace;
 			_numberOfSamplesToRender -= availableSpace;
@@ -409,13 +412,13 @@ static uint32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 			digiMergeSampleData(hasDigi, &_soundBuffer[_numberOfSamplesRendered], &_digiBuffer[sampleBufferIdx], _numberOfSamplesToRender);
 
 			if (_traceSID) {
+				int sidVoices= sidGetNumber()*3;
 				// do the same for the respecive voice traces
-				memcpy(&_voice1Buffer[_numberOfSamplesRendered], &_synthBufferVoice1[sampleBufferIdx], sizeof(int16_t)*_numberOfSamplesToRender);
-				memcpy(&_voice2Buffer[_numberOfSamplesRendered], &_synthBufferVoice2[sampleBufferIdx], sizeof(int16_t)*_numberOfSamplesToRender);
-				memcpy(&_voice3Buffer[_numberOfSamplesRendered], &_synthBufferVoice3[sampleBufferIdx], sizeof(int16_t)*_numberOfSamplesToRender);
-					
-				memset(&_voice4Buffer[_numberOfSamplesRendered], 0, _numberOfSamplesToRender*sizeof(int16_t)); // clear buffer so that existing "merge" can be reused
-				digiMergeSampleData(hasDigi, &_voice4Buffer[_numberOfSamplesRendered], &_digiBuffer[sampleBufferIdx], _numberOfSamplesToRender);			
+				for (int i= 0; i<sidVoices; i++) {
+					memcpy(&(_scopeBuffers[i][_numberOfSamplesRendered]), &(_synthTraceBuffers[i][sampleBufferIdx]), sizeof(int16_t)*_numberOfSamplesToRender);
+				}
+				memset(&(_scopeBuffers[sidVoices][_numberOfSamplesRendered]), 0, _numberOfSamplesToRender*sizeof(int16_t)); // clear buffer so that existing "merge" can be reused
+				digiMergeSampleData(hasDigi, &(_scopeBuffers[sidVoices][_numberOfSamplesRendered]), &_digiBuffer[sampleBufferIdx], _numberOfSamplesToRender);			
 			}
 			_numberOfSamplesRendered += _numberOfSamplesToRender;
 			_numberOfSamplesToRender = 0;
@@ -763,26 +766,6 @@ static uint8_t EMSCRIPTEN_KEEPALIVE envSetNTSC(uint8_t isNTSC) {
 	return 0;
 }
 
-static char* getBufferVoice1() __attribute__((noinline));
-static char* EMSCRIPTEN_KEEPALIVE getBufferVoice1() {
-	return (char*) _voice1Buffer;
-}
-
-static char* getBufferVoice2() __attribute__((noinline));
-static char* EMSCRIPTEN_KEEPALIVE getBufferVoice2() {
-	return (char*) _voice2Buffer;
-}
-
-static char* getBufferVoice3() __attribute__((noinline));
-static char* EMSCRIPTEN_KEEPALIVE getBufferVoice3() {
-	return (char*) _voice3Buffer;
-}
-
-static char* getBufferVoice4() __attribute__((noinline));
-static char* EMSCRIPTEN_KEEPALIVE getBufferVoice4() {
-	return (char*) _voice4Buffer;
-}
-
 static uint16_t getRegisterSID(uint16_t reg) __attribute__((noinline));
 static uint16_t EMSCRIPTEN_KEEPALIVE getRegisterSID(uint16_t reg) {
 	return  memReadIO(0xd400 + reg);
@@ -808,3 +791,44 @@ uint16_t EMSCRIPTEN_KEEPALIVE getDigiRate() {
 	return (_digiDiagnostic > 0) ? _digiAverageRate : 0;
 }
 
+int getNumberTraceStreams() __attribute__((noinline));
+int EMSCRIPTEN_KEEPALIVE getNumberTraceStreams() {
+	return sidGetNumber()*3 + 1;
+}
+const char** getTraceStreams() __attribute__((noinline));
+const char** EMSCRIPTEN_KEEPALIVE getTraceStreams() {
+	return (const char**)_scopeBuffers;	// ugly cast to make emscripten happy
+}
+
+
+// ------------------ deprecated stuff that should no longer be used -----------------------
+
+/**
+* @deprecated use getTraceStreams instead
+*/
+static char* getBufferVoice1() __attribute__((noinline));
+static char* EMSCRIPTEN_KEEPALIVE getBufferVoice1() {
+	return (char*) _scopeBuffers[0];
+}
+/**
+* @deprecated use getTraceStreams instead
+*/
+static char* getBufferVoice2() __attribute__((noinline));
+static char* EMSCRIPTEN_KEEPALIVE getBufferVoice2() {
+	return (char*) _scopeBuffers[1];
+}
+/**
+* @deprecated use getTraceStreams instead
+*/
+static char* getBufferVoice3() __attribute__((noinline));
+static char* EMSCRIPTEN_KEEPALIVE getBufferVoice3() {
+	return (char*) _scopeBuffers[2];
+}
+/**
+* @deprecated use getTraceStreams instead
+*/
+static char* getBufferVoice4() __attribute__((noinline));
+static char* EMSCRIPTEN_KEEPALIVE getBufferVoice4() {
+	int sidVoices= sidGetNumber()*3;
+	return (char*) _scopeBuffers[sidVoices];
+}

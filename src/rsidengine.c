@@ -214,8 +214,9 @@ static uint32_t forwardToNextInterrupt(enum TimerType timerType, uint8_t ciaIdx,
 		return ciaForwardToNextInterrupt(ciaIdx, timeLimit);
 	}
 }
+#define MAX_VOICES 9								// max 3 sids*3 voices
 
-static int16_t * _synthTraceBufferSections[3];
+static int16_t * _synthTraceBufferSections[MAX_VOICES];
 
 static void renderSynth(int16_t *synthBuffer, uint32_t cyclesPerScreen, uint16_t samplesPerCall, uint32_t fromTime, uint32_t toTime, int16_t **synthTraceBufs){
 	if (fromTime < cyclesPerScreen) {
@@ -226,11 +227,12 @@ static void renderSynth(int16_t *synthBuffer, uint32_t cyclesPerScreen, uint16_t
 		if(len) {
 			uint16_t startIdx= fromTime*scale;
 
-			_synthTraceBufferSections[0]= &synthTraceBufs[0][startIdx];
-			_synthTraceBufferSections[1]= &synthTraceBufs[1][startIdx];
-			_synthTraceBufferSections[2]= &synthTraceBufs[2][startIdx];
-			
-			sidSynthRender(&synthBuffer[startIdx], len+1, _synthTraceBufferSections);
+			if (synthTraceBufs) {
+				for (int i= 0; i<MAX_VOICES; i++) {
+					_synthTraceBufferSections[i]= &synthTraceBufs[i][startIdx];
+				}
+			}
+			sidSynthRender(&synthBuffer[startIdx], len+1, synthTraceBufs ? _synthTraceBufferSections : 0);
 		}
 	}
 }

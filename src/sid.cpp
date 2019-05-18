@@ -808,7 +808,7 @@ void SID::synthRender(int16_t *buffer, uint32_t len, int16_t **synthTraceBufs, d
 
 	double cutoff, resonance;	// calc once here as an optimization
 	_filter->setupFilterInput(&cutoff, &resonance);
-
+	
 	// now render the buffer
 	for (uint32_t bp=0; bp<len; bp++) {		
 		uint16_t cycles= advanceOscillators();
@@ -948,7 +948,9 @@ extern "C" void sidSynthRender(int16_t *buffer, uint32_t len, int16_t **synthTra
 	
 	for (uint8_t i= 0; i<_usedSIDs; i++) {
 		SID &sid= _sids[i];			
-		_sids[i].synthRender(buffer, len, synthTraceBufs, scale, !i);
+		
+		int16_t **subBuf= !synthTraceBufs ? 0 : &synthTraceBufs[i*3];	// synthRender uses 3 entries..
+		_sids[i].synthRender(buffer, len, subBuf, scale, !i);
 	}
 }
 
@@ -965,6 +967,10 @@ extern "C" void sidResetModel(uint8_t *sidIs6581) {
 		sid.resetModel(sidIs6581[i]);
 	}
 	digiResetModel(sidIs6581[0]);
+}
+
+extern "C" int sidGetNumber() {
+	return _usedSIDs;
 }
 
 extern "C" void sidReset(uint32_t sampleRate, uint16_t *sidAddrs, uint8_t *sidIs6581, uint8_t compatibility, uint8_t overflowFrames, uint8_t resetVol) {
