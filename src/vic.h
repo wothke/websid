@@ -1,32 +1,35 @@
 /*
- * This contains everything to do with minimal VIC emulation.
- * 
- * <p>Tiny'R'Sid (c) 2015 Jürgen Wothke
- * <p>version 0.81
- * 
- * Terms of Use: This software is licensed under a CC BY-NC-SA 
- * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
- */
-#ifndef TINYRSID_VIC_H
-#define TINYRSID_VIC_H
+* Poor man's emulation of the C64's VIC-II (Video-Interface-Chip).
+*
+* WebSid (c) 2019 Jürgen Wothke
+* version 0.93
+* 
+* Terms of Use: This software is licensed under a CC BY-NC-SA 
+* (http://creativecommons.org/licenses/by-nc-sa/4.0/).
+*/
+#ifndef WEBSID_VIC_H
+#define WEBSID_VIC_H
 
 #include "base.h"
 
-void vicReset(uint8_t isRsid, uint32_t failmarker);
-	
-// interface used to interact with VIC
-void vicSyncRasterIRQ();
-void vicStartRasterSim(uint32_t rasterPosInCycles);
-void vicSimRasterline();
-uint16_t vicGetRasterline();
-uint8_t vicIsIrqActive();
-uint32_t vicForwardToNextRaster();
-	
-// memory access interface (for memory.c)
-void vicWriteMem(uint16_t addr, uint8_t value);
-uint8_t vicReadMem(uint16_t addr);
+void		vicReset(uint8_t is_rsid, uint8_t ntsc_mode);
+void		vicSetModel(uint8_t ntsc_mode);
 
-// only for legacy PSID use
-void vicSimIRQ();
+void		vicClock();
+uint8_t		vicIRQ();
+
+uint8_t		vicStunCPU();	// 0: no stun; 1: allow "bus write"; 2: stun
+
+
+double		vicFPS();	// frames per second
+uint16_t	vicLinesPerScreen();
+uint32_t	vicCyclesPerScreen();
+
+// PSID crap
+void		vicFakeIrqPSID();
+
+// memory access interface (for memory.c)
+void		vicWriteMem(uint16_t addr, uint8_t value);
+uint8_t		vicReadMem(uint16_t addr);
 
 #endif

@@ -1,17 +1,18 @@
 /*
-* Poor man's emulation of the C64's SID.
+* Poor man's emulation of the C64 SID's envelope generator.
 *
-* <p>Tiny'R'Sid (c) 2018 J.Wothke
-* <p>version 0.81
+* WebSid (c) 2019 Jürgen Wothke
+* version 0.93
 * 
 * Terms of Use: This software is licensed under a CC BY-NC-SA 
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
-#ifndef TINYRSID_ENVELOPE_H
-#define TINYRSID_ENVELOPE_H
+#ifndef WEBSID_ENVELOPE_H
+#define WEBSID_ENVELOPE_H
 
+extern "C" {
 #include "base.h"
-
+}
 
 /**
 * This class handles the envelope generation for one specific voice of the SID chip.
@@ -26,35 +27,19 @@ protected:
 	/**
 	* Static configuration.
 	*/
-	static void resetConfiguration(uint32_t sampleRate);
+	static void resetConfiguration(uint32_t sample_rate);
 	
 	/**
 	* Reinitialize a specific instance to reuse it.
 	*/
 	void reset();
 
-	/**
-	* Forwards time by the specified duration.
-	*/
-	void updateEnvelope(uint16_t cycles);
-	
-	/**
-	* Updates redundantly kept state information 
-	*/
-	void syncState();
+	void clockEnvelope();	// +1 cycle
 	
 	/**
 	* Handle those SID writes that impact the envelope generator.
 	*/
 	void poke(uint8_t reg, uint8_t val);
-	
-	/** 
-	* Hack used for ADSR-bug detection.
-	*/
-	void snapshotLFSR();
-	void snapshotAdsrState();
-	void handleDelayBugPlanB();
-
 	
 	/**
 	* Gets the currently valid output envelope level.
@@ -72,10 +57,6 @@ protected:
 private:
 	uint8_t triggerLFSR_Threshold(uint16_t threshold, uint16_t *end);
 	uint8_t handleExponentialDelay();
-		// --- ADSR-bug
-	uint16_t getCurrentThreshold();
-	void simGateAdsrBug(uint8_t scenario, uint16_t newRate);
-
 	
 private:
 	friend struct EnvelopeState* getState(Envelope *e);
@@ -84,9 +65,9 @@ private:
 	class SID* _sid;
 	uint8_t _voice;
 
-	static uint16_t sLimitLFSR; // 15-bit like original
-	static uint16_t sCounterPeriod[16];
-	static uint8_t sExponentialDelays[256];
+	static uint16_t __limit_LFSR; // 15-bit like original
+	static uint16_t __counter_period[16];
+	static uint8_t __exponential_delays[256];
 };
 
 

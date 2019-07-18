@@ -1,55 +1,183 @@
 /*
 * Poor man's emulation of the C64's SID.
 *
-* <p>Tiny'R'Sid (c) 2016 J.Wothke
-* <p>version 0.81
+* WebSid (c) 2019 Jürgen Wothke
+* version 0.93
 * 
-* Note: Only the SID impl has meanwhile been migrated to C++ (to ease 
-* future multi-SID configurations..) The remaining code is still in C
-* and this include file exports the SID functionalities in their old
-* form.
-*
 * Terms of Use: This software is licensed under a CC BY-NC-SA 
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
-#ifndef TINYRSID_SID_H
-#define TINYRSID_SID_H
+#ifndef WEBSID_SID_H
+#define WEBSID_SID_H
 
+extern "C" {
 #include "base.h"
+}
 
-// init/reset
-void sidResetModel(uint8_t *sidIs6581);
-void sidReset(uint32_t sampleRate, uint16_t *sidAddrs, uint8_t *sidIs6581, uint8_t compatibility, uint8_t overflowFrames, uint8_t resetVol);
-int sidGetNumber();
+/**
+* This class emulates the "MOS Technology SID" chips (see 6581, 8580 or 6582).
+*
+* Some aspects of the implementation are delegated to separate helpers, 
+* see digi.h, envelope.h, filter.h
+*/
+class SID {
+public:
+	SID();
+	
+	/**
+	* Gets the base memory address that this SID is mapped to.
+	*/
+	uint16_t getBaseAddr();
 
-// direct manipulation of SID state (only for SID #1 - exclusively used for digis  )
-void sidPoke(uint8_t reg, uint8_t val);		// update SID registers 
+	/**
+	* Resets this instance according to the passed params.
+	*/
+	void resetModel(uint8_t is_6581);
+	void reset(uint16_t addr, uint32_t sample_rate, uint8_t is_6581, uint8_t compatibility);
+	void resetStatistics();
+		
+	/**
+	* Directly updates one of the SID's registers.
+	*
+	* <p>DOES NOT reflect in the memory mapped IO area.
+	*/
+	void poke(uint8_t reg, uint8_t val);
+		
+	/**
+	* Handles read access to the IO area that this SID is mapped into.
+	*/
+	uint8_t readMem(uint16_t addr);
 
-// @param voice numbering just continues for 2 or 3 SID configurations
-void sidSetMute(uint8_t voice, uint8_t value);
+	/**
+	* Handles write access to the IO area that this SID is mapped into.
+	*/
+	void writeMem(uint16_t addr, uint8_t value);
 
-// use current SID state to generate audio samples
-void sidSynthRender (int16_t *buffer, uint32_t len, int16_t **synthTraceBufs);
-void sidFilterSamples (uint8_t *digiBuffer, uint32_t len, int8_t v);
+	/**
+	* Gets the type of SID that is emulated.
+	*/
+	uint8_t isModel6581();
+	
+	/**
+	* Generates sample output data based on the current SID state.
+	* 
+	* @param synth_trace_bufs when used it must be an array[4] containing
+	*                       buffers of at least length "offset"
+	*/		
+	void synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offset, double scale, uint8_t do_clear);
 
+	/**
+	* Measures the length if one sample in system cycles.
+	*/
+	static double getCyclesPerSample();
 
-// special direct access to SID state (for digi.c) - since digi is only implemented
-// for SID number 1, these implicitly refer to the SID ad 0xd400!
-uint32_t sidGetSampleFreq();
-uint16_t sidGetPulse(uint8_t voice);
-uint16_t sidGetFreq(uint8_t voice);
-uint8_t sidGetWave(uint8_t voice);
-uint8_t sidGetAD(uint8_t voice);
-uint8_t sidGetSR(uint8_t voice);
+	/**
+	* Clocks this instance by one system cycle.
+	*/	
+	void clock();
+	
+	// ------------- class level functions ----------------------
+	
+	/**
+	* Total number of SID chips used in the current song.
+	*/
+	static uint8_t getNumberUsedChips();
+		
+	/**
+	* Resets all used SID chips.
+	*/
+	static void resetAll(uint32_t sample_rate, uint16_t *addrs, uint8_t *is_6581, uint8_t compatibility, uint8_t resetVol);
 
-// memory access interface (for memory.c)
-uint8_t sidReadMem(uint16_t addr);	// incl. special digi handling
-void sidWriteMem(uint16_t addr, uint8_t value);
+	/**
+	* Clock all used SID chips.
+	*/
+	static void	clockAll();
+		
+	/**
+	* Gets the type of digi samples used in the current song.
+	*/	
+	static DigiType getGlobalDigiType();
+	
+	/**
+	* Gets textual representation the type of digi samples used in the current song.
+	*/	
+	static const char* getGlobalDigiTypeDesc();
+	
 
-// hack
-void sidResetVolumeChangeCount();
-uint8_t sidGetNumberOfVolumeChanges();
-void sidDisableVolumeChangeNMI(uint8_t disabled);
-void sidSnapshotAdsrState();
+	/**
+	* Resets whatever is is that might be counted.
+	*/	
+	static void	resetGlobalStatistics();
+	
+	/**
+	* Gets rate of digi samples used in the current song.
+	*/	
+	static uint16_t getGlobalDigiRate();
+	
+	/**
+	* Allows to mute/unmute a spectific voice.
+	*/
+	static void	setMute(uint8_t sid_idx, uint8_t voice, uint8_t value);
+		
+	/**
+	* Reconfigures all used chips to the specified model.
+	* @param is_6581 array with one byte corresponding to each available chip
+	*/
+	static void	setModels(uint8_t *is_6581);
+
+	
+	/**
+	* Renders the combined output of all currently used SIDs.
+	*/
+	static void	synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offset);
+	
+protected:
+	friend class Envelope;
+	friend class DigiDetector;
+	
+	// API exposed to internal (SID related) components..
+	uint8_t		getWave(uint8_t voice);
+	uint8_t		getAD(uint8_t voice);
+	uint8_t		getSR(uint8_t voice);
+	uint16_t	getFreq(uint8_t voice);
+	uint16_t	getPulse(uint8_t voice);
+
+	DigiType	getDigiType();
+	const char*	getDigiTypeDesc();
+	uint16_t	getDigiRate();
+		
+	static uint32_t	getSampleFreq();
+	void		setMute(uint8_t voice, uint8_t value);
+private:
+	// convenience accessors & utilities
+	void		resetEngine(uint32_t sample_rate, uint8_t is_6581);
+	uint32_t	getRingModCounter(uint8_t voice);
+	
+	// oscillator handling
+	void		syncOscillator(uint8_t voice);
+	
+	void		clockOscillators();
+		
+	// wave form generation
+	uint16_t	combinedWF(uint8_t channel, double *wfarray, uint16_t index, uint8_t differ6581);
+	uint16_t	createTriangleOutput(uint8_t voice);
+	uint16_t	createSawOutput(uint8_t voice);
+	void		calcPulseBase(uint8_t voice, uint32_t *tmp, uint32_t *pw);
+	uint16_t	createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw);
+	uint16_t	createNoiseOutput(uint8_t voice);
+	uint16_t	createWaveOutput(int8_t voice);	// main entry
+	
+protected:
+	struct SidState *_sid;	// as long as the legacy C accessors are still there
+	class DigiDetector *_digi;
+private:
+	struct Oscillator *_osc[3];
+	
+	class Envelope *_env[3];
+	class Filter *_filter;
+	
+	uint16_t _addr;		// start memory address that the SID is mapped to	
+};
+
 
 #endif

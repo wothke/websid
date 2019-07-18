@@ -69,7 +69,7 @@ SIDBackendAdapter = (function(){ var $this = function () {
 			this.playerSampleRate= (typeof window._gPlayerAudioCtx == 'undefined') ? 0 : window._gPlayerAudioCtx.sampleRate;	
 			
 			var isMus= filename.endsWith(".mus") || filename.endsWith(".str");	// Compute! Sidplayer file (stereo files not supported)
-			var ret = this.Module.ccall('loadSidFile', 'number', ['number', 'number', 'number', 'number'], [isMus, buf, data.length, this.playerSampleRate]);
+			var ret = this.Module.ccall('loadSidFile', 'number', ['number', 'number', 'number', 'number', 'string'], [isMus, buf, data.length, this.playerSampleRate, filename]);
 			this.Module._free(buf);
 
 			if (ret == 0) {

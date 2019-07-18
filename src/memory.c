@@ -1,23 +1,33 @@
 /*
- * This contains everything to do with the emulation of memory access.
- * 
- * <p>Tiny'R'Sid (c) 2016 Jürgen Wothke
- * <p>version 0.81
- * 
- * known limitation: basic-ROM specific handling not implemented...
- */
+* This contains everything to do with the emulation of memory access.
+* 
+* WebSid (c) 2019 Jürgen Wothke
+* version 0.93
+* 
+* known limitation: BASIC-ROM specific handling not implemented...
+*/
 
 #include <string.h>
 #include <stdio.h>
 
 #include "memory.h"
-
-#include "vic.h"
-#include "cia.h"
-#include "sid.h"
 #include "env.h"
 
-#define MEMORY_SIZE 65536
+
+// memory access interfaces provided by other components
+extern uint8_t	sidReadMem(uint16_t addr);
+extern void 	sidWriteMem(uint16_t addr, uint8_t value);
+
+extern uint8_t	ciaReadMem(uint16_t addr);
+extern void		ciaWriteMem(uint16_t addr, uint8_t value);
+
+extern uint8_t	vicReadMem(uint16_t addr);
+extern void		vicWriteMem(uint16_t addr, uint8_t value);
+
+
+
+
+#define MEMORY_SIZE 65535
 static uint8_t _memory[MEMORY_SIZE];
 
 #define KERNAL_SIZE 8192
@@ -32,50 +42,51 @@ uint8_t memMatch(uint16_t addr, uint8_t *pattern, uint8_t len) {
 }
 
 static void setMemBank(uint8_t b) {
+	// note: processor port related functionality (see addr 0x0) is NOT implemented
 	_memory[0x0001]= b;
 }
 
-void memSetDefaultBanks(uint8_t isRsid, uint16_t initAddr, uint16_t loadEndAddr) {
-	uint8_t memBankSetting= 0x37;	// default memory config: basic ROM, IO area & kernal ROM visible
-	if (!isRsid) {
+void memSetDefaultBanksPSID(uint8_t is_rsid, uint16_t init_addr, uint16_t load_end_addr) {
+	uint8_t mem_bank_setting= 0x37;	// default memory config: basic ROM, IO area & kernal ROM visible
+	if (!is_rsid) {
 		// problem: some PSID init routines want to initialize registers in the IO area while others
 		// actually expect to use the RAM in that area.. none of them setup the memory banks accordingly :(
 
-		if ((initAddr >= 0xd000) && (initAddr < 0xe000)) {
-			memBankSetting= 0x34;	// default memory config: all RAM
+		if ((init_addr >= 0xd000) && (init_addr < 0xe000)) {
+			mem_bank_setting= 0x34;	// default memory config: all RAM
 			
-		} else if ((initAddr >= 0xe000)) {
+		} else if ((init_addr >= 0xe000)) {
 			// PSIDv2 songs like IK_plus.sid, Pandora.sid use the ROM below the kernal *without* setting 0x0001
 			// so obviously here we must use a default like this:
-			memBankSetting= 0x35;	// default memory config: IO area visible, RAM $a000-b000 + $e000-$ffff
+			mem_bank_setting= 0x35;	// default memory config: IO area visible, RAM $a000-b000 + $e000-$ffff
 
-		} else if (loadEndAddr >= 0xa000) {
-			memBankSetting= 0x36;
+		} else if (load_end_addr >= 0xa000) {
+			mem_bank_setting= 0x36;
 		} else {
 			// normally the kernal ROM should be visible: e.g. A-Maz-Ing.sid uses kernal ROM routines & vectors 
 			// without setting $01!
-			memBankSetting= 0x37;	// default memory config: basic ROM, IO area & kernal ROM visible			
+			mem_bank_setting= 0x37;	// default memory config: basic ROM, IO area & kernal ROM visible			
 		}
 	}
-	setMemBank(memBankSetting);
+	setMemBank(mem_bank_setting);
 }
 
-void memResetPsidBanks(uint8_t isPsid, uint16_t playAddr) {
-	if (isPsid) {
+void memResetBanksPSID(uint8_t is_psid, uint16_t play_addr) {
+	if (is_psid) {
 		// some PSID actually switch the ROM back on eventhough their code is located there! (e.g. 
 		// Ramparts.sid - the respective .sid even claims to be "C64 compatible" - what a joke) 
 		
-		if ((playAddr >= 0xd000) && (playAddr < 0xe000)) {
+		if ((play_addr >= 0xd000) && (play_addr < 0xe000)) {
 			setMemBank(0x34);
-		} else if (playAddr >= 0xe000) {
+		} else if (play_addr >= 0xe000) {
 			setMemBank(0x35);
-		} else if (playAddr >= 0xa000) {
+		} else if (play_addr >= 0xa000) {
 			setMemBank(0x36);
-		} else if (playAddr == 0x0){
+		} else if (play_addr == 0x0){
 			// keep whatever the PSID init setup
 		} else {
 			setMemBank(0x37);
-		}		
+		}
 	}
 }
 
@@ -110,11 +121,10 @@ void memWriteRAM(uint16_t addr, uint8_t value) {
 	 _memory[addr]= value;
 }
 
-void memCopyToRAM(uint8_t *src, uint16_t destAddr, uint32_t len) {
+void memCopyToRAM(uint8_t *src, uint16_t destAddr, uint16_t len) {
 	memcpy(&_memory[destAddr], src, len);		
-
 }
-void memCopyFromRAM(uint8_t *dest, uint16_t srcAddr, uint32_t len) {
+void memCopyFromRAM(uint8_t *dest, uint16_t srcAddr, uint16_t len) {
 	memcpy(dest, &_memory[srcAddr], len);
 }
 
@@ -149,7 +159,7 @@ uint8_t memGet(uint16_t addr)
 void memSet(uint16_t addr, uint8_t value) {
 	// normally all writes to IO areas should "write through" to RAM, 
 	// however PSID garbage does not always seem to tolerate that (see Fighting_Soccer)
-		
+
 	if ((addr >= 0xd000) && (addr < 0xe000)) {	// handle I/O area 
 		if (isIoAreaVisible()) {
 			if ((addr >= 0xd000) && (addr < 0xd400)) {			// vic stuff
@@ -178,10 +188,59 @@ void memSet(uint16_t addr, uint8_t value) {
 	}
 }
 
-const static uint8_t _irqHandlerFF48[19] ={0x48,0x8A,0x48,0x98,0x48,0xBA,0xBD,0x04,0x01,0x29,0x10,0xEA,0xEA,0xEA,0xEA,0xEA,0x6C,0x14,0x03};
-const static uint8_t _irqHandlerEA7C[11] ={0xE6,0xA2,0xAD,0x0D,0xDC,0x68,0xA8,0x68,0xAA,0x68,0x40};
-const static uint8_t _nmiHandlerFE43[5] ={0x78,0x6c,0x18,0x03,0x40};
-const static uint8_t _irqEndHandlerFEBC[6] ={0x68,0xa8,0x68,0xaa,0x68,0x40};
+#ifdef TEST
+// this also uses the BRK vector XXX FIXME.. always use this one?
+
+						// i.e. default handler is at EA31
+const static uint8_t _irq_handler_test_FF48[19] ={0x48,0x8A,0x48,0x98,0x48,0xBA,0xBD,0x04,0x01,0x29,0x10,0xf0,0x03,0x6c,0x16,0x03,0x6C,0x14,0x03};
+const static uint8_t _irq_restore_vectors_FD15[27] ={0xa2,0x30,0xa0,0xfd,0x18,0x86,0xc3,0x84,0xc4,0xa0,0x1f,0xb9,0x14,0x03,0xb0,0x02,0xb1,0xc3,0x91,0xc3,0x99,0x14,0x03,0x88,0x10,0xf1,0x60};
+const static uint8_t _init_io_FDA3[86] ={0xA9,0x7F,0x8D,0x0D,0xDC,0x8D,0x0D,0xDD,0x8D,0x00,0xDC,0xA9,0x08,0x8D,0x0E,0xDC,0x8D,0x0E,0xDD,0x8D,0x0F,0xDC,0x8D,0x0F,0xDD,0xA2,0x00,0x8E,0x03,0xDC,0x8E,0x03,0xDD,0x8E,0x18,0xD4,0xCA,0x8E,0x02,0xDC,0xA9,0x07,0x8D,0x00,0xDD,0xA9,0x3F,0x8D,0x02,0xDD,0xA9,0xE7,0x85,0x01,0xA9,0x2F,0x85,0x00,0xAD,0xA6,0x02,0xF0,0x0A,0xA9,0x25,0x8D,0x04,0xDC,0xA9,0x40,0x4C,0xF3,0xFD,0xA9,0x95,0x8D,0x04,0xDC,0xA9,0x42,0x8D,0x05,0xDC,0x4C,0x6E,0xFF};
+const static uint8_t _schedule_ta_FF6E[18] ={0xA9,0x81,0x8D,0x0D,0xDC,0xAD,0x0E,0xDC,0x29,0x80,0x09,0x11,0x8D,0x0E,0xDC,0x4C,0x8E,0xEE};
+const static uint8_t _serial_clock_hi_EE8E[9] ={0xAD,0x00,0xDD,0x09,0x10,0x8D,0x00,0xDD,0x60};
+#endif
+const static uint8_t _irq_handler_FF48[19] ={0x48,0x8A,0x48,0x98,0x48,0xBA,0xBD,0x04,0x01,0x29,0x10,0xEA,0xEA,0xEA,0xEA,0xEA,0x6C,0x14,0x03};
+const static uint8_t _irq_handler_EA7C[11] ={0xE6,0xA2,0xAD,0x0D,0xDC,0x68,0xA8,0x68,0xAA,0x68,0x40};
+const static uint8_t _nmi_handler_FE43[5] ={0x78,0x6c,0x18,0x03,0x40};
+const static uint8_t _irq_end_handler_FEBC[6] ={0x68,0xa8,0x68,0xaa,0x68,0x40};
+
+#ifdef TEST
+void memInitTest() {
+
+	// environment needed for Wolfgang Lorenz's test suite
+    memset(&_kernal_rom[0], 0x00, KERNAL_SIZE);				// BRK by default 
+    memcpy(&_kernal_rom[0x1f48], _irq_handler_test_FF48, 19);	// $ff48 irq routine
+	
+	memset(&_kernal_rom[0x0a31], 0xea, 0x4d);			// $ea31 fill some NOPs		(FIXME: nops may take longer than original..)
+    memcpy(&_kernal_rom[0x0a7C], _irq_handler_EA7C, 11);	// $ea31 return sequence with added 0xa2 increment to sim time of day (see P_A_S_S_Demo_3.sid)
+    memcpy(&_kernal_rom[0x1e43], _nmi_handler_FE43, 4);	// $fe43 nmi handler
+    memcpy(&_kernal_rom[0x1ebc], _irq_end_handler_FEBC, 4);	// $febc irq return sequence (e.g. used by Contact_Us_tune_2)
+	
+	// this is actuallly used by "oneshot" test
+    memcpy(&_kernal_rom[0x1d15], _irq_restore_vectors_FD15, 27);	// $fd15 restore I/O vectors
+    memcpy(&_kernal_rom[0x1da3], _init_io_FDA3, 86);				// $fda3 initaliase I/O devices
+    memcpy(&_kernal_rom[0x1f6e], _schedule_ta_FF6E, 18);			// $ff6e scheduling TA
+    memcpy(&_kernal_rom[0x0e8e], _serial_clock_hi_EE8E, 9);		// $ee8e set serial clock line high
+
+
+	_kernal_rom[0x1ffe]= 0x48;
+	_kernal_rom[0x1fff]= 0xff;
+	
+	memResetRAM(0);
+//    memset(&_memory[0], 0x0, MEMORY_SIZE);
+		
+	_memory[0xa003]= 0x80;
+	_memory[0x01fe]= 0xff;
+	_memory[0x01ff]= 0x7f;
+
+	// put trap instructions at $FFD2 (PRINT), $E16F (LOAD), $FFE4 (KEY), $8000 and $A474	(EXIT)
+	// => memset 0 took care of those
+
+	setMemBank(0x37);
+		
+    memcpy(&_memory[0xe000], _kernal_rom, 0x1fff);	// just in case there is a banking issue
+	
+}
+#endif
 
 void memResetKernelROM() {
 	// we dont have the complete rom but in order to ensure consistent stack handling (regardless of
@@ -192,11 +251,11 @@ void memResetKernelROM() {
 	// Soundking_V1.sid(basic rom init routines: 0x1D50, 0x1D15, 0x1F5E), Voodoo_People_part_1.sid (0x1F81)
     memset(&_kernal_rom[0], 0x60, KERNAL_SIZE);			// RTS by default 
 	
-    memcpy(&_kernal_rom[0x1f48], _irqHandlerFF48, 19);	// $ff48 irq routine
+    memcpy(&_kernal_rom[0x1f48], _irq_handler_FF48, 19);	// $ff48 irq routine
     memset(&_kernal_rom[0x0a31], 0xea, 0x4d);			// $ea31 fill some NOPs		(FIXME: nops may take longer than original..)
-    memcpy(&_kernal_rom[0x0a7C], _irqHandlerEA7C, 11);	// $ea31 return sequence with added 0xa2 increment to sim time of day (see P_A_S_S_Demo_3.sid)
-    memcpy(&_kernal_rom[0x1e43], _nmiHandlerFE43, 4);	// $fe43 nmi handler
-    memcpy(&_kernal_rom[0x1ebc], _irqEndHandlerFEBC, 4);	// $febc irq return sequence (e.g. used by Contact_Us_tune_2)
+    memcpy(&_kernal_rom[0x0a7C], _irq_handler_EA7C, 11);	// $ea31 return sequence with added 0xa2 increment to sim time of day (see P_A_S_S_Demo_3.sid)
+    memcpy(&_kernal_rom[0x1e43], _nmi_handler_FE43, 4);	// $fe43 nmi handler
+    memcpy(&_kernal_rom[0x1ebc], _irq_end_handler_FEBC, 4);	// $febc irq return sequence (e.g. used by Contact_Us_tune_2)
 	
 	_kernal_rom[0x1ffe]= 0x48;
 	_kernal_rom[0x1fff]= 0xff;
@@ -205,7 +264,7 @@ void memResetKernelROM() {
 	_kernal_rom[0x1ffb]= 0xfe;	
 }
 
-void memResetRAM(uint8_t isPsid) {
+void memResetRAM(uint8_t is_psid) {
     memset(&_memory[0], 0x0, MEMORY_SIZE);
 
 	_memory[0x0314]= 0x31;		// standard IRQ vector
@@ -218,12 +277,11 @@ void memResetRAM(uint8_t isPsid) {
 	 _memory[0x0000]= 0x2f;		//default: processor port data direction register
 	
 	// for our PSID friends who don't know how to properly use memory banks lets mirror the kernal ROM into RAM
-	if (isPsid) {
+	if (is_psid) {
 		memcpy(&_memory[0xe000], &_kernal_rom[0], 0x2000);
 		
 		// FIXME maybe IO area should also be copied? 
 	}
-	
 	// see "The SID file environment" (https://www.hvsc.c64.org/download/C64Music/DOCUMENTS/SID_file_format.txt)
 	// though this alone might be rather useless without the added timer tweaks mentioned in that spec?
 	// (the MUS player is actually checking this - but also setting it)

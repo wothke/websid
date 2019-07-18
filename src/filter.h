@@ -1,18 +1,18 @@
 /*
-* Poor man's emulation of the C64's SID.
+* Poor man's emulation of the C64 SID's filter.
 *
-* <p>Tiny'R'Sid (c) 2018 J.Wothke
-* <p>version 0.81
+* WebSid (c) 2019 Jürgen Wothke
+* version 0.93
 * 
 * Terms of Use: This software is licensed under a CC BY-NC-SA 
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
-#ifndef TINYRSID_FILTER_H
-#define TINYRSID_FILTER_H
+#ifndef WEBSID_FILTER_H
+#define WEBSID_FILTER_H
 
+extern "C" {
 #include "base.h"
-
-
+}
 /**
 * This class handles the filter of a SID chip.
 *
@@ -24,12 +24,10 @@ protected:
 	Filter(class SID *sid);
 	
 	void reset(uint32_t sampleRate);
-	int32_t getOutput(int32_t *in, int32_t *out, double cutoff, double resonance, double cyclesPerSample);
-	int32_t simOutput(uint8_t voice, uint8_t isFiltered, int32_t *in, int32_t *out, double cutoff, double resonance);
+	int32_t getOutput(int32_t *in, int32_t *out, double cyclesPerSample);
+	int32_t simOutput(uint8_t voice, uint8_t isFiltered, int32_t *in, int32_t *out);
 
-	void filterSamples(uint8_t *digiBuffer, uint32_t len, int8_t voice);
-	double runFilter(double in, double output, double *prevbandpass, double *prevlowpass, double cutoff, double resonance);
-	void setupFilterInput(double *cutoff, double *resonance);
+	double runFilter(double in, double output, double *prevbandpass, double *prevlowpass);
 	
 	/**
 	* @return true if voice is filtered
@@ -42,7 +40,8 @@ protected:
 	
 	uint8_t getVolume();
 
-private:
+protected:
+	void resetInput();
 private:
 	friend struct FilterState* getState(Filter *e);
 

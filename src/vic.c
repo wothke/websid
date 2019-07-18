@@ -1,8 +1,27 @@
 /*
-* Poor man's emulation of the C64's VIC raster interrupts.
+* Poor man's emulation of the C64's VIC-II (Video-Interface-Chip).
 *
-* <p>Tiny'R'Sid (c) 2012 J.Wothke
-* <p>version 0.81
+* WebSid (c) 2019 Jürgen Wothke
+* version 0.93
+*
+* Different system versions:
+* 	PAL:  312 rasters with 63 cycles, system clock: 985248Hz,  frame rate: 50.124542Hz,  19656 cycles per frame
+*	NTSC: 263 rasters with 65 cyles,  system clock: 1022727Hz, frame rate: 59.8260895Hz, 17095 cycles per frame
+*
+* 200 visible lines/25 text lines..	
+*
+* trivia: "Normally the VIC always uses the 1st phase of each clock cycle (for bus access) while cpu uses the 2nd phase.
+* During badline cycles VIC may completely take over 40-43 cycles and stun the CPU. Technically the CPU is told on its 
+* "RDY" pin (HIGH) if everything runs normal or if a badline mode is about to start. (The CPU then may still complete 
+* its write ops - for a maximum of 3 cycles before it pauses to let VIC take over the bus.) Within an affected
+* raster line the "stun phase" starts at cycle 12 and lasts until cycle 55."
+*
+* useful links:
+*
+*  - Christian Bauer's: "The MOS 6567/6569 video controller (VIC-II) and its application in the Commodore 64"
+*
+* LIMITATIONS: Enabled sprites (see D015) normally cause the same kind of "CPU stun" effect as the "bad line" 
+*              but this effect has not been implemented here (it does not seem to be relevant for many songs). 
 *
 * Terms of Use: This software is licensed under a CC BY-NC-SA 
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
@@ -15,19 +34,154 @@
 #include "env.h"
 
 
-static int32_t _timerCarryOverIrq= -1;		// irq pos calculated on previous screen
-static int16_t _lastRasterInterrupt= -1;	
-static uint16_t _currentRasterPos= 0;		// 	simulated "read" raster position (see d012/d011)
-static uint32_t _lastRelativeCyclePos= 0;	// sim progress of rasterline during current code execution
-static uint32_t _remainingCyclesThisRaster= 0;
+static double _fps;
+static uint8_t _cycles_per_raster;
+static uint16_t _lines_per_screen;
+static uint32_t _total_cycles_per_screen;
 
-// next interrupt not on this screen; use value bigger than any 16-bit counter for easy comparison
-static uint32_t _failMarker;
+static uint8_t _x;	// in cycles
+static uint16_t _y;	// in rasters
 
-void vicReset(uint8_t isRsid, uint32_t f) {
-	_failMarker= f;
+
+double vicFPS() {
+	return _fps;
+}
+uint16_t vicLinesPerScreen() {
+	return _lines_per_screen;
+}
+uint32_t vicCyclesPerScreen() {
+	return _total_cycles_per_screen;
+}
+
+
+void vicSetModel(uint8_t ntsc_mode) {
+	// emulation only supports new PAL & NTSC model (none of the special models)
+		
+	_x= _y= 0;
 	
-	if (isRsid) {
+	// note: clocking is derived from the targetted video standard.
+	// 14.31818MHz (NTSC) respectively of 17.734475MHz (PAL) - divide by 4 for respective 
+	// color subcarrier: 3.58Mhz NTSC,  4.43MHz PAL.
+	// the 8.18MHz (NTSC) respectively 7.88MHz (PAL) "dot clock" is derived from the above
+	// system clock is finally "dot clock" divided by 8
+	if(ntsc_mode) {
+		// NTSC
+		_fps= 59.8260895;
+		_cycles_per_raster= 65;
+		_lines_per_screen = 263;	// with  520 pixels
+//		_clockRate= 1022727;	// system clock (14.31818MHz/14)
+	} else {
+		// PAL
+		_fps= 50.124542;
+		_cycles_per_raster= 63;	
+		_lines_per_screen = 312;	// with 504 pixels
+//		_clockRate= 985249;		// system clock (17.734475MHz/18)
+	}
+
+	// init to very end so that next tick will create a raster 0 IRQ...
+	_x= _cycles_per_raster-1;
+	_y= _lines_per_screen-1;
+	
+		
+	// NTSC: 17095	/ PAL: 19656		
+	_total_cycles_per_screen= _cycles_per_raster * vicLinesPerScreen();
+}
+
+uint16_t getRasterLatch() {
+	return memReadIO(0xd012) + (((uint16_t)memReadIO(0xd011)&0x80)<<1);
+}
+
+void checkIRQ() {
+	// "The test for reaching the interrupt raster line is done in cycle 0 of 
+	// every line (for line 0, in cycle 1)."	
+	
+	if (_y == getRasterLatch()) {			
+		uint8_t latch= memReadIO(0xd019) | 0x1;	// alwasy signal (test case: Wally Beben songs that use CIA 1 timer for IRQ but check for this flag)
+
+		uint8_t interrupt_enable= memReadIO(0xd01a) & 0x1;			
+		if (interrupt_enable) {
+			latch |= 0x80;	// signal VIC interrupt			
+		}
+		
+		memWriteIO(0xd019, latch);
+	}
+}
+
+void vicClock() {
+	if (!_x && !_y) {	// special case: in line 0 it is cycle 1		
+		checkIRQ();
+	}
+	_x+= 1;	
+	
+	if (_x >= _cycles_per_raster) {
+		_x= 0;
+		_y+= 1;
+
+		if (_y >= _lines_per_screen) {
+			_y= 0;			
+		}
+				
+		if (_y) checkIRQ();	// normal case: check in cycle 0				
+	}
+}
+
+uint8_t vicIRQ() {	
+	return memReadIO(0xd019) & 0x80;
+}
+
+void vicFakeIrqPSID() {
+	// util used for PSID to setup fake RASTER IRQ environment
+	
+	memWriteIO(0xd01a, memReadIO(0xd01a) | 0x1);	// mask: RASTER IRQ
+	memWriteIO(0xd019, 0x81);
+}
+
+/*
+	 "A Bad Line Condition is given at any arbitrary clock cycle, if at the
+	 negative edge of ø0 at the beginning of the cycle RASTER >= $30 and RASTER
+	 <= $f7 and the lower three bits of RASTER are equal to YSCROLL and if the
+	 DEN (display enable: $d011, bit 4) bit was set during an arbitrary cycle of raster line $30."
+	 
+	 KNOWN LIMITATION: Additional 2 cycles per sprite may be needed - which isn't implemented here.
+*/
+uint8_t vicStunCPU() {
+	uint8_t ctrl= memReadIO(0xd011);
+	if (ctrl & 0x10) {	// display enabled
+		if ((_y >= 0x30) && (_y <= 0xf7) && ((ctrl & 0x7) == (_y & 0x7))) {
+			/*  this is a badline:
+				During cycles 15-54(incl) the CPU is *always* completely blocked - BUT it may be blocked up to 3 cycles earlier
+				depending on the first used sub-instruction "read-access", i.e. from cycle 12 the CPU is stunned at its first "read-access"
+				(i.e. the write-access of current OP is allowed to complete.. usually at the end of OP - max 3 consecutive 
+				"write" cycles in any 6502 OP)
+				=> this means that "OPs in progress" might be stunned in the middle of the execution, i.e. OP has just been started 
+				and then is stunned before it can read the data that is needs.
+			*/
+			if ((_x >= 11) && (_x <= 53)) {
+				if ((_x >= 14)) {
+					return 2;	// stun completely
+				} else {
+					return 1;	// stun on read
+				}
+			}
+		}
+	}
+	
+	// "displayed sprites" cause a similar effect of stunning the CPU - "stealing" ~2 cycles for one sprite
+	// and up to ~19 cycles for all 8 sprites (if they are shown on the specific line). Like for the "badline" there 
+	// is a 3 cycle "stun" period (during which more or less cycles are lost depending on the current OP) before the bus 
+	// is completely blocked for the CPU. For more details see "Missing Cycles" by Pasi 'Albert' Ojala
+	
+	// note: The limited benefits do not seem to be worth the extra implementation & runtime cost, since very few songs 
+	// are actually using this (maybe some hardcode timing demo showing off - e.g. Fantasmolytic_tune_2).	
+	return 0;
+}
+
+
+void vicReset(uint8_t is_rsid, uint8_t ntsc_mode) {
+	
+	vicSetModel(ntsc_mode); 
+	
+	if (is_rsid) {
 		// by default C64 is configured with CIA1 timer / not raster irq
 		
 		// FIXME according to SID file format spec the raster should default to 0x137!
@@ -35,186 +189,44 @@ void vicReset(uint8_t isRsid, uint32_t f) {
 		memWriteIO(0xd011, 0x1B);
 		memWriteIO(0xd012, 0x00); 	// raster at line x
 	}
-	
-	_timerCarryOverIrq= -1;
-	_lastRasterInterrupt= -1;
-	_currentRasterPos= 0;
-	_lastRelativeCyclePos= 0;
-	_remainingCyclesThisRaster= 0;
 }
-
-static void setCurrentRasterPos(uint32_t cycleTime) {
-	// todo: maybe badlines should be considered here?
-	_currentRasterPos= ((uint32_t)((float)cycleTime/envCyclesPerRaster()))%envLinesPerScreen();	
-}
-
-static void incCurrentRasterPos() {
-	_currentRasterPos+=1;
-	if (_currentRasterPos == envLinesPerScreen()) {
-		_currentRasterPos= 0;
-	}
-}
-
-void vicStartRasterSim(uint32_t rasterPosInCycles) {
-	setCurrentRasterPos(rasterPosInCycles);
-	
-	_remainingCyclesThisRaster=rasterPosInCycles-(_currentRasterPos*envCyclesPerRaster());
-	
-	_lastRelativeCyclePos= cpuCycles();
-}
-
-void initRemainingRasterCycles() {
-	_remainingCyclesThisRaster+= envCyclesPerRaster();
-	
-	// note: in badline there are 40-43 cycles less available to the CPU! [i.e. only 20 instead of 60]
-	// "Normally, every eighth line inside the display window, starting with the
-	// very first line of the graphics, is a Bad Line.. depends on the YSCROLL."
-	
-	// see http://www.zimmers.net/cbmpics/cbm/c64/vic-ii.txt
-	
-	uint8_t displayEN= memReadIO(0xd011)&0x8;
-	if (displayEN && (_currentRasterPos >= 0x30) && (_currentRasterPos <= 0xf7)
-			&& ((memReadIO(0xd011)&0x7) == (_currentRasterPos&0x7))) {
-
-		// note: Waking_Up_part_4 makes use of respective raster polling and apparently it is using a 
-		// display mode that leads to the badlines here.. however is does not seem to make any difference..
-		_remainingCyclesThisRaster-= 40;	// doesn't seem to make a difference so far..
-	}
-}
-
-void vicSimRasterline() {
-	/* 
-	songs like Waking_Up_part_4, Digital_Music.sid, Thats_All_Folks.sid or Uwe Anfang's stuff use busy-wait 
-	for specific rasterlines from their IRQ and Main prog code. in order to avoid endless 
-	waiting the progress of the raster is simulated here..
-	
-	the incremental impl used below seems to work best for the "main prog" handling.. were 
-	we do not have the correct timing.. (i.e. the attempt to directly derive a d012 position 
-	from the start and current execution time failed )
-	*/	
-	long cdiff= cpuCycles()-_lastRelativeCyclePos;
-	if (cdiff > _remainingCyclesThisRaster) {
-		incCurrentRasterPos();					// sim progress of VIC raster line..
-		
-		initRemainingRasterCycles();
-	}
-	if (cdiff > 0) {
-		_remainingCyclesThisRaster-= cdiff;
-	}
-	_lastRelativeCyclePos= cpuCycles();	
-}
-
-static void setD019(uint8_t value) {
-	// ackn vic interrupt, i.e. a set bit actually clear that bit
-	memWriteIO(0xd019, memReadIO(0xd019)&(~value));
-}
-
-static void signalIrq() {
-	// simulate an enabled RASTER IRQ
-	// bit 7: IRQ triggered by VIC
-	// bit 0: source was rasterline
-
-	memWriteIO(0xd019, memReadIO(0xd019)|0x81);
-}
-
-void vicSimIRQ() {
-	// simulate an disabled RASTER IRQ, i.e. just set the respective flag (as VIC DOES
-	// while RASTER IRQ is NOT enabled)
-	// test case: Wally Beben songs that use CIA 1 timer for IRQ but check for this flag
-	memWriteIO(0xd019, memReadIO(0xd019)|0x1);	
-}
-
-uint32_t lastDummyInterrupt=0;
-static uint8_t getD019() {
-	if ((cpuGetProgramMode() == MAIN_OFFSET_MASK) && !(memReadIO(0xd01a) & 0x1)) {
-		// might be a main loop polling for interrupt (see Alter_Digi_Piece.sid) -
-		// hack: just create one dummy interrupt per screen
-		if ((cpuTotalCycles()- lastDummyInterrupt) > envCyclesPerScreen()) {
-			lastDummyInterrupt= cpuTotalCycles();	// try to sim a raster interrupt once a screen
-			memWriteIO(0xd019, memReadIO(0xd019)|0x1);
-			return 1;
-		} else {
-			return 0;			
-		}
-	}
-	return memReadIO(0xd019);
-}
-
-static uint8_t getCurrentD012() {
-	return _currentRasterPos & 0xff;
-}
-static uint8_t getCurrentD011() {
-	return (_currentRasterPos & 0x100) >> 1;
-}
-
-uint16_t vicGetRasterline() {
-	uint16_t rasterline= memReadIO(0xd012) + (((uint16_t)memReadIO(0xd011)&0x80)<<1);
-	return rasterline;
-}
-
-static uint16_t getCycleTime(uint16_t rasterTime) {
-	return rasterTime * envCyclesPerRaster();
-}
-
-uint8_t vicIsIrqActive() {
-	return !cpuIrqFlag() && ((memReadIO(0xd01a)&0x1) == 1);
-}
-
-void vicSyncRasterIRQ() {
-	if ((memReadIO(0xd01a)&0x1) == 1) {
-		// the configured line has actually been reached and a raster IRQ handler is about to 
-		// be triggered - better sync the simulated state accordingly..
-		_lastRelativeCyclePos= cpuCycles();
-		_currentRasterPos= vicGetRasterline();
-	
-		_remainingCyclesThisRaster= 0;
-		initRemainingRasterCycles();	
-	}
-}
-
-/*
-* Gets the next 'timer' based on next raster interrupt which will occur on the current screen.
-* @return _failMarker if no event on the  current screen
-*/
-uint32_t vicForwardToNextRaster() {
-	if (!vicIsIrqActive()) {
-		return _failMarker;
-	}	
-	int32_t timer= 0;
-	if (_timerCarryOverIrq >=0) {
-		timer= _timerCarryOverIrq;
-		_timerCarryOverIrq= -1;
-	} else {
-		uint16_t nextRasterline= vicGetRasterline(); 
-		
-		if (_lastRasterInterrupt<0) {	// first run
-			timer= getCycleTime(nextRasterline); 
-		} else {
-			int16_t lineDelta= nextRasterline - _lastRasterInterrupt;
-			if (lineDelta > 0){
-				timer= getCycleTime(lineDelta);					// next IRQ on same page refresh			
-			} else {
-				_timerCarryOverIrq= getCycleTime(nextRasterline);// IRQ on next screen
-				timer= _failMarker; 								// no event on this screen
-			}			
-		}
-		_lastRasterInterrupt= nextRasterline;
-
-	}
-	if (timer != _failMarker) {
-		signalIrq();	// in case some IRQ routine is checking.. e.g. Galdrumway.sid	
-	} 
-
-	return timer;
-}
-
 
 // -----------------------------  VIC I/O -------------------------------------------
+
+static void writeD019(uint8_t value) {
+	// ackn vic interrupt, i.e. a setting a bit actually clears it
+	
+	// note: :some players use "INC D019" (etc) to ackn the interrupt (all Read-Modify-Write instructions write the 
+	// original value before they write the new value, i.e. the intermediate write does the clearing..) 
+	// (see cpu.c emulation)
+	
+	// "The bit 7 in the latch $d019 reflects the inverted state of the IRQ output of the VIC.", i.e. if the 
+	// source conditions clear, so does the overall output.
+	
+	// test-case: some songs only clear the "RASTER" but not the "IRQ" flag (e.g. Ozone.sid)
+	
+	uint8_t v=  memReadIO(0xd019);
+	v = v&(~value);					// clear (source) flags directly
+	
+	if (!(v & 0xf)) {
+		v &= 0x7f; 		// all sources are gone.. so IRQ flag should also be cleared
+	}
+	memWriteIO(0xd019, v);
+	
+	
+	/*
+	if (value) value |= 0x80;
+	
+	uint8_t was=  memReadIO(0xd019);
+	memWriteIO(0xd019, was&(~value));
+	*/
+}
 
 void vicWriteMem(uint16_t addr, uint8_t value) {
 	switch (addr) {
 		case 0xd019:
-			setD019(value);
+			writeD019(value);
+			break;
 		default:
 			memWriteIO(addr, value);
 	}
@@ -222,13 +234,12 @@ void vicWriteMem(uint16_t addr, uint8_t value) {
 
 uint8_t vicReadMem(uint16_t addr) {
 	switch (addr) {
-		// VIC
 		case 0xd011:
-			return getCurrentD011();
+			return (memReadIO(0xd011) & 0x7f) | ((_y & 0x100) >> 1);
 		case 0xd012:					
-			return getCurrentD012();
+			return  _y & 0xff;
 		case 0xd019:
-			return getD019();
+			return memReadIO(0xd019);
 	}
 	return memReadIO(addr);
 }
