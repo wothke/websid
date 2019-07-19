@@ -367,9 +367,6 @@ uint16_t ciaGetTimerPSID() {
 	return t->ts[TIMER_A].timer_latch;
 }
 
-//fprintf(stderr, "writeL:  0x%04x reset: 0x%04x\n ", value, reset); 	
-
-
 static void writeLatch(struct Timer *t, uint8_t timer_idx, uint16_t value, uint8_t reset) {
 	t->ts[timer_idx].timer_latch= value;
 	
@@ -644,10 +641,7 @@ void ciaWriteMem(uint16_t addr, uint8_t value) {
 		case 0xdc09: 
 			updateTimeOfDaySec(value);
 			break;						
-		case 0xdc0d:
-	
-//fprintf(stderr, "write DC0D = 0x%04x (set from  0x%04x )\n", value, cpuGetPC());
-		
+		case 0xdc0d:		
 			setInterruptMask(&(_cia[CIA1]), value);
 			break;			
 		case 0xdc0e:
