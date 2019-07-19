@@ -17,8 +17,8 @@
 #include "base.h"
 
 // *.sid file version
+uint8_t envIsPSID();
 uint8_t envIsRSID();
-uint8_t envIsFilePSID();	// original file setting XXX FIXME rename
 
 uint32_t envClockRate();
 

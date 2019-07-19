@@ -36,23 +36,11 @@
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
  
- // todo: run performance tests to check how cycle based oversampling fares as compared to 
- // current once-per-sample approach
- 
- // todo: with the added external filter Hermit's antialiasing may no longer make sense
- /*
-	XXX TODO verify test cases
-	// test cases:
-	see Master_of_the_Lamps
-	// - Ferrari_Formula_One resets volume from main before starting NMI digis.. (does not tolerate volume set from the NMI)
-	//			=> timing of this song so distorted that it is probably a bad idea to try a workaround from the generic logic here.. FIXME
-	// - Great_Giana_Sisters activates "filter" from NMI (without which the melody stays silent)
-	// - All_You_Know_Is_Wrong volume settings made from IRQ
-	// - Better_Late_Than_Never depends on the filter settings made by the NMI
-	// - Digi155_DS may introduce clicks which actually originate from the 3 voices 
-	// - Thats_All_Folks make sure volume is turned back on after the sample playback!
+// todo: run performance tests to check how cycle based oversampling fares as compared to 
+// current once-per-sample approach
 
-*/
+// todo: with the added external filter Hermit's antialiasing might no longer make sense and the 
+// respective handling may be the source of high-pitched noise during PWM/FM digis..
 
 #include <string.h>
 #include <stdio.h>
@@ -102,7 +90,7 @@ struct SidState {
 	uint8_t is_6581;
 	
     struct Voice {
-        uint8_t		wave;
+//        uint8_t		wave;			// redundant: see Oscillator
 		uint16_t	freq;
         uint16_t	pulse;				// 12-bit "pulse width" from respective SID registers
 		uint8_t		not_muted;			// player's separate "mute" feature
@@ -621,8 +609,8 @@ void SID::poke(uint8_t reg, uint8_t val) {
             break;
         }
         case 0x4: {
-			_sid->voices[voice].wave = val;	// FIXME XXX why the redundancy???
-			_osc[voice]->wave= _sid->voices[voice].wave;	// convenience
+	//		_sid->voices[voice].wave = val;
+			_osc[voice]->wave= val; //_sid->voices[voice].wave;
 			break;
 		}
     }
@@ -721,7 +709,8 @@ void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offs
 
 // "friends only" accessors
 uint8_t SID::getWave(uint8_t voice) {
-	return _sid->voices[voice].wave;
+	return _osc[voice]->wave;
+//	return _sid->voices[voice].wave;
 }
 uint8_t SID::getAD(uint8_t voice) {
 	return _env[voice]->getAD();

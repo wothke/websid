@@ -19,9 +19,6 @@
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
 
-// FIXME XXX test Storebror.sid, Wonderland XII part1.sid, Comalight 13 tune4.sid
-// FIXME XXX retest // see Come_What_May.sid, Viking.sid, ZigZag.sid track2,  A-Maze-Ing.sid ( IRQ longer 1 frame?)
-
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -148,7 +145,7 @@ static uint8_t isDummyIrqVectorPSID() {
 	// PSIDs may actually set the 0314/15 vector via INIT, turn off the kernal ROM and 
 	// not provide a useful fffe/f vector.. and we need to handle that crap..
 	
-	if ((envSidPlayAddr() != 0) || (((memGet(0xfffe)|(memGet(0xffff)<<8)) == 0) && envIsFilePSID() &&
+	if ((envSidPlayAddr() != 0) || (((memGet(0xfffe)|(memGet(0xffff)<<8)) == 0) && envIsPSID() &&
 			((memGet(0x0314)|(memGet(0x0315)<<8)) != 0))) {
 		
 		return 1;
@@ -165,7 +162,7 @@ static uint16_t getIrqVectorPSID() {
 
 	uint16_t irq_addr= (memGet(0xfffe)|(memGet(0xffff)<<8));	
 
-	if ((irq_addr == 0) && envIsFilePSID()) {	// see isDummyIrqVectorPSID()
+	if ((irq_addr == 0) && envIsPSID()) {	// see isDummyIrqVectorPSID()
 		irq_addr= (memGet(0x0314)|(memGet(0x0315)<<8));		
 	}
 	return irq_addr;
@@ -365,13 +362,13 @@ void Core::startupSong(uint32_t sample_rate, uint8_t ntsc_mode, uint8_t compatib
 	// restore original mem image.. previous "init_addr" run may have corrupted the state
 	memCopyToRAM(_memory_snapshot, 0, MEMORY_SIZE);
 
-	hackIfNeeded(init_addr);		// XXXX DITCH
+	hackIfNeeded(init_addr);
 	
 	memSetDefaultBanksPSID(envIsRSID(), (*init_addr), load_end_addr);	// PSID crap
 		
 	cpuReset((*init_addr), actual_subsong);	// set starting point for emulation	
 
-	if (!envIsRSID()) {
+	if (envIsPSID()) {
 		// run the PSID "init" routine
 		while (cpuClock()) {
 			if (cpuCycles() >= CYCLELIMIT ) {
@@ -389,7 +386,7 @@ void Core::startupSong(uint32_t sample_rate, uint8_t ntsc_mode, uint8_t compatib
 
 		ciaReset60HzPSID();
 
-		memResetBanksPSID(envIsFilePSID(), play_addr);
+		memResetBanksPSID(envIsPSID(), play_addr);
 		_psid_bank_setting= memReadRAM(0x1); // test-case: Madonna_Mix.sid		
 	}
 }

@@ -31,14 +31,12 @@
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
 
-// XXX FIXME: retest (see Synth_Sample_III.sid tracks >3)
-
 #include "cia.h"
 
 #include <stdio.h>
 #include <string.h>
 
-#include "env.h"		// global env: envIsFilePSID()
+#include "env.h"		// global env: envIsPSID()
 #include "memory.h"
 #include "cpu.h"		// cpuTotalCycles()
 
@@ -149,8 +147,7 @@ static struct Timer _cia[2];
 uint8_t ciaNMI() {
 
 	struct Timer *t= &(_cia[CIA2]);
-	return t->interrupt_status & ICR_INTERRUPT_ON;	// XXX
-//	return (t->interrupt_status & ICR_INTERRUPT_ON) && (t->interrupt_status & 0x3);
+	return t->interrupt_status & ICR_INTERRUPT_ON;
 }
 
 uint8_t ciaIRQ() {
@@ -159,7 +156,6 @@ uint8_t ciaIRQ() {
 
 	struct Timer *t= &(_cia[CIA1]);
 	return t->interrupt_status & ICR_INTERRUPT_ON;
-//	return (t->interrupt_status & ICR_INTERRUPT_ON) && (t->interrupt_status & 0x3);
 }
 
 static uint16_t readCounter(struct Timer *t, uint8_t timer_idx) {
@@ -254,7 +250,7 @@ static void setControl(struct Timer *t, uint8_t timer_idx, uint8_t ctrl_new) {	/
 	uint16_t addr= t->memory_address + 0x0e + timer_idx;
 	uint8_t ctrl_old= memReadIO(addr);
 	
-	/* XXX FIXME verify that this really works - XXX makes no difference for the current problems
+	/* fixme: verify if this really works - or is actually needed
 	// test-case: "FLIPOS" doesn't seem to care
 	if (ctrl_old & CRA_ONE_SHOT) {
 		if (readCounter(t, timer_idx) == 1) {
@@ -328,14 +324,9 @@ static int isOneShot(struct Timer *t, uint8_t timer_idx) {
 	return memReadIO(addr) & CRA_ONE_SHOT;
 }
 
-static void underflow(struct Timer *t, uint8_t timer_idx) {
-			
-		t->delay_INT= 1; // makes sure it triggers directly in the next cycle XXXX untested..
-		
-//fprintf(stderr, "  %6lu underflowx +1 - set dc0d source bit 0x%04x\n", cpuCycles(), t->interrupt_status);	
+static void underflow(struct Timer *t, uint8_t timer_idx) {			
+	t->delay_INT= 1; // makes sure it triggers directly in the next cycle		
 }
-
-
 
 /*
 * CAUTION: count() leaves the CIA in an intermediate state that MUST be further
@@ -346,11 +337,10 @@ static void underflow(struct Timer *t, uint8_t timer_idx) {
 static uint16_t count(struct Timer *t, uint8_t timer_idx) {
 	// test-case: "SET IMR CLOCK 2" uses a LATCH=0 and the IRQ startup timing is currently correct.. however that
 	// test DOES NOT check the timing of a "continuous" counter, i.e. timing of successive runs might still be wrong..
-	
-	
-	// FIXME XXX es kann nicht sein, dass ein 0 und ein 1 counter dasselbe Verhalten haben.. (vgl 0 check unten) logischerweise
-	// müsste 0 einen Cycle schneller sein als 1 .. evtl. wird ja der reload hier 1 cycle schneller.. da 0 mit 0 ersetz wird..
-	// wie passt das zu den emus die den Unterlauf auf -1 legen.. (was mit den 0 Werten die man angeblich nie sieht??)
+		
+	// FIXME it doesn't make sense that 0 and 1 counter have the same effect: logically a 0 latch should lead to a 1
+	// cycle quicker count (at least in continuous mode). Interestingly the tests don't seem to care and it doesn't seem 
+	// to be relevant for real world songs.. still there must be a bug left somewhere.. 
 	
 	uint16_t counter= readCounter(t, timer_idx);
 	
@@ -436,26 +426,16 @@ static uint8_t clockT(struct Timer *t, uint8_t timer_idx) {
 			} else {
 				// timer was stopped originally, so prevent it from counting eventhough it is started now
 				return 0;	// no underflow to report in this scenario 		
-//XXX BUG				return readCounter(t, timer_idx); 		
 			}
 		} else {
 
 			if (mask  & UNDERFLOW_MASK) {
-
-				// underflow in previous cycle.. (already reloaded counter & set the unterflow flag)
-
-				// XXX setting the IRQ line is all that is left... but isn't that done by the regular "handleInterrupt"?
-				// WHY do it again here?
-				
-
 				underflow(t, timer_idx);
 
 				// react with 1 cycle delay. test-case: Graphixmania_2_part_6.sid, Demi-Demo_4.sid
 				if (isBLinkedToA(t)) {
 					clockT(t, TIMER_B);
 				}
-
-				
 				
 				done= 1;	// suppose there is no counting in this phase
 			}
@@ -476,14 +456,11 @@ static uint8_t clockT(struct Timer *t, uint8_t timer_idx) {
 		
 	if (done) {
 		return 0;		// no underflow to report here 
-// XXX BUG		return readCounter(t, timer_idx); 
 	}
 	
 	// handle regular counter mode
 
 	if (delayed_stop || isStarted(t, timer_idx)) {
-		
-		// FIXME XXX handle 0 LATCH special case... should be 1 cycle faster than 1 LATCH..
 		
 		if (!count(t, timer_idx)) {
 			// reached underflow
@@ -513,9 +490,11 @@ static uint8_t clockT(struct Timer *t, uint8_t timer_idx) {
 			
 			/*
 			if (in->timer_latch == 0) {
-				// XXX seems logical to shorten the process by one cycle - as compared to a 1-LATCH
-				// this breaks: "IMR=$81 IRQ IN CLOCK 2  "
-				t->interrupt_status |= ICR_INTERRUPT_ON;	// XXXX to be verified
+				// would seems logical to shorten the process by one cycle - as compared to a 1-LATCH
+				// but this breaks: "IMR=$81 IRQ IN CLOCK 2  " - probably some delay further down the line is
+				// currently wrong and compensates for a bug here..
+				
+				t->interrupt_status |= ICR_INTERRUPT_ON;
 			}*/
 			
 			if (isOneShot(t, timer_idx)) {
@@ -534,38 +513,15 @@ static void clock(struct Timer *t) {
 	handleInterrupt(&(_cia[CIA1])); 	// IRQ
 	handleInterrupt(&(_cia[CIA2])); 	// NMI
 
-
-// old XXX
-
-
-/*
-	if (isBLinkedToA(t) && isStarted(t, TIMER_B)) {	// e.g. in Graphixmania_2_part_6.sid
-		if (!isStarted(t, TIMER_A)) {
-			return;				// without A nothing will happen here..
-		} else {
-			if (clockT(t, TIMER_A)) {						// underflow
-				clockT(t, TIMER_B);
+	if (isBLinkedToA(t)) {	// e.g. in Graphixmania_2_part_6.sid
+			if (clockT(t, TIMER_A)) {				// underflow
+				// will trigger B count with 1 cycle delay
 			}			
-		}
 	} else {
 		// handle independent counters (testcases: Vicious_SID_2-Carmina_Burana, LMan - Vortex, new digi stuff)
 		 clockT(t, TIMER_A);
 		 clockT(t, TIMER_B);
 	}	
-*/
-
-	if (isBLinkedToA(t)) {	// e.g. in Graphixmania_2_part_6.sid
-
-			if (clockT(t, TIMER_A)) {				// underflow
-			// there should probably be a 1 cycle delay before B reacts to A	XXX
-//				clockT(t, TIMER_B);
-			}			
-	} else {
-		// handle independent counters (testcases: Vicious_SID_2-Carmina_Burana, LMan - Vortex, new digi stuff)
-		 clockT(t, TIMER_A);
-		 clockT(t, TIMER_B);
-	}
-	
 }
 
 void ciaClock() {
@@ -646,7 +602,6 @@ uint8_t ciaReadMem(uint16_t addr) {
 			return readCounter(t, TIMER_A) >> 8;
 		}
 		case 0xdd06: {
-			// XXX Fantasmolytic reads this in NMI but any patches here seem to have no effect
 			struct Timer *t= &(_cia[CIA2]);
 			return (readCounter(t, TIMER_B) & 0xff);
 		}
@@ -662,13 +617,11 @@ uint8_t ciaReadMem(uint16_t addr) {
 		case 0xdc0f:
 		case 0xdd0e:
 		case 0xdd0f:
-//			return memReadIO(addr) & ~0x10;		// XXX used in Lorenzs sample impl.. why?
+//			return memReadIO(addr) & ~0x10;		// used in Lorenz's sample - but useless here
 			return memReadIO(addr);
 		
 		default:
-//if (addr== 0xdc0e) fprintf(stderr, "read DC0e:  %#08x\n", memReadIO(addr));	// XXXX
-		
-			// e.g. for 0xd*0e, 0xd*0f, etc
+//			fprintf(stderr, "read %#08x:  %#08x\n", addr, memReadIO(addr));
 			break;
 	}
 	return memReadIO(addr);
@@ -728,7 +681,7 @@ void ciaWriteMem(uint16_t addr, uint8_t value) {
 }
 
 static void initMem(uint16_t addr, uint8_t value) {
-	if (envIsFilePSID()) {			// needed by MasterComposer crap
+	if (envIsPSID()) {			// needed by MasterComposer crap
 		memWriteRAM(addr, value);
 	}
 	ciaWriteMem(addr, value);	// also write RO defaults, e.g. dc01
@@ -749,9 +702,8 @@ void ciaReset60HzPSID() {
 
 void ciaReset(uint32_t cycles_per_screen, uint8_t is_rsid) {
 
-//#ifndef TEST // XXX ROM routines are used in tests
 	initMem(0xdc00, 0x10);	 	// fire botton NOT pressed (see Alter_Digi_Piece.sid)
-	initMem(0xdc01, 0xff);	 	//  XXX FIXME RETEST Master_Blaster_intro.sid/instantfunk.sid actually check this
+	initMem(0xdc01, 0xff);	 	// Master_Blaster_intro.sid/instantfunk.sid actually check this
 	
 	// CIA 1 defaults	(by default C64 is configured with CIA1 timer / not raster irq)
 	initMem(0xdc0d, 0x81);	// interrupt control	(interrupt through timer A)
@@ -779,7 +731,7 @@ void ciaReset(uint32_t cycles_per_screen, uint8_t is_rsid) {
 		initMem(0xdd0e, 0x08); 	// control timer 2A (start/stop)
 		initMem(0xdd0f, 0x08); 	// control timer 2B (start/stop)		
 	} 
-//#endif
+
 	initTimerData(ADDR_CIA1, &(_cia[0]));
 	initTimerData(ADDR_CIA2, &(_cia[1]));
 

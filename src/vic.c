@@ -172,7 +172,7 @@ uint8_t vicStunCPU() {
 	// is completely blocked for the CPU. For more details see "Missing Cycles" by Pasi 'Albert' Ojala
 	
 	// note: The limited benefits do not seem to be worth the extra implementation & runtime cost, since very few songs 
-	// are actually using this (maybe some hardcode timing demo showing off - e.g. Fantasmolytic_tune_2).	
+	// are actually using this (maybe some hardcode timing demo showing off - e.g. Vicious_SID_2-15638Hz.sid, Fantasmolytic_tune_2).	
 	return 0;
 }
 

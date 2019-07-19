@@ -39,12 +39,17 @@
 * From a simplistic software point of view, the above can be thought of as each "system clock" having 2 phases:
 * where the 1st phase is always used by "the other components" and the CPU (usually) uses phase 2.
 *
+* Known issues:
+*  - Thats_All_Folks.sid crashes at the transition to the 2nd part
+*
+*
 * useful links/docs:
 *  
 *  http://www.oxyron.de/html/opcodes02.html
 *  http://6502.org/tutorials/interrupts.html
 *  http://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/64doc
 *  http://archive.6502.org/datasheets/mos_6500_mpu_preliminary_may_1976.pdf
+*  https://wiki.nesdev.com/w/index.php/CPU_interrupts
 *
 * WebSid (c) 2019 Jürgen Wothke
 * version 0.93
@@ -104,97 +109,55 @@ static uint8_t _s; 				// stack pointer
 
 static uint8_t _p;				// status register (see above flags)
 
+static void setflags(int32_t flag, int32_t cond)
+{
+    if (cond) _p |= flag;
+    else _p &= ~flag;
+}
+
 
 
 // ---- interrupt handling ---
 
-// "When an interrupt occurs 2 or more cycles before the current command ends, it is 
-// executed immediately after the command. Otherwise, the CPU executes the next command 
+// "Many references will claim that interrupts are polled during the last cycle of an instruction,
+// but this is true only when talking about the output from the edge and level detectors. As can
+// be deduced from above, it's really the status of the interrupt lines at the end of the second-to-last
+// cycle that matters." (https://wiki.nesdev.com/w/index.php/CPU_interrupts)
+
+
+// "When an interrupt occurs 2 or more cycles before the current command ends, it is
+// executed immediately after the command. Otherwise, the CPU executes the next command
 // first before it calls the interrupt handler.
 
-// The only exception to this rule are "taken branches" to the same page which last 3 
-// cycles. Here, the interrupt must have occurred before clock 1 of the branch command; 
-// the normal rule says before clock 2. Branches to a different page or branches not taken are behaving normal."	
+// The only exception to this rule are "taken branches" to the same page which last 3
+// cycles. Here, the interrupt must have occurred before clock 1 of the branch command;
+// the normal rule says before clock 2. Branches to a different page or branches not taken are behaving normal."
+// => i.e. for special case the lead time must be 4 cycles
 
+
+
+// line "detectors" run in ø2 phase and activate the respective internal signal in next ø1, i.e. the
+// next system clock cycle.
 static uint8_t _interrupt_lead_time= 2;
 
-	// ---- NMI handling ---
+// how the 6502's pipline affects the handling of the I-flag:
 
-static uint8_t _nmi_committed= 0;		// CPU is committed to running the NMI
-static uint8_t _nmi_line= 0;			// state change detection
-static uint32_t _nmi_line_ts= 0;		// for scheduling
+// "The RTI instruction affects IRQ inhibition immediately. If an IRQ is pending and an RTI is
+// executed that clears the I flag, the CPU will invoke the IRQ handler immediately after RTI
+// finishes executing. This is due to RTI restoring the I flag from the stack before polling
+// for interrupts.
 
-void checkForNMI(void) {
-	// when the CPU detects the "NMI line" activation it "commits" to running that NMI
-	// handler and no later state change will stop that NMI from being executed (see above for scheduling)
+// The CLI, SEI, and PLP instructions on the other hand change the I flag after polling for
+// interrupts (like all two-cycle instructions they poll the interrupt lines at the end of
+// the first cycle), meaning they can effectively delay an interrupt until after the next
+// instruction. For example, if an interrupt is pending and the I flag is currently set,
+// executing CLI will execute the next instruction before the CPU invokes the IRQ handler."
 
-	// test-case: "ICR01" ("READING ICR=81 MUST PASS NMI"): eventhough the NMI line is immediately 
-	// acknowledged/cleared in the same cycle that the CIA sets it, the NMI handler should still be called.
-	
-	if (ciaNMI()) {						// NMI line is active now
+// HACK: with imprecisions of current impl using this delay seems to make things worse
+// and since it would just burn extra CPU for nothing it is therefore not used
+uint8_t _delayed_cli= 0;
+uint8_t _delayed_sei= 0;
 
-		// NMI is different from IRQ in that only the transition from high to low signal triggers an NMI, and
-		// the line has to be restored to high (meaning "false" here) before the next NMI can trigger.
-	
-		if (!_nmi_line) {
-			
-			_nmi_committed= 1;			// there is no way back now
-			_nmi_line= 1;				// using 1 to model HW line "low" signal
-			_nmi_line_ts= _cycles;
-		} else {
-			// line already/still activated... cannot trigger new NMI before previous one has been acknowledged
-		}
-	} else {
-		_nmi_line= 0;				// NMI has been acknowledged
-		if (!_nmi_committed) { 
-			_nmi_line_ts= 0; 		// still needed until the committed NMI has been scheduled
-		}
-	}	
-}
-
-uint8_t pendingNMI () {
-
-	if (_nmi_committed) {
-		uint32_t elapsed= _cycles - _nmi_line_ts;		
-		return elapsed > _interrupt_lead_time;
-	}
-	return 0;
-}
-
-
-// ---- CIA handling ---
-/* OLD
-uint8_t _irq_line= 0;
-uint32_t _irq_line_ts= 0;		// XXX this had been missing
-
-
-void checkForIRQ(void) {
-	// as long as the IRQ line stays active new IRQ will trigger as soon as the I-flag 
-	// is cleared
-	_irq_line= (vicIRQ() || ciaIRQ());
-	if (_irq_line) {
-	
-
-	
-		if (!_irq_line_ts) {
-
-	//		if (!(_p & FLAG_I)) fprintf(stderr, "IRQ %d\n", (_p & FLAG_I));
-
-			_irq_line_ts= _cycles;	// ts when line was activated
-		}
-	} else {
-		_irq_line_ts = 0;	// XXX FIXME is the IRQ flag really relevant for this?
-	}
-}
-
-int8_t pendingIRQ(void) {
-	uint32_t elapsed= _irq_line_ts ? (_cycles - _irq_line_ts) : 0;
-	
-//	if ( (!(_p & FLAG_I)) && _irq_line) fprintf(stderr, "_cycles %lu - _irq_line_ts %lu >= lead %lu\n", _cycles, _irq_line_ts, _interrupt_lead_time);
-	
-	return (!(_p & FLAG_I)) && _irq_line && (elapsed  > _interrupt_lead_time); // test case "IMR"
-}
-*/
 // ---- CIA handling ---
 static uint8_t _irq_committed= 0;		// CPU is committed to running the IRQ
 static uint32_t _irq_line_ts= 0;
@@ -207,25 +170,78 @@ void checkForIRQ(void) {
 	// is cleared .. let's presume that the I-flag masking is done initially and 
 	// once committed it will no longer matter (like in the NMI case)
 	
-	if (!(_p & FLAG_I) && (vicIRQ() || ciaIRQ())) {
+	if (!(_p & FLAG_I) && (vicIRQ() || ciaIRQ())) {	// test-case: Vicious_SID_2-Escos (needs FLAG_I check)
 	
 		if (!_irq_line_ts) {
-			_irq_committed= 1;			// there is no way back now
+			_irq_committed= 1;		// there is no way back now
 			_irq_line_ts= _cycles;	// ts when line was activated
 		}
 	} else {
-		if (!_irq_committed) _irq_line_ts = 0;	// XXX FIXME is the IRQ flag really relevant for this?
+		if (!_irq_committed) _irq_line_ts = 0;	// is the IRQ flag really relevant here (see mandatory check in pendingIRQ())
 	}
 }
 
 int8_t pendingIRQ(void) {
 	if (_irq_committed) {
 		uint32_t elapsed= _cycles - _irq_line_ts;
-	//	return (!(_p & FLAG_I)) && (elapsed  > _interrupt_lead_time); // test-case: "IMR"
-		return (elapsed  > _interrupt_lead_time); // test-case: "IMR" (works with this..)
+
+		// test-case: Vaakataso.sid, Vicious_SID_2-Carmina_Burana.sid depend on the FLAG_I test
+		//            probably compensates for some flaw in the state handling
+		
+		return (!(_p & FLAG_I)) && (elapsed  >= _interrupt_lead_time); // test-case: "IMR"
 	}
 	return 0;
 }
+
+
+	// ---- NMI handling ---
+
+static uint8_t _nmi_committed= 0;		// CPU is committed to running the NMI
+static uint8_t _nmi_line= 0;			// state change detection
+static uint32_t _nmi_line_ts= 0;		// for scheduling
+
+void checkForNMI(void) {
+	// when the CPU detects the "NMI line" activation it "commits" to running that NMI
+	// handler and no later state change will stop that NMI from being executed (see above for scheduling)
+
+	// test-case: "ICR01" ("READING ICR=81 MUST PASS NMI"): eventhough the NMI line is immediately
+	// acknowledged/cleared in the same cycle that the CIA sets it, the NMI handler should still be called.
+	
+	if (ciaNMI()) {						// NMI line is active now
+
+		// NMI is different from IRQ in that only the transition from high to low signal triggers an NMI, and
+		// the line has to be restored to high (meaning "false" here) before the next NMI can trigger.
+	
+		if (!_nmi_line) {
+			
+			_nmi_committed= 1;			// there is no way back now
+			_nmi_line= 1;				// using 1 to model HW line "low" signal
+			_nmi_line_ts= _cycles;
+			
+			// "If both an NMI and an IRQ are pending at the end of an instruction, the NMI will be handled and the
+			// pending status of the IRQ forgotten (though it's likely to be detected again during later polling)."
+	//		_irq_committed= 0;
+	//		_irq_line_ts= 0;
+		} else {
+			// line already/still activated... cannot trigger new NMI before previous one has been acknowledged
+		}
+	} else {
+		_nmi_line= 0;				// NMI has been acknowledged
+		if (!_nmi_committed) {
+			_nmi_line_ts= 0; 		// still needed until the committed NMI has been scheduled
+		}
+	}	
+}
+
+uint8_t pendingNMI () {
+
+	if (_nmi_committed) {
+		uint32_t elapsed= _cycles - _nmi_line_ts;
+		return elapsed >= _interrupt_lead_time;
+	}
+	return 0;
+}
+
 
 
 uint8_t cpuPcIsValid() {
@@ -521,8 +537,7 @@ static void setaddr(uint8_t opc, int32_t mode, uint8_t val)
     }
 }
 
-// FIXME XXX get rid of tmp var
-static int8_t _next_instruction_cycles;	// number of cycles that will be used by the next instruction
+static int8_t _next_instruction_cycles;	// number of cycles that will be used by the next instruction; fixme - ugly global var
 
 static void addPageBoundaryReadCycle(uint8_t opc, int32_t mode) {
     uint16_t ad,ad2;  
@@ -562,7 +577,7 @@ static void addBranchOpCycles(uint8_t opc, int32_t flag) {
 		uint8_t diff= ((_pc&0x100)!=(_wval&0x100))?2:1;
 		
 		if (diff == 1) {
-			_interrupt_lead_time= 3;	// special case for IRQ handling
+			_interrupt_lead_time= 4;	// before 1st cycle (of a 3 cycle OP)
 		}
     	_next_instruction_cycles+= diff; // + 1 if branch occurs to same page/ + 2 if branch occurs to different page
 	}
@@ -590,6 +605,17 @@ static void addPageBoundaryWriteCycle(uint8_t opc, int32_t mode) {
 }
 
 static void prefetchOP( int16_t *opcode, int8_t *cycles) {
+	/* see comment at var decl
+	if (_delayed_sei) {
+		setflags(FLAG_I,1);
+		_delayed_sei= 0;
+	}
+	if (_delayed_cli) {
+		setflags(FLAG_I,0);
+		_delayed_cli= 0;
+	}
+	*/
+	
 	if (!cpuPcIsValid()) {
 		// init returned to non existing "main".. just burn cycles for imaginary "main" and wait for next interrupt
 		*opcode= null_op;		
@@ -817,12 +843,6 @@ static void putaddr(uint8_t opc, int32_t mode, uint8_t val) {
     }
 }
 
-static void setflags(int32_t flag, int32_t cond)
-{
-    if (cond) _p |= flag;
-    else _p &= ~flag;
-}
-
 static void push(uint8_t val)
 {
     memSet(0x100+_s,val);	
@@ -863,6 +883,8 @@ void cpuInit(void)
 	
 	_irq_line_ts= _irq_committed= 0;
 	_nmi_line= _nmi_line_ts= _nmi_committed= 0;
+	
+//	_delayed_cli= _delayed_sei= 0;
 
 #ifdef TEST
 	test_running= 1;
@@ -896,6 +918,10 @@ void cpuReset(uint16_t npc, uint8_t na) {
 	
 	_cycles= 0;
 }
+
+
+
+
 #ifdef TEST
 char _load_filename[32];
 #endif
@@ -1090,9 +1116,7 @@ static void runNextOp(void)
             push(_p | FLAG_B0 | FLAG_B1);	// only in the stack copy
 			
 			_pc=memGet(0xfffe);
-			_pc|=memGet(0xffff)<<8;		// FIXME XXX for this to work the 0316/0317 vector must also be properly 
-										// configured AND the default Kernal  IRQ handler must again have that currently
-										// disabled section!
+			_pc|=memGet(0xffff)<<8;		// somebody might finger the IRQ vector or the BRK vector at 0316/0317 to use this?
 			
             setflags(FLAG_I,1);
             break;
@@ -1104,6 +1128,7 @@ static void runNextOp(void)
             break;
         case cli:
             setflags(FLAG_I,0);
+//			_delayed_cli= 1;
             break;
         case clv:
             setflags(FLAG_V,0);
@@ -1300,10 +1325,20 @@ static void runNextOp(void)
             setflags(FLAG_Z,!_a);
             setflags(FLAG_N,_a&0x80);
             break;
-        case plp:
+        case plp: {
 			_bval= pop();
-            _p=_bval & ~(FLAG_B0 | FLAG_B1);			
-            break;
+			/*
+			uint8_t i_flag_new= _bval & FLAG_I;
+			uint8_t i_flag_old= _p & FLAG_I;
+			if (i_flag_new != i_flag_old) {
+				if (i_flag_new) { _delayed_sei= 1; }
+				else 			{ _delayed_cli= 1; }
+				
+				_bval = (_bval & ~FLAG_I) | i_flag_old; // keep old for one more cycle
+			}
+			*/
+            _p=_bval & ~(FLAG_B0 | FLAG_B1);		
+		} break;
         case rla:				// see Spasmolytic_part_6.sid
 			// rol
             _bval=getaddr(opc, mode);
@@ -1454,6 +1489,7 @@ static void runNextOp(void)
             break;
         case sei:
             setflags(FLAG_I,1);
+//			_delayed_sei= 1;
             break;
 		case shs:	// 	aka TAS 
 			// instable op; hard to think of a good reason why anybody would ever use this..
@@ -1558,8 +1594,8 @@ static void runNextOp(void)
 */
 int8_t isStunned(void) {	
 	// VIC badline handling (i.e. CPU may be paused/stunned)
-//	uint8_t is_stunned= vicStunCPU() && !envIsFilePSID();		// XXX it should not hurt to STUN crappy PSID songs
-	uint8_t is_stunned= vicStunCPU();		
+//	uint8_t is_stunned= envIsRSID() && vicStunCPU();
+	uint8_t is_stunned= vicStunCPU();			// it won't not hurt to also STUN the crappy PSID songs
 	if (is_stunned) {
 		if ((is_stunned == 2) || (_exe_instr_opcode < 0)) {
 			return 1;
@@ -1606,10 +1642,13 @@ int8_t isStunned(void) {
 
 
 int8_t cpuClock(void) {
-
+	// note: on the real HW the respective check happends in ø2 phase of the previous CPU cycle and the respective internal
+	// interrupt signal then goes high in the ø1 phase after (the potential problem of the below impl is that by performing 
+	// the test here, it might incorrectly pick up some CIA change that has just happend in the ø1 phase)
+	checkForIRQ();	// check 1st (so NMI can overrule if needed)
 	checkForNMI();
-	checkForIRQ();
-	
+
+	// FIXME: does stun also block IRQ detection?
 	if (isStunned()) return cpuPcIsValid();
 
 	if (_exe_instr_opcode < 0) {	// get next instruction	
@@ -1622,7 +1661,7 @@ int8_t cpuClock(void) {
 			_exe_instr_opcode= start_nmi_op;
 			_exe_instr_cycles= _opbase_frame_cycles[_exe_instr_opcode];
 				
-		} else if (!envIsFilePSID() && pendingIRQ()) {	// interrupts are like a BRK command 
+		} else if (envIsRSID() && pendingIRQ()) {	// interrupts are like a BRK command 
 			_irq_committed= 0;
 
 			_exe_instr_opcode= start_irq_op;
@@ -1674,6 +1713,7 @@ int8_t cpuClock(void) {
 //	 if (_exe_instr_cycles_remain <0) {
 //			fprintf(stderr, "ERROR: _exe_instr_cycles_remain < 0\n");
 //	}
+
 	return cpuPcIsValid();
 }
 
@@ -1696,7 +1736,7 @@ void cpuResetToIrqPSID(uint16_t npc) {
 	// them between calls (see Look_sharp.sid)
 	_pc= npc;
 	
- //   setflags(FLAG_I,1);		// XXX FIXME plausible when running an IRQ! test it
+ //   setflags(FLAG_I,1);		// would be plausible when running an IRQ - but probably pointless for PSID
 }
 
 

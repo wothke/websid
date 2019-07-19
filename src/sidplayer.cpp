@@ -30,6 +30,8 @@
 #include <stdio.h>
 #include <math.h>
 
+#include <emscripten.h>
+
 extern "C" {
 #include "cia.h"	
 #include "vic.h"	
@@ -40,12 +42,6 @@ extern "C" {
 #include "sid.h"	
 
 #include "compute!.h"
-
-#ifdef EMSCRIPTEN
-#define EMSCRIPTEN_KEEPALIVE __attribute__((used))
-#else
-#define EMSCRIPTEN_KEEPALIVE
-#endif
 
 // ----------------- audio output buffer management ------------------------------------------
 
@@ -81,7 +77,7 @@ static int16_t 			_digi_average_rate;
 
 static uint8_t 	_sid_version;
 
-static uint8_t	_is_psid;
+static uint8_t	_is_rsid;
 
 static uint16_t	_sid_addr[3];	// start addr of installed SID chips (0 means NOT available)
 static uint8_t 	_sid_is_6581[3];		// models of installed SID chips 
@@ -181,12 +177,12 @@ extern "C" uint8_t*  envSID6581s() {
 	return _sid_is_6581;
 }
 
-extern "C" uint8_t envIsFilePSID(){
-	return (_is_psid == 1);
+extern "C" uint8_t envIsRSID() {
+	return _is_rsid;
 }
 
-extern "C" uint8_t envIsRSID() {
-	return !envIsFilePSID();
+extern "C" uint8_t envIsPSID(){
+	return !envIsRSID();
 }
 
 extern "C" uint16_t envSidPlayAddr() {
@@ -216,11 +212,11 @@ extern "C" uint32_t envClockRate() {
 }
 
 extern "C" int8_t envIsTimerDrivenPSID() {
-	return ((envIsFilePSID() == 1) && (envCurrentSongSpeed() == 1));
+	return (envIsPSID() && (envCurrentSongSpeed() == 1));
 }
 
 extern "C" int8_t envIsRasterDrivenPSID() {
-	return ((envIsFilePSID() == 1) && (envCurrentSongSpeed() == 0));
+	return (envIsPSID() && (envCurrentSongSpeed() == 0));
 }
 
 
@@ -404,7 +400,7 @@ static uint16_t loadComputeSidplayerData(uint8_t *mus_song_file, uint32_t mus_so
 	uint16_t v1len, v2len, v3len, track_data_len;
 	musGetSizes(mus_song_file, &v1len, &v2len, &v3len, &track_data_len);
 	if (track_data_len >= mus_song_file_len) {
-//		fprintf(stderr, "info cannot be retrieved  from corrupt .mus file\n");
+		EM_ASM_({ console.log('info cannot be retrieved  from corrupt .mus file');});	// less mem than inclusion of fprintf
 		return 0;
 	}		
 	
@@ -413,26 +409,20 @@ static uint16_t loadComputeSidplayerData(uint8_t *mus_song_file, uint32_t mus_so
 	return 1;
 }
 
-
-
-
 // ----------------- generic handling --------------------------------------------------------
 
-
-
-
-extern "C" uint32_t computeAudioSamples()  __attribute__((noinline));
-extern "C" uint32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
+extern "C" int32_t computeAudioSamples()  __attribute__((noinline));
+extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 #ifdef TEST
 	return 0;
 #endif
 	if (_mus_mode && musIsTrackEnd(0)) {
-		return -1;		// FIXME XXX seems stupid for a unit32_t
+		return -1;
 	}
 	_number_of_samples_rendered = 0;
 			
 	uint32_t sample_buffer_idx=0;
-	uint32_t has_digi= 0;	// FIXME obsolete
+	uint8_t has_digi= 0;
 	
 	while (_number_of_samples_rendered < _chunk_size)
 	{
@@ -441,22 +431,30 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 			sample_buffer_idx=0;
 						
 			for (uint8_t i= 0; i<_skip_silence_loop; i++) {	// too much seeking might block too long?
-				has_digi= Core::runOneFrame(_synth_buffer, _synth_trace_buffers, _number_of_samples_per_call);
+				Core::runOneFrame(_synth_buffer, _synth_trace_buffers, _number_of_samples_per_call);
 				
 				DigiType t= SID::getGlobalDigiType();
-				if (t) {	// XXX FIXME was "has_digi" check
+				if (t) {
 					uint16_t rate= SID::getGlobalDigiRate();
-					_digi_diagnostic= t;
-					_digi_average_rate = (_digiPreviousRate + rate) >> 1;	// average out frame overflow issues
-					_digiPreviousRate= rate;
+					
+					if (rate > 10) {
+						has_digi= 1;
+						
+						_digi_diagnostic= t;
+						_digi_average_rate = (_digiPreviousRate + rate) >> 1;	// average out frame overflow issues
+						_digiPreviousRate= rate;
+					} else {
+						_digi_diagnostic= DigiNone;
+						_digiPreviousRate= _digi_average_rate = 0;
+					}
 				}
 				
-				_sound_started|= !!t;
-				// XXX FIXME silence detection is broken
+				_sound_started |= has_digi;
+
 				if (!_sound_started) {
 					// check if there is some output this time..
 					for (uint16_t j= 0; j<_number_of_samples_per_call; j++) {
-						if (_synth_buffer[j] != 0) {
+						if (_synth_buffer[j] > 30) {		// empty signal still returns some small values...
 							_sound_started= 1;
 							break;
 						}
@@ -647,10 +645,10 @@ static uint16_t parseSYS(uint16_t start, uint16_t end) {
 	return result;
 }	
 
-// extracts the SYSxxxx address from trivial BASIC program amd patches (*initAddr) accordingly
+// extracts the SYS $.... address from trivial BASIC program amd patches (*initAddr) accordingly
 void startFromBasic(uint16_t *init_addr) {
 	// don't have C64 BASIC ROM if BASIC program is just used to 
-	// jump to some address (SYS xxxxx) then try to do that for 
+	// jump to some address (SYS $....) then try to do that for 
 	// simple one line programs..
 
 	if ((*init_addr) == 0x0801) {
@@ -672,7 +670,7 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void * in_
 	_sid_version= 2;
 	_basic_prog= 0;
 	_compatibility= 1;
-	_is_psid= 0; 	// use RSID emulation
+	_is_rsid= 1; 	// use RSID emulation
 	
 	envSetNTSC(0);
 	
@@ -709,9 +707,9 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void * in_
 	uint8_t ntscMode= 0;	// default is PAL
 
 	
-	_is_psid= is_mus || (input_file_buffer[0x00] == 0x50) ? 1 : 0;	
+	_is_rsid= is_mus || (input_file_buffer[0x00] == 0x50) ? 0 : 1;	
 
-	memResetRAM(envIsFilePSID());
+	memResetRAM(envIsPSID());
 	
 	if ((_mus_mode= is_mus)) {
 		// todo: the same kind of impl could be used for .sid files that contain .mus data.. (see respectice flag)
@@ -727,7 +725,7 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void * in_
 		_basic_prog= (envIsRSID() && (flags & 0x2));	// C64 BASIC program need to be started..
 		
 		_compatibility= ( (_sid_version & 0x2) &&  ((flags & 0x2) == 0));	
-		ntscMode= (_sid_version == 2) && envIsFilePSID() && (flags & 0x8); // NTSC bit
+		ntscMode= (_sid_version == 2) && envIsPSID() && (flags & 0x8); // NTSC bit
 		
 		configureSids(flags, _sid_version>2?input_file_buffer[0x7a]:0, _sid_version>3?input_file_buffer[0x7b]:0);
 			
