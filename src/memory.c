@@ -259,7 +259,28 @@ void memResetKernelROM() {
 	_kernal_rom[0x1fff]= 0xff;
 		
 	_kernal_rom[0x1ffa]= 0x43;	// standard NMI vectors (this will point into the void at: 0318/19)
-	_kernal_rom[0x1ffb]= 0xfe;	
+	_kernal_rom[0x1ffb]= 0xfe;
+}
+
+void memRsidMain(uint16_t *init_addr) {
+	// For RSIDs that just RTS from their INIT (relying just on the
+	// IRQ/NMI they have started) there should better be something to return to..
+	
+	uint16_t free= envGetFreeSpace();
+	if (!free) {					
+		return;	// no free space anywhere.. that shit better not RTS!
+	} else {
+		uint16_t loopAddr= free+3;
+		
+		_memory[free]= 0x20;
+		_memory[free+1]= (*init_addr) & 0xff;
+		_memory[free+2]= (*init_addr) >> 8;
+		_memory[free+3]= 0x4c;
+		_memory[free+4]= loopAddr & 0xff;
+		_memory[free+5]= loopAddr >> 8;
+		
+		(*init_addr)= free;
+	}
 }
 
 void memResetRAM(uint8_t is_psid) {
@@ -268,17 +289,19 @@ void memResetRAM(uint8_t is_psid) {
 	_memory[0x0314]= 0x31;		// standard IRQ vector
 	_memory[0x0315]= 0xea;
 		
+	// Vager_3.sid
+	_memory[0x0091]= 0xff;		// "stop" key not pressed
+
 	// Master_Blaster_intro.sid actually checks this:
 	_memory[0x00c5]= _memory[0x00cb]= 0x40;		// no key pressed 
-
+	
 	// Dill_Pickles.sid depends on this
 	 _memory[0x0000]= 0x2f;		//default: processor port data direction register
 	
 	// for our PSID friends who don't know how to properly use memory banks lets mirror the kernal ROM into RAM
 	if (is_psid) {
+	// seems some idiot RSIDs also benefit from this. test-case: Vicious_SID_2-Escos.sid
 		memcpy(&_memory[0xe000], &_kernal_rom[0], 0x2000);
-		
-		// FIXME maybe IO area should also be copied? 
 	}
 	// see "The SID file environment" (https://www.hvsc.c64.org/download/C64Music/DOCUMENTS/SID_file_format.txt)
 	// though this alone might be rather useless without the added timer tweaks mentioned in that spec?

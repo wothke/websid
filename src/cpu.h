@@ -27,8 +27,9 @@ void cpuReset(uint16_t npc, uint8_t na);
 
 
 void cpuRegReset();
-uint8_t cpuPcIsValid();
 
+// hack used for digi handling only
+uint8_t cpuIsInNMI();
 
 // PSID crap
 void cpuResetToIrqPSID(uint16_t npc);

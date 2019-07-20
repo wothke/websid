@@ -102,6 +102,7 @@ private:
 	uint8_t _currentDigiSrc;
 
 	// FM: tracked timing state
+	uint8_t _fm_count;
 	FreqDetectState _freqDetectState[3];
 	uint32_t _freqDetectTimestamp[3];
 	uint8_t _freqDetectDelayedSample[3];
@@ -114,6 +115,11 @@ private:
 	
 	// swallow's PWM
 	uint16_t _swallowPWM[3];
+	
+	// nmi d418 (hack)
+	uint8_t _use_non_nmi_D418;
+	uint8_t _non_nmi_count_D418;
+	
 };
 
 

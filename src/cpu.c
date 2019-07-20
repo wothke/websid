@@ -41,6 +41,7 @@
 *
 * Known issues:
 *  - Thats_All_Folks.sid crashes at the transition to the 2nd part
+*  - Galdrumway.sid pauses for long periods of time
 *
 *
 * useful links/docs:
@@ -196,6 +197,13 @@ int8_t pendingIRQ(void) {
 
 	// ---- NMI handling ---
 
+static uint8_t _nmi_executing= 0;		// hack for digi handling
+	
+uint8_t cpuIsInNMI() {
+	return _nmi_executing;
+}	
+	
+	
 static uint8_t _nmi_committed= 0;		// CPU is committed to running the NMI
 static uint8_t _nmi_line= 0;			// state change detection
 static uint32_t _nmi_line_ts= 0;		// for scheduling
@@ -245,7 +253,14 @@ uint8_t pendingNMI () {
 
 
 uint8_t cpuPcIsValid() {
-	return _pc > 1;
+	// for garbage PSID $0000/0001 is used to detect when the player
+	// is done (by pulling that specific end-marker from the stack)
+	// see cpuResetToIrqPSID()
+	
+	// for RSIDs there is not really "any" invalid PC
+	// test-case: Boot_Zak_v2.sid (uses $0000 for IRQ handler).
+	
+	return envIsRSID() || (_pc > 1);
 }
 
 // MOS6510 instruction modes
@@ -615,7 +630,7 @@ static void prefetchOP( int16_t *opcode, int8_t *cycles) {
 		_delayed_cli= 0;
 	}
 	*/
-	
+		
 	if (!cpuPcIsValid()) {
 		// init returned to non existing "main".. just burn cycles for imaginary "main" and wait for next interrupt
 		*opcode= null_op;		
@@ -883,7 +898,7 @@ void cpuInit(void)
 	
 	_irq_line_ts= _irq_committed= 0;
 	_nmi_line= _nmi_line_ts= _nmi_committed= 0;
-	
+	_nmi_executing= 0;
 //	_delayed_cli= _delayed_sei= 0;
 
 #ifdef TEST
@@ -944,7 +959,7 @@ static void runNextOp(void)
 	opc= _exe_instr_opcode;
 
 //	if (_pc == 0x0B43) fprintf(stderr, "%6lu ***** START TEST 8 ********\n", _cycles);
-//	if (_pc == 0x0B4b) fprintf(stderr, "%6lu TEST 8: a=%#08x\n", _cycles, _a);
+//	if (_pc == 0x45Be) fprintf(stderr, "%6lu TEST 8: a=%#08x\n", _cycles, _a);
 
 	
     int32_t cmd=_opcodes[opc];
@@ -1416,8 +1431,7 @@ static void runNextOp(void)
             _wval|=pop()<<8;
             _pc=_wval;	// not like 'rts'! correct address is expected here!
 			
-			// todo: if interrupts where to be handled correctly then we'd need to 
-			// clear interrupt flag here (and set it when NMI is invoked...)
+			_nmi_executing= 0;	// hack to improve digi output
             break;
         case rts:		
             _wval=pop();
@@ -1648,13 +1662,13 @@ int8_t cpuClock(void) {
 	checkForIRQ();	// check 1st (so NMI can overrule if needed)
 	checkForNMI();
 
-	// FIXME: does stun also block IRQ detection?
 	if (isStunned()) return cpuPcIsValid();
 
 	if (_exe_instr_opcode < 0) {	// get next instruction	
 
 		if(pendingNMI()) {								// has higher prio than IRQ
 			// by definition PSID never uses NMI
+			_nmi_executing= 1;
 			_nmi_committed= 0;
 			_nmi_line_ts= 0;	// make that same trigger unusable (interrupt must be acknowledged before a new one can be triggered)
 			
@@ -1730,10 +1744,8 @@ void cpuResetToIrqPSID(uint16_t npc) {
 	// NOTE: garbage PSID shit that uses RTS from IRQ will pick this up as a return address
 	// so _p better be 0 in that scenario:
 
-	push(_p);	// processor status (processor would do this in case of interrupt...)
+	push(0);	// processor status (processor would do this in case of interrupt...)
 		
-	// only set _pc and keep current stackpointer and registers in case player directly passes 
-	// them between calls (see Look_sharp.sid)
 	_pc= npc;
 	
  //   setflags(FLAG_I,1);		// would be plausible when running an IRQ - but probably pointless for PSID

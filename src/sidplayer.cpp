@@ -78,9 +78,10 @@ static int16_t 			_digi_average_rate;
 static uint8_t 	_sid_version;
 
 static uint8_t	_is_rsid;
+static uint8_t	_is_psid;			// redundancy to avoid runtime logic
 
-static uint16_t	_sid_addr[3];	// start addr of installed SID chips (0 means NOT available)
-static uint8_t 	_sid_is_6581[3];		// models of installed SID chips 
+static uint16_t	_sid_addr[3];		// start addr of installed SID chips (0 means NOT available)
+static uint8_t 	_sid_is_6581[3];	// models of installed SID chips 
 
 static uint8_t 	_ntsc_mode= 0;
 static uint32_t	_clockRate;
@@ -89,6 +90,7 @@ static uint32_t	_sample_rate;
 
 static uint8_t 	_compatibility;
 static uint8_t 	_basic_prog;
+static uint16_t _free_space;
 
 static uint16_t	_load_addr, _init_addr, _play_addr, _load_end_addr;
 static uint8_t 	_actual_subsong, _max_subsong;
@@ -97,6 +99,10 @@ static uint32_t	_play_speed;
 static uint8_t 	_digi_enabled = 1;	// FIXME obsolete
 
 static uint32_t	_trace_sid= 0;
+
+extern "C" uint16_t envGetFreeSpace() {
+	return _free_space;
+}
 
 static void resetTimings(uint8_t is_ntsc) {
 	vicSetModel(is_ntsc);	// see for timing details
@@ -182,7 +188,7 @@ extern "C" uint8_t envIsRSID() {
 }
 
 extern "C" uint8_t envIsPSID(){
-	return !envIsRSID();
+	return _is_psid;
 }
 
 extern "C" uint16_t envSidPlayAddr() {
@@ -574,6 +580,7 @@ static uint16_t loadSIDFromMemory(void *sid_data,
     uint8_t data_file_offset;	
 	
     pdata = (uint8_t*)sid_data;
+	
     data_file_offset = pdata[7];
 
     *load_addr = pdata[8]<<8;
@@ -619,13 +626,28 @@ static uint16_t loadSIDFromMemory(void *sid_data,
 		return 0;		// illegal sid file
 	}
 	
+	// find a space to put the starter code - the SID file spec is such garbage:
+	// the number of hoops you have to jump through just to find 6 free bytes is a 
+	// bad joke..
+	
+	uint8_t start_page= pdata[0x78];
+	
+	if (start_page == 0xff) {
+		_free_space= 0; 	// no space available
+	} else if (start_page == 0x0) {
+		if ((*load_addr) > 0x0806) {
+			_free_space= 0x0801;	// prefer "before" since there may not be space "after"!
+		} else {
+			_free_space= (*load_addr) + size +1;
+		}
+	} else {
+		_free_space= ((uint16_t)start_page) << 8;
+	}
+	
 	Core::loadSongBinary(&pdata[data_file_offset], *load_addr, size);
 
     return *load_addr;
 }
-
-
-
 
 
 static uint16_t parseSYS(uint16_t start, uint16_t end) {
@@ -662,6 +684,11 @@ void startFromBasic(uint16_t *init_addr) {
 	}
 }
 
+void setRsidMode(uint8_t is_rsid) {
+	_is_rsid= is_rsid;
+	_is_psid= !is_rsid;
+}
+
 extern "C" uint32_t loadSidFile(uint32_t is_mus, void * in_buffer, uint32_t in_buf_size, uint32_t sample_rate, char *filename )  __attribute__((noinline));
 extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void * in_buffer, uint32_t in_buf_size, uint32_t sample_rate, char *filename ) {
 #ifdef TEST
@@ -670,7 +697,8 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void * in_
 	_sid_version= 2;
 	_basic_prog= 0;
 	_compatibility= 1;
-	_is_rsid= 1; 	// use RSID emulation
+
+	setRsidMode(1);
 	
 	envSetNTSC(0);
 	
@@ -707,7 +735,7 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void * in_
 	uint8_t ntscMode= 0;	// default is PAL
 
 	
-	_is_rsid= is_mus || (input_file_buffer[0x00] == 0x50) ? 0 : 1;	
+	setRsidMode(is_mus || (input_file_buffer[0x00] == 0x50) ? 0 : 1);
 
 	memResetRAM(envIsPSID());
 	
@@ -721,7 +749,7 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void * in_
 		_sid_version= input_file_buffer[0x05];
 				
 		uint16_t flags= (_sid_version > 1) ? (((uint16_t)input_file_buffer[0x77]) | (((uint16_t)input_file_buffer[0x77])<<8)) : 0x0;
-		
+				
 		_basic_prog= (envIsRSID() && (flags & 0x2));	// C64 BASIC program need to be started..
 		
 		_compatibility= ( (_sid_version & 0x2) &&  ((flags & 0x2) == 0));	

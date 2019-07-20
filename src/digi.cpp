@@ -40,7 +40,7 @@
 #include <math.h>
 
 extern "C" {
-#include "cpu.h"		// for cpuCycles()
+#include "cpu.h"		// cpuCycles()
 #include "memory.h"
 #include "env.h"		// envClockRate()
 #include "vic.h"		// vicFPS()
@@ -112,13 +112,17 @@ uint8_t DigiDetector::getSource() {
 	return _currentDigiSrc; 
 }
 
+
 void DigiDetector::recordSample(uint8_t sample, uint8_t voice) {
+	
 	// SID emu will just use the last set value
 	_currentDigiSample= sample;
 	_currentDigiSrc= voice;
 	
 	_digiCount++;
 }
+
+uint8_t _use_non_nmi_D418= 1;
 
 uint8_t DigiDetector::assertSameSource(uint8_t voice_plus) {
 	// a song may perform different SID interactions that may or may not be meant
@@ -141,7 +145,9 @@ uint8_t DigiDetector::assertSameSource(uint8_t voice_plus) {
 		} else {
 			if (voice_plus == 0) {			// d418 write while there is already other data.. just ignore					
 				return 0;
-			} else if (_digiSource == 0) {	// previously recorded D418 stuff is not really sample output
+			} else if (_digiSource == 0) {	
+				// previously recorded D418 stuff is not really sample output
+				// problem: is has already been rendered as a "sample".. i.e. that cannot be undone
 				_digiCount= 0;
 				_digiSource= voice_plus;		// assumtion: only one digi voice..			
 			} else {
@@ -149,6 +155,18 @@ uint8_t DigiDetector::assertSameSource(uint8_t voice_plus) {
 			}
 		}
 	} else {
+		// hack: many NMI digi players still seem to make one volume reset from their IRQ.. when 
+		// interpreted as a digi-sample this causes annoying clicks.. however there are also
+		// songs that play from IRQ and from NMI: test-case: Vicious_SID_2-Blood_Money.sid
+		if (voice_plus == 0) {
+			if (!cpuIsInNMI()) {
+				_non_nmi_count_D418++;
+				
+				if (!_use_non_nmi_D418) {
+					return 0;
+				}
+			}
+		}
 		// same source is OK
 	}
 	return 1;
@@ -176,10 +194,9 @@ uint8_t DigiDetector::recordFreqSample(uint8_t voice, uint8_t sample) {
 	_freqDetectState[voice]= FreqIdle;
 	_freqDetectTimestamp[voice]= 0;
 
-	// test-case: Storebror.sid - the same voice is later used for regular output so 
-	// it is a bad idea to mute the voice when FM digis are detected (eventhough it would get rid 
-	// of the high-pitched noise).. also a later "unmute" will add a more prominent click
-	// than the original noise.. => do NOT mute here
+	// test-case: Storebror.sid (there the same voice is later used for regular output)
+	_fm_count++;
+	_sid->setMute(voice, 1);
 	
 	_usedDigiType= DigiFM;
 	return 1;
@@ -560,6 +577,23 @@ int32_t DigiDetector::genPsidSample(int32_t sample_in)
 
 void DigiDetector::resetCount() {
 	_digiCount= 0;
+	
+	// unfortunately there is a one frame delay here..
+	_use_non_nmi_D418= _non_nmi_count_D418 > 10;	
+	_non_nmi_count_D418= 0;
+	
+	if (_usedDigiType == DigiFM) {
+		if (!_fm_count) {
+			// test-case: Storebror.sid => switches back to other digi technique
+			_sid->setMute(0, 0);
+			_sid->setMute(1, 0);
+			_sid->setMute(2, 0);
+			_digiSource= 0;				// restart detection
+			_usedDigiType= DigiNone;
+		} else {
+			_fm_count= 0;
+		}
+	}	
 }
 
 void DigiDetector::resetModel(uint8_t is_6581) {
@@ -603,6 +637,9 @@ void DigiDetector::reset(uint8_t compatibility, uint8_t is_6581) {
 	_currentDigiSrc= 0;
 	
 	_usedDigiType= DigiNone;
+
+	_non_nmi_count_D418= 0;
+	_use_non_nmi_D418= 1;
 }
 
 uint8_t DigiDetector::getD418Sample( uint8_t value) {
@@ -626,6 +663,7 @@ uint8_t DigiDetector::getD418Sample( uint8_t value) {
 	*/	
 	
 	_usedDigiType = DigiD418;
+	
 	return (value&0xf) * 0x11;
 //	return (((value&0xf) << 3)) +64;	// better reduce the volume? 
 }

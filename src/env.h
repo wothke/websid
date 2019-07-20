@@ -30,6 +30,8 @@ uint8_t envIsNTSC();
 int8_t envIsRasterDrivenPSID();
 int8_t envIsTimerDrivenPSID();
 
+uint16_t envGetFreeSpace();
+
 // where it starts
 uint16_t envSidPlayAddr();
 

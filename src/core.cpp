@@ -366,9 +366,9 @@ void Core::startupSong(uint32_t sample_rate, uint8_t ntsc_mode, uint8_t compatib
 	
 	memSetDefaultBanksPSID(envIsRSID(), (*init_addr), load_end_addr);	// PSID crap
 		
-	cpuReset((*init_addr), actual_subsong);	// set starting point for emulation	
-
 	if (envIsPSID()) {
+		cpuReset((*init_addr), actual_subsong);	// set starting point for emulation	
+		
 		// run the PSID "init" routine
 		while (cpuClock()) {
 			if (cpuCycles() >= CYCLELIMIT ) {
@@ -388,6 +388,9 @@ void Core::startupSong(uint32_t sample_rate, uint8_t ntsc_mode, uint8_t compatib
 
 		memResetBanksPSID(envIsPSID(), play_addr);
 		_psid_bank_setting= memReadRAM(0x1); // test-case: Madonna_Mix.sid		
+	} else {
+		memRsidMain(init_addr);
+		cpuReset((*init_addr), actual_subsong);	// set starting point for emulation
 	}
 }
 

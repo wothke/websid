@@ -312,7 +312,6 @@ static void stopTimer(struct Timer *t, uint8_t timer_idx) {
 	memWriteIO(addr, memReadIO(addr) & (~0x1));	
 }
 
-
 /*
 * One-Shot:   Timer will count down from the latched value to zero, generate an interrupt, 
 *             reload the latched value, then stop.
@@ -324,8 +323,11 @@ static int isOneShot(struct Timer *t, uint8_t timer_idx) {
 	return memReadIO(addr) & CRA_ONE_SHOT;
 }
 
-static void underflow(struct Timer *t, uint8_t timer_idx) {			
-	t->delay_INT= 1; // makes sure it triggers directly in the next cycle		
+static void underflow(struct Timer *t, uint8_t timer_idx) {
+	uint8_t interrupt_mask= memReadIO(t->memory_address + 0x0d) & (1<<timer_idx);
+	if (t->interrupt_status & interrupt_mask) {
+		t->delay_INT= 1; // makes sure it triggers directly in the next cycle
+	}
 }
 
 /*
@@ -438,7 +440,6 @@ static uint8_t clockT(struct Timer *t, uint8_t timer_idx) {
 			}
 
 			if (mask & FORCE_LOAD_MASK) {			// no harm repeating this for the 2 successive cycles where the counter should stay "as is"
-			
 				uint16_t latch= t->ts[timer_idx].timer_latch;
 				writeCounter(t, timer_idx, latch);			// instead of counting
 				
@@ -495,7 +496,8 @@ static uint8_t clockT(struct Timer *t, uint8_t timer_idx) {
 			}*/
 			
 			if (isOneShot(t, timer_idx)) {
-				// test-case 'ONESHOT': timer must be immediately marked as stopped when 0 is reached					
+				// test-case 'ONESHOT': timer must be immediately marked as stopped when 0 is reached
+				
 				stopTimer(t, timer_idx);
 			}			
 			return 1; 			// report underflow (for timer chaining)
@@ -722,7 +724,8 @@ void ciaReset(uint32_t cycles_per_screen, uint8_t is_rsid) {
 		initMem(0xdd06, 0xff);
 		initMem(0xdd07, 0xff);
 
-		initMem(0xdd0e, 0x08); 	// control timer 2A (start/stop)
+//		initMem(0xdd0d, 0x00); 	// redundant
+		initMem(0xdd0e, 0x08); 	// control timer 2A (start/stop)	deffault: ONE SHOT
 		initMem(0xdd0f, 0x08); 	// control timer 2B (start/stop)		
 	} 
 

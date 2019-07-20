@@ -20,6 +20,9 @@ void	memResetKernelROM();
 void	memResetRAM(uint8_t isPsid);
 void	memResetIO();
 
+void	memRsidMain(uint16_t *init_addr);
+
+
 // regular memory access (uses current bank settings)
 uint8_t	memGet(uint16_t addr);
 void	memSet(uint16_t addr, uint8_t value);
