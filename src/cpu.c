@@ -41,7 +41,7 @@
 *
 * Known issues:
 *  - Thats_All_Folks.sid crashes at the transition to the 2nd part
-*  - Galdrumway.sid pauses for long periods of time
+*  - Galdrumway.sid pauses for long periods of time => might be a good test-case for some special-case bug (since first check-in new impl)
 *
 *
 * useful links/docs:

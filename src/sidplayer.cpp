@@ -626,19 +626,19 @@ static uint16_t loadSIDFromMemory(void *sid_data,
 		return 0;		// illegal sid file
 	}
 	
-	// find a space to put the starter code - the SID file spec is such garbage:
-	// the number of hoops you have to jump through just to find 6 free bytes is a 
-	// bad joke..
+	// find a space to put the starter code: the number of hoops you have 
+	// to jump through just to find 6 free bytes is a bad joke..
 	
 	uint8_t start_page= pdata[0x78];
 	
+	_free_space= 0;
 	if (start_page == 0xff) {
-		_free_space= 0; 	// no space available
+		// no space available
 	} else if (start_page == 0x0) {
-		if ((*load_addr) > 0x0806) {
-			_free_space= 0x0801;	// prefer "before" since there may not be space "after"!
-		} else {
-			_free_space= (*load_addr) + size +1;
+		if (((*load_addr) + size) < 0xcff0) {
+			_free_space= 0xcff0;
+		} else if ((*load_addr) >= 0x0406) {
+			_free_space= 0x0400;
 		}
 	} else {
 		_free_space= ((uint16_t)start_page) << 8;

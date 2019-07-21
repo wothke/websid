@@ -207,7 +207,7 @@ void memInitTest() {
     memset(&_kernal_rom[0], 0x00, KERNAL_SIZE);				// BRK by default 
     memcpy(&_kernal_rom[0x1f48], _irq_handler_test_FF48, 19);	// $ff48 irq routine
 	
-	memset(&_kernal_rom[0x0a31], 0xea, 0x4d);				// $ea31 fill some NOPs		(FIXME: nops may take longer than original..)
+	memset(&_kernal_rom[0x0a31], 0xea, 0x4d);				// $ea31 fill some NOPs
     memcpy(&_kernal_rom[0x0a7C], _irq_handler_EA7C, 11);	// $ea31 return sequence with added 0xa2 increment to sim time of day (see P_A_S_S_Demo_3.sid)
     memcpy(&_kernal_rom[0x1e43], _nmi_handler_FE43, 5);		// $fe43 nmi handler
     memcpy(&_kernal_rom[0x1ebc], _irq_end_handler_FEBC, 6);	// $febc irq return sequence (e.g. used by Contact_Us_tune_2)

@@ -184,7 +184,9 @@ void vicReset(uint8_t is_rsid, uint8_t ntsc_mode) {
 	if (is_rsid) {
 		// by default C64 is configured with CIA1 timer / not raster irq
 		
-		// FIXME according to SID file format spec the raster should default to 0x137!
+		// according to SID file format spec the raster should default to 0x137 
+		// but this once again seems to be rubbish - test-case:  Vicious_SID_2-1st_loader.sid - only sets d012 putting in in invalid range
+		
 		memWriteIO(0xd01a, 0x00); 	// raster irq not active
 		memWriteIO(0xd011, 0x1B);
 		memWriteIO(0xd012, 0x00); 	// raster at line x

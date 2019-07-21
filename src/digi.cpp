@@ -161,7 +161,7 @@ uint8_t DigiDetector::assertSameSource(uint8_t voice_plus) {
 		if (voice_plus == 0) {
 			if (!cpuIsInNMI()) {
 				_non_nmi_count_D418++;
-				
+
 				if (!_use_non_nmi_D418) {
 					return 0;
 				}
@@ -576,12 +576,7 @@ int32_t DigiDetector::genPsidSample(int32_t sample_in)
 }
 
 void DigiDetector::resetCount() {
-	_digiCount= 0;
-	
-	// unfortunately there is a one frame delay here..
-	_use_non_nmi_D418= _non_nmi_count_D418 > 10;	
-	_non_nmi_count_D418= 0;
-	
+		
 	if (_usedDigiType == DigiFM) {
 		if (!_fm_count) {
 			// test-case: Storebror.sid => switches back to other digi technique
@@ -593,7 +588,18 @@ void DigiDetector::resetCount() {
 		} else {
 			_fm_count= 0;
 		}
-	}	
+	} else if (_usedDigiType == DigiD418) {
+		// test-case: Arkanoid.sid - doesn't use NMI at all
+		if (_digiCount == 0) {
+			_usedDigiType= DigiNone;
+			_use_non_nmi_D418= 1;
+		} else {
+			// unfortunately there is a one frame delay here..
+			_use_non_nmi_D418= _non_nmi_count_D418 > 10;
+			_non_nmi_count_D418= 0;
+		}
+	}
+	_digiCount= 0;
 }
 
 void DigiDetector::resetModel(uint8_t is_6581) {

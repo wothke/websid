@@ -243,7 +243,9 @@ void SID::resetEngine(uint32_t sample_rate, uint8_t is_6581) {
 	// reset filter
 	_filter->reset(sample_rate);
 
-	//	for (uint8_t i= 0; i<0x17; i++) poke(i, 0xff);	// FIXME: this seems to be what ACID64 uses (not tested yet)
+	
+// very bad idea! test-case: Banditti_2SID.sid
+//	for (uint8_t i= 0; i<0x17; i++) poke(i, 0xff);	// this seems to be what ACID64 uses
 }
 
 // ------------------------- wave form generation ----------------------------
@@ -680,6 +682,7 @@ void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offs
 // FIXME add "mute digi" feature
 // FIXME Acid_Preview - high pitched noise.. use same hack to turn off voice output?
 
+//	if (1) {
 	if (digiSrc > 0 && _digi->isFiltered()) {
 		uint8_t enabled= 1;
 		_filter->routeSignal(&digiOut, &outf, &outo, digiSrc-1, &enabled);
