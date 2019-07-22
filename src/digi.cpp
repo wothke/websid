@@ -378,7 +378,9 @@ uint8_t DigiDetector::isMahoneyDigi() {
 	// Either the voice-output OR the separately recorded input sample but be used in the
 	// output signal - but not both! (using the later here)
 	
-	//  We_Are_Demo_tune_2.sid seems to be using the same approach only the SR uses 0xfb instead of 0xff	
+	//  We_Are_Demo_tune_2.sid seems to be using the same approach only the SR uses 0xfb instead of 0xff
+	
+	// song using this from main-loop - test-case: Acid_Flashback.sid
 
 	if ((memGet(_baseAddr+0x17) == 0x3) && 														// voice 1&2 through filter
 		(memGet(_baseAddr+0x15) == 0xff) && (memGet(_baseAddr+0x16) == 0xff) &&							// correct filter cutoff
@@ -679,7 +681,7 @@ uint8_t DigiDetector::detectSample(uint16_t addr, uint8_t value) {
 	if ((SID::getNumberUsedChips() == 1) && _isC64compatible) addr&= ~(0x3e0); // mask out alternative addresses of d400 SID (see 5-Channel_Digi-Tune).. use in PSID would crash playback of recorded samples
 	
 	if (envIsPSID() && _isC64compatible) return 0;	// for songs like MicroProse_Soccer_V1.sid tracks >5 (PSID digis must still be handled.. like Demi-Demo_4_PSID.sid)
-	
+		
 	uint8_t reg= addr&0x1f;
 	uint8_t voice= 0;
     if ((reg >= 7) && (reg <=13)) {voice=1; reg-=7;}
@@ -688,7 +690,7 @@ uint8_t DigiDetector::detectSample(uint16_t addr, uint8_t value) {
 	if (handleFreqModulationDigi(voice, reg, value)) return 1;
 	if (handlePulseModulationDigi(voice, reg, value)) return 1;
 	if (handleSwallowDigi(voice, reg, addr, value)) return 1;
-
+	
 	// normal handling
 	if (envIsRSID() && (addr == (_baseAddr+0x18))) {
 		if(assertSameSource(0)) recordSample(isMahoneyDigi() ? _mahoneySample[value] : getD418Sample(value), 0);	// this may lead to false positives..

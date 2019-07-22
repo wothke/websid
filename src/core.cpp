@@ -47,7 +47,7 @@ extern "C" {
 */
 static uint8_t _memory_snapshot[MEMORY_SIZE];
 
-static double _cycles;	// to handle cross frame overflow
+static double _sample_cycles;	// to handle cross frame overflow
 
 
 static void reset(uint32_t sample_rate, uint8_t ntsc_mode, uint8_t compatibility) {		
@@ -61,7 +61,7 @@ static void reset(uint32_t sample_rate, uint8_t ntsc_mode, uint8_t compatibility
 	
 	SID::resetAll(sample_rate, envSIDAddresses(), envSID6581s(), compatibility, 1);
 	
-	_cycles= 0;
+	_sample_cycles= 0;
 }
 
 
@@ -110,7 +110,7 @@ void runEmulation(int16_t *synth_buffer, int16_t **synth_trace_bufs, uint16_t sa
 	// called Phase 2 or Phi2 (ϕ2).
 
 	for (int i = 0; i<samples_per_call; i++) {
-		while(_cycles < n) {
+		while(_sample_cycles < n) {
 
 			// VIC always uses the 1st phase of each ϕ2 clock cycle (for bus access) so it should be clocked first
 			vicClock();
@@ -120,9 +120,9 @@ void runEmulation(int16_t *synth_buffer, int16_t **synth_trace_bufs, uint16_t sa
 			cpuClock();	// invalid "main" should just keep burning cycles one-by-one
 			
 			cpuClockSystem();
-			_cycles++;
+			_sample_cycles++;
 		}
-		_cycles-= n;	// keep overflow
+		_sample_cycles-= n;	// keep overflow
 		
 		SID::synthSample(synth_buffer, synth_trace_bufs, i);
 	}
@@ -185,14 +185,15 @@ void preparePlayPSID() {
 static void runEmuTimerPSID(int16_t *synth_buffer, int16_t **synth_trace_bufs, uint16_t samples_per_call) {
 	// NOTE: There are crappy PSID songs that use timing that will shift PLAY call positions over time (e.g.
 	// Sacred_Armour_of_Antiriad.sid which uses a 1250 cycles timer and an IRQ handler that takes longer
-	// than that interval). Other songs use timer intervals longer than one frame, e.g. Transformers.sid
-	// which makes a PLAY call every 1.5 screens. I.e. the "play" calls may eventually cross frame boundaries and 
-	// may need to be resumed in the next frame
+	// than that interval). Other songs use timer intervals longer than one frame, e.g. Transformers.sid or Madballs.sid
+	// which make a PLAY call every 1.5-2 screens. I.e. the "play" calls will eventually cross frame boundaries and 
+	// need to be resumed in the next frame (idiotic having to do some "almost" RSID handling based on
+	// inconsistent PSID shit..)
 	
 	double n= SID::getCyclesPerSample();
 
 	// cycles available in the "current" interval
-	uint16_t slot_cycles= _timer_psid_slot_overflow ? _timer_psid_slot_overflow : getTimerForPSID();
+	int32_t slot_cycles= _timer_psid_slot_overflow ? _timer_psid_slot_overflow : getTimerForPSID();
 	
 	uint8_t valid_pc = 0;
 	if (_timer_psid_pc) {
@@ -200,22 +201,23 @@ static void runEmuTimerPSID(int16_t *synth_buffer, int16_t **synth_trace_bufs, u
 		valid_pc= 1;
 	}
 	
-	uint16_t irq_cycles=0;	// cycles used by the IRQ handler in this frame's call
+	uint16_t irq_cycles=0;	// cycles used by the IRQ handler/PLAY in the current call
 	
 	// test-case: Madballs.sid	(slow 2-frame timer that needs int32_t here)
 	int32_t fill_cycles= _timer_psid_slot_overflow;	// filler cycles needed after the current IRQ handler (will be adjusted if there is a _timer_psid_pc as well )
 	
-	for (int i = 0; i<samples_per_call; i++) {	
-		while(_cycles < n) {
+	for (int i = 0; i<samples_per_call; i++) {
+		while(_sample_cycles < n) {
 			vicClock();
 			ciaClock();
 			SID::clockAll();
 		
 			if (valid_pc) {
+				
 				irq_cycles++;
 				valid_pc= cpuClock();	// just run until it returns
 								
-				if (!valid_pc) {	
+				if (!valid_pc) {
 					// the IRQ completed and it may have used less OR MORE cycles than what was available for its "slot"					
 					
 					if (_timer_psid_pc) {
@@ -239,8 +241,9 @@ static void runEmuTimerPSID(int16_t *synth_buffer, int16_t **synth_trace_bufs, u
 						}
 						_timer_psid_pc= 0;
 												
-					} else {	
-						// regular in-frame IRQ completed 
+					} else {
+						// regular in-frame IRQ just completed (calculate the "filler"
+						// needed before the next PLAY call is performed)
 						slot_cycles= getTimerForPSID();	// from one IRQ to the next					
 						
 						if (irq_cycles>slot_cycles) {
@@ -257,23 +260,29 @@ static void runEmuTimerPSID(int16_t *synth_buffer, int16_t **synth_trace_bufs, u
 					}
 				}
 			} else {
+				// complete the "filler" before running the next PLAY
+			
 				if (fill_cycles > 0) {
-					fill_cycles--;	// fill the time between IRQ handler execution
+					fill_cycles--;
 				} else {
 					// start next IRQ
+					// note: 7 cycles for IRQ startup are not considered .. will just be added in the filler
 					preparePlayPSID();
 					ciaFakeIrqPSID();
+					
+					slot_cycles= getTimerForPSID();	// start a new slot
+					
 					irq_cycles= 0;
 					valid_pc = 1;
-					fill_cycles= 0;					
-//					slot_cycles= getTimerForPSID();	// handled above to allow for shorting after overflows..						
+					fill_cycles= 0;
+					
 				}
 			}
 			
 			cpuClockSystem();
-			_cycles++;
+			_sample_cycles++;
 		}
-		_cycles-= n;	// keep overflow
+		_sample_cycles-= n;	// keep overflow
 		
 		SID::synthSample(synth_buffer, synth_trace_bufs, i);
 	}
@@ -281,6 +290,7 @@ static void runEmuTimerPSID(int16_t *synth_buffer, int16_t **synth_trace_bufs, u
 	// handle overflow into the next frame
 	_timer_psid_slot_overflow= fill_cycles;			// known wait-cycles that did not fit into the current frame 
 	_timer_psid_pc= valid_pc ? cpuGetPC() : 0;
+	
 	
 	if (_timer_psid_pc) {
 		// current IRQ had to be paused and what remains of the "slot" must be resumed in the next frame
@@ -306,7 +316,7 @@ static void runEmuRasterPSID(int16_t *synth_buffer, int16_t **synth_trace_bufs, 
 	uint8_t valid_pc = 1;
 	
 	for (int i = 0; i<samples_per_call; i++) {
-		while(_cycles < n) {
+		while(_sample_cycles < n) {
 		
 			vicClock();
 			ciaClock();
@@ -317,9 +327,9 @@ static void runEmuRasterPSID(int16_t *synth_buffer, int16_t **synth_trace_bufs, 
 			}
 			
 			cpuClockSystem();
-			_cycles++;
+			_sample_cycles++;
 		}
-		_cycles-= n;	// keep overflow
+		_sample_cycles-= n;	// keep overflow
 		
 		SID::synthSample(synth_buffer, synth_trace_bufs, i);
 	}
@@ -388,7 +398,7 @@ void Core::startupSong(uint32_t sample_rate, uint8_t ntsc_mode, uint8_t compatib
 
 		_timer_psid_pc= 0;	// PSID specific
 
-		ciaReset60HzPSID();
+//		ciaReset60HzPSID();
 
 		memResetBanksPSID(envIsPSID(), play_addr);
 		_psid_bank_setting= memReadRAM(0x1); // test-case: Madonna_Mix.sid		

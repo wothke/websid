@@ -682,7 +682,6 @@ void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offs
 // FIXME add "mute digi" feature
 // FIXME Acid_Preview - high pitched noise.. use same hack to turn off voice output?
 
-//	if (1) {
 	if (digiSrc > 0 && _digi->isFiltered()) {
 		uint8_t enabled= 1;
 		_filter->routeSignal(&digiOut, &outf, &outo, digiSrc-1, &enabled);

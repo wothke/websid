@@ -28,7 +28,7 @@ uint8_t 	ciaNMI();
 uint8_t 	ciaIRQ();
 
 // PSID crap
-void		ciaReset60HzPSID();
+//void		ciaReset60HzPSID();
 uint16_t	ciaGetTimerPSID();
 void		ciaFakeIrqPSID();
 

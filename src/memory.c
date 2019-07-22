@@ -98,7 +98,7 @@ static uint8_t isKernalRomVisible() {
 }
 
 /*
-* @return 0 if RAM is visible; 1 if IO area is visible
+* @return 0 if RAM/ROM is visible; 1 if IO area is visible
 */ 
 static uint8_t isIoAreaVisible() {
 	uint8_t bits= _memory[0x0001] & 0x7;	
