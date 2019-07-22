@@ -1,0 +1,17 @@
+KNOWN LIMITATIONS
+-----------------
+
+SID related: 
+- Filter implementation based on Hermit's jssid.js may not be 100% acurate (this is probably
+  the prio 1 limitation)
+- the combined-waveforms generated based on Hermit's approach may deviate from respective 
+  tables recorded on the real hardware
+- output is calculated only once per sample (which typically covers a 22 system clock
+  cycle interval). The random value picked may differ from the average value that
+  would result when considering the output at every single cycle.
+  
+VIC related:
+- the timing delays caused by the use of sprites are NOT considered at all: songs that
+  heavily rely on respective effects for their correct timing will not work correctly
+  (examples: Vicious_SID_2-15638Hz.sid plays too fast, Comaland_tune_3.sid & Fantasmolytic_tune_2.sid
+  are badly out of sync, .. there will be others)

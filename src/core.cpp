@@ -201,7 +201,9 @@ static void runEmuTimerPSID(int16_t *synth_buffer, int16_t **synth_trace_bufs, u
 	}
 	
 	uint16_t irq_cycles=0;	// cycles used by the IRQ handler in this frame's call
-	int16_t fill_cycles= _timer_psid_slot_overflow;	// filler cycles needed after the current IRQ handler (will be adjusted if there is a _timer_psid_pc as well )
+	
+	// test-case: Madballs.sid	(slow 2-frame timer that needs int32_t here)
+	int32_t fill_cycles= _timer_psid_slot_overflow;	// filler cycles needed after the current IRQ handler (will be adjusted if there is a _timer_psid_pc as well )
 	
 	for (int i = 0; i<samples_per_call; i++) {	
 		while(_cycles < n) {
@@ -327,6 +329,8 @@ static void runEmuRasterPSID(int16_t *synth_buffer, int16_t **synth_trace_bufs, 
 	if (valid_pc) {
 		int count= 0;
 		while((valid_pc= cpuClock()) && (count < 60000)) { count++; vicClock(); ciaClock(); SID::clockAll();cpuClockSystem();	} // just run until it returns
+
+		EM_ASM_({ console.log("illegal PSID used excess RASTER cycles: "+($0));}, count);	// easier to deal with this on JavaScript side (pervent optimizer renaming the func)
 	}
 }
 

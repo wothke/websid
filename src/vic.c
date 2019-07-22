@@ -42,6 +42,7 @@ static uint32_t _total_cycles_per_screen;
 static uint8_t _x;	// in cycles
 static uint16_t _y;	// in rasters
 
+static int16_t _init_raster_PSID;
 
 double vicFPS() {
 	return _fps;
@@ -85,6 +86,8 @@ void vicSetModel(uint8_t ntsc_mode) {
 		
 	// NTSC: 17095	/ PAL: 19656		
 	_total_cycles_per_screen= _cycles_per_raster * vicLinesPerScreen();
+	
+	_init_raster_PSID= -1;
 }
 
 uint16_t getRasterLatch() {
@@ -132,8 +135,15 @@ uint8_t vicIRQ() {
 void vicFakeIrqPSID() {
 	// util used for PSID to setup fake RASTER IRQ environment
 	
+	if (_init_raster_PSID == -1) {
+		_init_raster_PSID= getRasterLatch(); 		// PSHIT crap may reset D012 to NOT to be used shit from within its PLAY - test-case: Galdrumway.sid
+	}
+	_y= _init_raster_PSID;
+	
+	
 	memWriteIO(0xd01a, memReadIO(0xd01a) | 0x1);	// mask: RASTER IRQ
 	memWriteIO(0xd019, 0x81);
+	
 }
 
 /*
