@@ -99,7 +99,7 @@ void checkIRQ() {
 	// every line (for line 0, in cycle 1)."	
 	
 	if (_y == getRasterLatch()) {			
-		uint8_t latch= memReadIO(0xd019) | 0x1;	// alwasy signal (test case: Wally Beben songs that use CIA 1 timer for IRQ but check for this flag)
+		uint8_t latch= memReadIO(0xd019) | 0x1;	// always signal (test case: Wally Beben songs that use CIA 1 timer for IRQ but check for this flag)
 
 		uint8_t interrupt_enable= memReadIO(0xd01a) & 0x1;			
 		if (interrupt_enable) {
@@ -193,13 +193,13 @@ void vicReset(uint8_t is_rsid, uint8_t ntsc_mode) {
 	
 	if (is_rsid) {
 		// by default C64 is configured with CIA1 timer / not raster irq
-		
-		// according to SID file format spec the raster should default to 0x137 
-		// but this once again seems to be rubbish - test-case:  Vicious_SID_2-1st_loader.sid - only sets d012 putting in in invalid range
-		
+				
+		memWriteIO(0xd019, 0x01); 	// presumable "the machine" has been running for more than one frame before the prog is run
 		memWriteIO(0xd01a, 0x00); 	// raster irq not active
-		memWriteIO(0xd011, 0x1B);
-		memWriteIO(0xd012, 0x00); 	// raster at line x
+
+		// RASTER default to 0x137 (see real HW) 
+		memWriteIO(0xd011, 0x9B);
+		memWriteIO(0xd012, 0x37); 	// raster at line x
 	}
 }
 
@@ -224,20 +224,27 @@ static void writeD019(uint8_t value) {
 		v &= 0x7f; 		// all sources are gone.. so IRQ flag should also be cleared
 	}
 	memWriteIO(0xd019, v);
-	
-	
-	/*
-	if (value) value |= 0x80;
-	
-	uint8_t was=  memReadIO(0xd019);
-	memWriteIO(0xd019, was&(~value));
-	*/
+}
+
+static void writeD01A(uint8_t value) {	
+	memWriteIO(0xd01A, value);
+		
+	if (value & 0x1) {
+		// check if RASTER condition has already fired previously
+		uint8_t d= memReadIO(0xd019);
+		if (d & 0x1) {
+			memWriteIO(0xd019, d | 0x80); 	// signal VIC interrupt
+		}
+	}
 }
 
 void vicWriteMem(uint16_t addr, uint8_t value) {
 	switch (addr) {
 		case 0xd019:
 			writeD019(value);
+			break;
+		case 0xd01A:
+			writeD01A(value);
 			break;
 		default:
 			memWriteIO(addr, value);

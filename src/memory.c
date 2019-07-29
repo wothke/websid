@@ -200,6 +200,7 @@ const static uint8_t _irq_handler_EA7C[11] ={0xE6,0xA2,0xAD,0x0D,0xDC,0x68,0xA8,
 const static uint8_t _nmi_handler_FE43[5] ={0x78,0x6c,0x18,0x03,0x40};
 const static uint8_t _irq_end_handler_FEBC[6] ={0x68,0xa8,0x68,0xaa,0x68,0x40};
 
+
 #ifdef TEST
 void memInitTest() {
 
@@ -218,13 +219,12 @@ void memInitTest() {
     memcpy(&_kernal_rom[0x1f6e], _schedule_ta_FF6E, 18);			// $ff6e scheduling TA
     memcpy(&_kernal_rom[0x0e8e], _serial_clock_hi_EE8E, 9);		// $ee8e set serial clock line high
 
-
 	_kernal_rom[0x1ffe]= 0x48;
 	_kernal_rom[0x1fff]= 0xff;
 	
 	memResetRAM(0);
 //    memset(&_memory[0], 0x0, MEMORY_SIZE);
-		
+
 	_memory[0xa003]= 0x80;
 	_memory[0x01fe]= 0xff;
 	_memory[0x01ff]= 0x7f;
@@ -235,7 +235,6 @@ void memInitTest() {
 	setMemBank(0x37);
 		
     memcpy(&_memory[0xe000], _kernal_rom, 0x1fff);	// just in case there is a banking issue
-	
 }
 #endif
 
