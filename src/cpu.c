@@ -250,17 +250,13 @@ uint8_t pendingNMI () {
 	return 0;
 }
 
-
-
-uint8_t cpuPcIsValid() {
-	// for garbage PSID $0000/0001 is used to detect when the player
-	// is done (by pulling that specific end-marker from the stack)
-	// see cpuResetToIrqPSID()
+uint8_t cpuIsValidPcPSID() {
+	// only used to to run PSID INIT separately.. everything else runs 
+	// without this limitation 
 	
 	// for RSIDs there is not really "any" invalid PC
 	// test-case: Boot_Zak_v2.sid (uses $0000 for IRQ handler).
-	
-	return envIsRSID() || (_pc > 1);
+	return _pc > 1;
 }
 
 // MOS6510 instruction modes
@@ -630,13 +626,14 @@ static void prefetchOP( int16_t *opcode, int8_t *cycles) {
 		_delayed_cli= 0;
 	}
 	*/
-		
+	
+	/* no longer needed - now that PSIDs use proper driver/wrapper
 	if (!cpuPcIsValid()) {
 		// init returned to non existing "main".. just burn cycles for imaginary "main" and wait for next interrupt
 		*opcode= null_op;		
 		*cycles= _opbase_frame_cycles[*opcode];	// just burn some cycles
 		return;
-	}
+	}*/
 	
 	uint16_t _orig_pc= _pc;	// _pc will be used/corrupted via getaddr anyway
 
@@ -915,7 +912,7 @@ void cpuInit(void)
 #endif
 }
 
-void cpuRegReset(void)
+static void cpuRegReset(void)
 {
     _a=_x=_y=0;
     _p=0;
@@ -936,6 +933,9 @@ void cpuReset(uint16_t npc, uint8_t na) {
 
 
 
+void cpuIrqFlagPSID(uint8_t on) {
+	setflags(FLAG_I, on);
+}
 
 #ifdef TEST
 char _load_filename[32];
@@ -959,7 +959,6 @@ static void runNextOp(void)
 	opc= _exe_instr_opcode;
 
 //	if (_pc == 0x0B43) fprintf(stderr, "%6lu ***** START TEST 8 ********\n", _cycles);
-//	if (_pc == 0x45Be) fprintf(stderr, "%6lu TEST 8: a=%#08x\n", _cycles, _a);
 
 	
     int32_t cmd=_opcodes[opc];
@@ -1122,18 +1121,18 @@ static void runNextOp(void)
 				break;
 			}	
 #endif
-			EM_ASM_({ console.log('BRK from:        $' + ($0).toString(16));}, _pc);	// less mem than inclusion of fprintf
+			EM_ASM_({ console.log('BRK from:        $' + ($0).toString(16));}, _pc-1);	// less mem than inclusion of fprintf
 
 			// _pc has already been incremented by 1 (see above) 
 			// (return address to be stored on the stack is original _pc+2 )
 			push((_pc+1)>>8);
-            push((_pc+1));
-            push(_p | FLAG_B0 | FLAG_B1);	// only in the stack copy
+			push((_pc+1));
+			push(_p | FLAG_B0 | FLAG_B1);	// only in the stack copy
 			
 			_pc=memGet(0xfffe);
 			_pc|=memGet(0xffff)<<8;		// somebody might finger the IRQ vector or the BRK vector at 0316/0317 to use this?
 			
-            setflags(FLAG_I,1);
+			setflags(FLAG_I,1);
             break;
         case clc:
             setflags(FLAG_C,0);
@@ -1588,7 +1587,7 @@ static void runNextOp(void)
             break; 
 		default:
 #ifdef DEBUG
-			fprintf(stderr, "op code not implemented: %d at %d\n", opc, _pc);
+			EM_ASM_({ console.log('op code not implemented: ' + ($0).toString(16) + ' at ' + ($1).toString(16));}, opc, _pc);	// less mem than inclusion of fprintf
 #endif
 			getaddr(opc, mode);	 // at least make sure the PC is advanced correctly (potentially used in timing)
     }
@@ -1655,19 +1654,21 @@ int8_t isStunned(void) {
 */
 
 
-int8_t cpuClock(void) {
+void cpuClock(void) {
 	// note: on the real HW the respective check happends in ø2 phase of the previous CPU cycle and the respective internal
 	// interrupt signal then goes high in the ø1 phase after (the potential problem of the below impl is that by performing 
 	// the test here, it might incorrectly pick up some CIA change that has just happend in the ø1 phase)
 	checkForIRQ();	// check 1st (so NMI can overrule if needed)
 	checkForNMI();
 
-	if (isStunned()) return cpuPcIsValid();
+	if (isStunned()) return;
 
 	if (_exe_instr_opcode < 0) {	// get next instruction	
 
-		if(pendingNMI()) {								// has higher prio than IRQ
-			// by definition PSID never uses NMI
+		if(envIsRSID() && pendingNMI()) {								// has higher prio than IRQ
+			// some old PlaySID files (with recorded digis) files actually 
+			// use NMI settings that must not be used here
+			
 			_nmi_executing= 1;
 			_nmi_committed= 0;
 			_nmi_line_ts= 0;	// make that same trigger unusable (interrupt must be acknowledged before a new one can be triggered)
@@ -1675,7 +1676,7 @@ int8_t cpuClock(void) {
 			_exe_instr_opcode= start_nmi_op;
 			_exe_instr_cycles= _opbase_frame_cycles[_exe_instr_opcode];
 				
-		} else if (envIsRSID() && pendingIRQ()) {	// interrupts are like a BRK command 
+		} else if (pendingIRQ()) {	// interrupts are like a BRK command 
 			_irq_committed= 0;
 
 			_exe_instr_opcode= start_irq_op;
@@ -1727,28 +1728,12 @@ int8_t cpuClock(void) {
 //	 if (_exe_instr_cycles_remain <0) {
 //			fprintf(stderr, "ERROR: _exe_instr_cycles_remain < 0\n");
 //	}
-
-	return cpuPcIsValid();
 }
 
-void cpuResetToIrqPSID(uint16_t npc) {
-	/*
-	provide dummy return address - which we use to return from the emulation:
-	in case of RTI (e.g. progs implementing $fffe/f vector directly) this will be used "as is".
-	if some program was to return with "RTS" (e.g. legacy PSID) the address would be returned as $0001.
-	*/
-	
-	push(0);	// addr high
-	push(0);	// addr low
-	
-	// NOTE: garbage PSID shit that uses RTS from IRQ will pick this up as a return address
-	// so _p better be 0 in that scenario:
-
-	push(0);	// processor status (processor would do this in case of interrupt...)
-		
+void cpuResetToPSID(uint16_t npc) {
 	_pc= npc;
 	
- //   setflags(FLAG_I,1);		// would be plausible when running an IRQ - but probably pointless for PSID
+   setflags(FLAG_I, 0);		// make sure the IRQ isn't blocked
 }
 
 

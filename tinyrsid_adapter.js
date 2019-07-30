@@ -135,10 +135,6 @@ SIDBackendAdapter = (function(){ var $this = function () {
 			result.songAuthor= this.getExtAsciiString(array[5]);
 			result.songReleased= this.getExtAsciiString(array[6]);			
 		},
-		// for debugging.. disable voices (0-3) by clearing respective bit
-		enableVoices: function(mask) {
-			this.Module.ccall('enableVoices', 'number', ['number'], [mask]);
-		},
 		
 		// C64 emu specific accessors (that might be useful in GUI)
 		isSID6581: function() {
@@ -204,10 +200,18 @@ SIDBackendAdapter = (function(){ var $this = function () {
 		getDigiRate: function() {
 			return this.Module.ccall('getDigiRate', 'number');
 		},
+		enableVoice: function(sidIdx, voice, on) {
+			this.Module.ccall('enableVoice', 'number', ['number', 'number', 'number'], [sidIdx, voice, on]);
+		},
+
 		
 		/*
 		* @deprecated APIs below - use getTraceStreams/getNumberTraceStreams instead
 		*/
+		// disable voices (0-3) by clearing respective bit
+		enableVoices: function(mask) {
+			this.Module.ccall('enableVoices', 'number', ['number'], [mask]);
+		},
 		getBufferVoice1: function() {
 			var ptr=  this.Module.ccall('getBufferVoice1', 'number');			
 			return ptr>>1;	// 16 bit samples			

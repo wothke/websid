@@ -13,7 +13,7 @@
 
 #include "base.h"
 
-#define MEMORY_SIZE 65535
+#define MEMORY_SIZE 65536
 
 // setup/initialization
 void	memResetKernelROM();
@@ -32,8 +32,8 @@ uint8_t memReadRAM(uint16_t addr);
 void	memWriteRAM(uint16_t addr, uint8_t value);
 	// utils
 uint8_t	memMatch(uint16_t addr, uint8_t *pattern, uint8_t len);
-void	memCopyToRAM(uint8_t *src, uint16_t destAddr, uint16_t len);
-void	memCopyFromRAM(uint8_t *dest, uint16_t srcAddr, uint16_t len);
+void	memCopyToRAM(uint8_t *src, uint16_t destAddr, uint32_t len);
+void	memCopyFromRAM(uint8_t *dest, uint16_t srcAddr, uint32_t len);
 
 
 // I/O area access 
@@ -42,7 +42,8 @@ void	memWriteIO(uint16_t addr, uint8_t value);
 
 // PSID crap
 void	memSetDefaultBanksPSID(uint8_t isRsid, uint16_t initAddr, uint16_t loadEndAddr);
-void	memResetBanksPSID(uint8_t isPsid, uint16_t playAddr);
+void	memResetBanksPSID(uint16_t playAddr);
+uint16_t memPsidMain(uint8_t bank, uint16_t play_addr);
 
 #ifdef TEST
 void	memInitTest();

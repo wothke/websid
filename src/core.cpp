@@ -4,18 +4,17 @@
 * This updated version uses a cycle-by-cycle emulation of the different
 * C64 components (VIC, SID, CIA, CPU). 
 *
-* Most of this file is dedidated to dealing with the inconsistencies of
-* garbage PSID files. (By comparison the loop used for RSID is rather
-* simple.)
+* PSID files are wrapped with respective driver code so that the regular
+* RSID emulation can be used.
 *
-* Note: It is still a somewhat high level emulation, i.e. unlike very precise 
-* emulators it does NOT emulate different phases of a system clock cycle, nor respective 
-* detailed internal workings of all the various components (e.g. CPU). 
+* Note: It is still a somewhat high level emulation, i.e. unlike very precise
+* emulators it does NOT emulate different phases of a system clock cycle, nor respective
+* detailed internal workings of all the various components (e.g. CPU).
 * 
 * WebSid (c) 2019 Jürgen Wothke
 * version 0.93
 *
-* Terms of Use: This software is licensed under a CC BY-NC-SA 
+* Terms of Use: This software is licensed under a CC BY-NC-SA
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
 
@@ -88,7 +87,8 @@ void Core::rsidRunTest() {
 		ciaClock();
 		SID::clockAll();
 		
-		uint8_t valid_pc= cpuClock();	// invalid "main" should just keep burning cycles one-by-one
+		cpuClock();	// invalid "main" should just keep burning cycles one-by-one
+		uint8_t valid_pc= cpuIsValidPcPSID();
 		
 		if (!valid_pc ) { 
 			test_running= 0;
@@ -97,9 +97,6 @@ void Core::rsidRunTest() {
 	}
 }
 #endif
-
-
-// -------------------- regular (RSID) C64 emulation ------------------------------
 
 
 void runEmulation(int16_t *synth_buffer, int16_t **synth_trace_bufs, uint16_t samples_per_call) {
@@ -128,236 +125,12 @@ void runEmulation(int16_t *synth_buffer, int16_t **synth_trace_bufs, uint16_t sa
 	}
 }
 
-
-// -------------------- handling for dumbshit PSID crap ------------------------------
-
-static int32_t	_timer_psid_slot_overflow= 0;	// to keep equally spaced intervals across frame boundaries
-static uint16_t	_timer_psid_pc= 0;				// in case the previous call did not yet complete
-static uint8_t	_psid_bank_setting;
-
-uint16_t getTimerForPSID() {
-	uint16_t t= ciaGetTimerPSID();	// may not be configured by for PSID (see Alien.sid, Magicians_Ball.sid)	
-	return (t == 0) ? vicCyclesPerScreen() : t;
-}
-
-static uint8_t isDummyIrqVectorPSID() {
-	// PSID use of 0314/0315 vector which is technically not setup correctly (e.g. Ode_to_Galway_Remix.sid):
-	// PSIDs may actually set the 0314/15 vector via INIT, turn off the kernal ROM and 
-	// not provide a useful fffe/f vector.. and we need to handle that crap..
-	
-	if ((envSidPlayAddr() != 0) || (((memGet(0xfffe)|(memGet(0xffff)<<8)) == 0) && envIsPSID() &&
-			((memGet(0x0314)|(memGet(0x0315)<<8)) != 0))) {
-		
-		return 1;
-	}
-	return 0;
-}
-
-static uint16_t getIrqVectorPSID() {
-	if (envSidPlayAddr() != 0) {
-		// no point going through the standard interrupt routines with this PSID crap.. we
-		// cannot tell if it behaves like a 0314/15 or like a fffe/f routine anyway... (and the stack will likely be messed up)
-		return envSidPlayAddr();	
-	} 
-
-	uint16_t irq_addr= (memGet(0xfffe)|(memGet(0xffff)<<8));	
-
-	if ((irq_addr == 0) && envIsPSID()) {	// see isDummyIrqVectorPSID()
-		irq_addr= (memGet(0x0314)|(memGet(0x0315)<<8));		
-	}
-	return irq_addr;
-}
-
-void preparePlayPSID() {
-	// PSID garbage requires the bank setting to be restored to what is was after INIT before each PLAY
-
-	memWriteRAM(0x0001, _psid_bank_setting);	// test-cases: Madonna_Mix.sid, 8-Bit_Keys_Theme.sid
-
-	// restore environment to something useful since dumbshit PSID probably corrupted it..
-	if (isDummyIrqVectorPSID()) {
-		// no point in trying to keep the stack consistent for a PSID
-		cpuRegReset();
-	}
-	
-	cpuResetToIrqPSID(getIrqVectorPSID());	
-}
-
-static void runEmuTimerPSID(int16_t *synth_buffer, int16_t **synth_trace_bufs, uint16_t samples_per_call) {
-	// NOTE: There are crappy PSID songs that use timing that will shift PLAY call positions over time (e.g.
-	// Sacred_Armour_of_Antiriad.sid which uses a 1250 cycles timer and an IRQ handler that takes longer
-	// than that interval). Other songs use timer intervals longer than one frame, e.g. Transformers.sid or Madballs.sid
-	// which make a PLAY call every 1.5-2 screens. I.e. the "play" calls will eventually cross frame boundaries and 
-	// need to be resumed in the next frame (idiotic having to do some "almost" RSID handling based on
-	// inconsistent PSID shit..)
-	
-	double n= SID::getCyclesPerSample();
-
-	// cycles available in the "current" interval
-	int32_t slot_cycles= _timer_psid_slot_overflow ? _timer_psid_slot_overflow : getTimerForPSID();
-	
-	uint8_t valid_pc = 0;
-	if (_timer_psid_pc) {
-		// remaining "PLAY" from previous frame.. continue where previous frame stopped
-		valid_pc= 1;
-	}
-	
-	uint16_t irq_cycles=0;	// cycles used by the IRQ handler/PLAY in the current call
-	
-	// test-case: Madballs.sid	(slow 2-frame timer that needs int32_t here)
-	int32_t fill_cycles= _timer_psid_slot_overflow;	// filler cycles needed after the current IRQ handler (will be adjusted if there is a _timer_psid_pc as well )
-	
-	for (int i = 0; i<samples_per_call; i++) {
-		while(_sample_cycles < n) {
-			vicClock();
-			ciaClock();
-			SID::clockAll();
-		
-			if (valid_pc) {
-				
-				irq_cycles++;
-				valid_pc= cpuClock();	// just run until it returns
-								
-				if (!valid_pc) {
-					// the IRQ completed and it may have used less OR MORE cycles than what was available for its "slot"					
-					
-					if (_timer_psid_pc) {
-						// just completed the overflowed IRQ from previous frame
-						if (_timer_psid_slot_overflow) {		// overflowed slot-part from the previous page 
-							
-							if (irq_cycles > _timer_psid_slot_overflow) {
-								// IRQ overflowed into the next "slot"			
-								// correctly the next IRQ should immediately start after this one is done, but the future "timer"
-								// events still should use the original schedule (which is NOT handled here)
-								fill_cycles= 0;
-							} else {
-								// well behaved use of previous slot
-								fill_cycles= _timer_psid_slot_overflow - irq_cycles;
-							}							
-							_timer_psid_slot_overflow= 0;
-						} else {
-							// incorrect PSID shit
-							slot_cycles= getTimerForPSID();	// from one IRQ to the next					
-							fill_cycles= 0;
-						}
-						_timer_psid_pc= 0;
-												
-					} else {
-						// regular in-frame IRQ just completed (calculate the "filler"
-						// needed before the next PLAY call is performed)
-						slot_cycles= getTimerForPSID();	// from one IRQ to the next					
-						
-						if (irq_cycles>slot_cycles) {
-							// no filler needed since the next IRQ would already have been triggered						
-							fill_cycles= 0;	// persume the next IRQ is already waiting..
-							
-							// try to keep timer equally spaced by removing the overflow from the 
-							// available slot size
-							slot_cycles-= (irq_cycles-slot_cycles) % slot_cycles;	// slow handler might even use multiple slots!						
-						} else {
-							// "fill" the remainder of the current slot
-							fill_cycles= slot_cycles - irq_cycles;					// PS: this may reach into the next frame!																				
-						}					
-					}
-				}
-			} else {
-				// complete the "filler" before running the next PLAY
-			
-				if (fill_cycles > 0) {
-					fill_cycles--;
-				} else {
-					// start next IRQ
-					// note: 7 cycles for IRQ startup are not considered .. will just be added in the filler
-					preparePlayPSID();
-					ciaFakeIrqPSID();
-					
-					slot_cycles= getTimerForPSID();	// start a new slot
-					
-					irq_cycles= 0;
-					valid_pc = 1;
-					fill_cycles= 0;
-					
-				}
-			}
-			
-			cpuClockSystem();
-			_sample_cycles++;
-		}
-		_sample_cycles-= n;	// keep overflow
-		
-		SID::synthSample(synth_buffer, synth_trace_bufs, i);
-	}
-		
-	// handle overflow into the next frame
-	_timer_psid_slot_overflow= fill_cycles;			// known wait-cycles that did not fit into the current frame 
-	_timer_psid_pc= valid_pc ? cpuGetPC() : 0;
-	
-	
-	if (_timer_psid_pc) {
-		// current IRQ had to be paused and what remains of the "slot" must be resumed in the next frame
-		if (irq_cycles>slot_cycles) {
-			// IRQ already overflowed into the next "slot", and it is bloody pointless trying to 
-			// handle this case in a fucking PSID environment... whatever is done here is bound to be wrong			
-			_timer_psid_slot_overflow= 0;
-		} else {
-			_timer_psid_slot_overflow= slot_cycles - irq_cycles;
-		}					
-	}
-}
-	
-static void runEmuRasterPSID(int16_t *synth_buffer, int16_t **synth_trace_bufs, uint16_t samples_per_call) {
-	// in PSID context "raster IRQ" means 1x per frame
-
-	// note: a PSID may actually setup CIA 1 timers but without wanting to use them - e.g. ZigZag.sid track2
-	
-	preparePlayPSID();
-	vicFakeIrqPSID();	// just in case the garbabe PSIDs actually care
-	
-	double n= SID::getCyclesPerSample();
-	uint8_t valid_pc = 1;
-	
-	for (int i = 0; i<samples_per_call; i++) {
-		while(_sample_cycles < n) {
-		
-			vicClock();
-			ciaClock();
-			SID::clockAll();
-
-			if (valid_pc) {
-				valid_pc= cpuClock();	// just run until it returns
-			}
-			
-			cpuClockSystem();
-			_sample_cycles++;
-		}
-		_sample_cycles-= n;	// keep overflow
-		
-		SID::synthSample(synth_buffer, synth_trace_bufs, i);
-	}
-	
-	// garbage songs like: A-Maze-Ing.sid use more cycles (at least in some initial run) than what is available in 
-	// one frame (e.g. 25395 cycles for "one play").. let that kind of shit "PLAY" run to the end (within reasonable limits)
-	if (valid_pc) {
-		int count= 0;
-		while((valid_pc= cpuClock()) && (count < 60000)) { count++; vicClock(); ciaClock(); SID::clockAll();cpuClockSystem();	} // just run until it returns
-
-		EM_ASM_({ console.log("illegal PSID used excess RASTER cycles: "+($0));}, count);	// easier to deal with this on JavaScript side (pervent optimizer renaming the func)
-	}
-}
-
 uint8_t Core::runOneFrame(int16_t *synth_buffer, int16_t **synth_trace_bufs, uint16_t samples_per_call) {
 	SID::resetGlobalStatistics();
 
 	ciaUpdateTOD(envCurrentSongSpeed());
+	runEmulation(synth_buffer, synth_trace_bufs, samples_per_call);
 	
-	if (envIsRSID()) {
-		runEmulation(synth_buffer, synth_trace_bufs, samples_per_call);
-	} else {
-		if (envIsTimerDrivenPSID()) {
-			runEmuTimerPSID(synth_buffer, synth_trace_bufs, samples_per_call);
-		} else {
-			runEmuRasterPSID(synth_buffer, synth_trace_bufs, samples_per_call);
-		}
-	}
 	return 0;
 }
 
@@ -381,10 +154,16 @@ void Core::startupSong(uint32_t sample_rate, uint8_t ntsc_mode, uint8_t compatib
 	memSetDefaultBanksPSID(envIsRSID(), (*init_addr), load_end_addr);	// PSID crap
 		
 	if (envIsPSID()) {
+		// run the "INIT" separately so that the "bank" setting can be handled 
+		// here on the C/C++ side
 		cpuReset((*init_addr), actual_subsong);	// set starting point for emulation	
 		
+		cpuIrqFlagPSID(1);	// block IRQ during INIT
+		
 		// run the PSID "init" routine
-		while (cpuClock()) {
+		while (cpuIsValidPcPSID()) {
+			cpuClock();
+			
 			if (cpuCycles() >= CYCLELIMIT ) {
 				EM_ASM_({ console.log('ERROR: PSID INIT hangs');});	// less mem than inclusion of fprintf
 				return;
@@ -395,13 +174,34 @@ void Core::startupSong(uint32_t sample_rate, uint8_t ntsc_mode, uint8_t compatib
 			SID::clockAll();
 			cpuClockSystem();
 		}
+		cpuIrqFlagPSID(0);
 
-		_timer_psid_pc= 0;	// PSID specific
+		memResetBanksPSID(play_addr);
+		uint8_t bank= memReadRAM(0x1); // test-case: Madonna_Mix.sid
 
-//		ciaReset60HzPSID();
+		uint16_t main= memPsidMain(bank,  envSidPlayAddr());
+		cpuResetToPSID(main);	// just use an endless loop for main
+			
+		// NOTE: braindead SID File specs apparently allow PSID INIT to specifically DISABLE
+		// the IRQ trigger that their PLAY depends on (actually another one of those UNDEFINED 
+		// features - that "need not to be documented")
+			
+		if (envIsTimerDrivenPSID()) {
+			ciaReset60HzPSID();
 
-		memResetBanksPSID(envIsPSID(), play_addr);
-		_psid_bank_setting= memReadRAM(0x1); // test-case: Madonna_Mix.sid		
+			memWriteIO(0xdc0d, 0x81);
+			memWriteIO(0xdc0e, 0x01);
+
+//			memWriteIO(0xd019, 0x81);	// not needs since not active before
+			
+		} else {
+			memSet(0xdc0d, 0x7f);	// disable the TIMER IRQ
+			memReadIO(0xdc0d);		// ackn whatever is there already
+			// note: DO NOT stop the timer.. Delta_Mix-E-Load_loader.sid depends on it
+			
+			memWriteIO(0xd01a, 0x81);	// enable RASTER IRQ
+		}
+		
 	} else {
 		memRsidMain(init_addr);
 		cpuReset((*init_addr), actual_subsong);	// set starting point for emulation

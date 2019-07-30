@@ -685,18 +685,18 @@ static void initMem(uint16_t addr, uint8_t value) {
 	memWriteIO(addr, value);
 }
 
-/*
+
 void ciaReset60HzPSID() {
+	// note: the PSID "speed flag" always means 60Hz
 	if (envIsTimerDrivenPSID()) {
 		// if an idiotic PSID does not setup any timer it then expects 60Hz..
 		if (!memReadIO(0xdc04) && !memReadIO(0xdc05)) {
-			uint32_t c= envClockRate()/vicFPS();
+			uint32_t c= envClockRate()/60;
 			initMem(0xdc04, c&0xff);
 			initMem(0xdc05, c>>8);
 		}
 	}
 }
-*/
 
 void ciaReset(uint32_t cycles_per_screen, uint8_t is_rsid) {
 
@@ -717,6 +717,7 @@ void ciaReset(uint32_t cycles_per_screen, uint8_t is_rsid) {
 		initMem(0xdc04, cycles_per_screen&0xff); 	// timer A (1x pro screen refresh)
 		initMem(0xdc05, cycles_per_screen>>8);
 //	}
+
 	if (is_rsid) {	
 		initMem(0xdc06, 0xff);
 		initMem(0xdc07, 0xff);
@@ -728,7 +729,7 @@ void ciaReset(uint32_t cycles_per_screen, uint8_t is_rsid) {
 		initMem(0xdd07, 0xff);
 
 //		initMem(0xdd0d, 0x00); 	// redundant
-		initMem(0xdd0e, 0x08); 	// control timer 2A (start/stop)	deffault: ONE SHOT
+		initMem(0xdd0e, 0x08); 	// control timer 2A (start/stop)	default: ONE SHOT
 		initMem(0xdd0f, 0x08); 	// control timer 2B (start/stop)		
 	} 
 

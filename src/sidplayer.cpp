@@ -96,8 +96,6 @@ static uint16_t	_load_addr, _init_addr, _play_addr, _load_end_addr;
 static uint8_t 	_actual_subsong, _max_subsong;
 static uint32_t	_play_speed;
 
-static uint8_t 	_digi_enabled = 1;	// FIXME obsolete
-
 static uint32_t	_trace_sid= 0;
 
 extern "C" uint16_t envGetFreeSpace() {
@@ -472,9 +470,7 @@ extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 			if (!_sound_started) {
 				// broken sounds might become irresponsive without this brake
 				_skip_silence_loop = (_skip_silence_loop>10) ? (_skip_silence_loop - 10) : 1; 
-			}
-			
-			if (!_digi_enabled) has_digi= 0;
+			}			
 		}
 		
 		if (_number_of_samples_rendered + _number_of_samples_to_render > _chunk_size) {
@@ -517,15 +513,10 @@ extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 	return (_number_of_samples_rendered);
 }
 
-// bit0=voice0, bit1=voice1,..
-extern "C" uint32_t enableVoices(uint32_t mask)  __attribute__((noinline));
-extern "C" uint32_t EMSCRIPTEN_KEEPALIVE enableVoices(uint32_t mask) {
-	for(uint8_t i= 0; i<3; i++) {
-		SID::setMute(0, i, !(mask&0x1));			// FIXME: properly support this for multi SID
-		mask = mask >> 1;
-	}
-	// "voice 4" is digi-output..
-	_digi_enabled= mask&0x1;
+
+extern "C" uint32_t enableVoice(uint8_t sid_idx, uint8_t voice, uint8_t on)  __attribute__((noinline));
+extern "C" uint32_t EMSCRIPTEN_KEEPALIVE enableVoice(uint8_t sid_idx, uint8_t voice, uint8_t on) {
+	SID::setMute(sid_idx, voice, !on);
 	
 	return 0;
 }
@@ -535,7 +526,6 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE playTune(uint32_t selected_track, uint3
 	_trace_sid= trace_sid; 
 	
 	_actual_subsong= (selected_track >= _max_subsong) ? _actual_subsong : selected_track;
-	_digi_enabled = 1;
 	_digi_diagnostic= _digi_average_rate= _digiPreviousRate= 0;
 	
 	_sound_started= 0;
@@ -630,15 +620,16 @@ static uint16_t loadSIDFromMemory(void *sid_data,
 	// to jump through just to find 6 free bytes is a bad joke..
 	
 	uint8_t start_page= pdata[0x78];
+	uint8_t driver_size = 33;	// see memory.c: _driverPSID
 	
 	_free_space= 0;
 	if (start_page == 0xff) {
 		// no space available
 	} else if (start_page == 0x0) {
-		if (((*load_addr) + size) < 0xcff0) {
-			_free_space= 0xcff0;
-		} else if ((*load_addr) >= 0x0406) {
-			_free_space= 0x0400;
+		if (((*load_addr) + size) < (0xcfff - driver_size)) {
+			_free_space= 0xcfff - driver_size;
+		} else if ((*load_addr) >= (0x0400 + driver_size)) {
+			_free_space= (0x0400 + driver_size);
 		}
 	} else {
 		_free_space= ((uint16_t)start_page) << 8;
@@ -877,6 +868,17 @@ extern "C" const char** EMSCRIPTEN_KEEPALIVE getTraceStreams() {
 
 
 // ------------------ deprecated stuff that should no longer be used -----------------------
+
+// @deprecated bit0=voice0, bit1=voice1,..
+extern "C" uint32_t enableVoices(uint32_t mask)  __attribute__((noinline));
+extern "C" uint32_t EMSCRIPTEN_KEEPALIVE enableVoices(uint32_t mask) {
+	for(uint8_t i= 0; i<3; i++) {
+		SID::setMute(0, i, !(mask&0x1));
+		mask = mask >> 1;
+	}
+	
+	return 0;
+}
 
 /**
 * @deprecated use getTraceStreams instead

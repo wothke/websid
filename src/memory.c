@@ -9,6 +9,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <emscripten.h>
 
 #include "memory.h"
 #include "env.h"
@@ -27,7 +28,6 @@ extern void		vicWriteMem(uint16_t addr, uint8_t value);
 
 
 
-#define MEMORY_SIZE 65535
 static uint8_t _memory[MEMORY_SIZE];
 
 #define KERNAL_SIZE 8192
@@ -71,22 +71,20 @@ void memSetDefaultBanksPSID(uint8_t is_rsid, uint16_t init_addr, uint16_t load_e
 	setMemBank(mem_bank_setting);
 }
 
-void memResetBanksPSID(uint8_t is_psid, uint16_t play_addr) {
-	if (is_psid) {
-		// some PSID actually switch the ROM back on eventhough their code is located there! (e.g. 
-		// Ramparts.sid - the respective .sid even claims to be "C64 compatible" - what a joke) 
-		
-		if ((play_addr >= 0xd000) && (play_addr < 0xe000)) {
-			setMemBank(0x34);
-		} else if (play_addr >= 0xe000) {
-			setMemBank(0x35);
-		} else if (play_addr >= 0xa000) {
-			setMemBank(0x36);
-		} else if (play_addr == 0x0){
-			// keep whatever the PSID init setup
-		} else {
-			setMemBank(0x37);
-		}
+void memResetBanksPSID(uint16_t play_addr) {
+	// some PSID actually switch the ROM back on eventhough their code is located there! (e.g. 
+	// Ramparts.sid - the respective .sid even claims to be "C64 compatible" - what a joke) 
+	
+	if ((play_addr >= 0xd000) && (play_addr < 0xe000)) {
+		setMemBank(0x34);
+	} else if (play_addr >= 0xe000) {
+		setMemBank(0x35);
+	} else if (play_addr >= 0xa000) {
+		setMemBank(0x36);
+	} else if (play_addr == 0x0){
+		// keep whatever the PSID init setup
+	} else {
+		setMemBank(0x37);
 	}
 }
 
@@ -121,10 +119,10 @@ void memWriteRAM(uint16_t addr, uint8_t value) {
 	 _memory[addr]= value;
 }
 
-void memCopyToRAM(uint8_t *src, uint16_t destAddr, uint16_t len) {
+void memCopyToRAM(uint8_t *src, uint16_t destAddr, uint32_t len) {
 	memcpy(&_memory[destAddr], src, len);		
 }
-void memCopyFromRAM(uint8_t *dest, uint16_t srcAddr, uint16_t len) {
+void memCopyFromRAM(uint8_t *dest, uint16_t srcAddr, uint32_t len) {
 	memcpy(dest, &_memory[srcAddr], len);
 }
 
@@ -200,6 +198,32 @@ const static uint8_t _irq_handler_EA7C[11] ={0xE6,0xA2,0xAD,0x0D,0xDC,0x68,0xA8,
 const static uint8_t _nmi_handler_FE43[5] ={0x78,0x6c,0x18,0x03,0x40};
 const static uint8_t _irq_end_handler_FEBC[6] ={0x68,0xa8,0x68,0xaa,0x68,0x40};
 
+const static uint8_t _driverPSID[33] = {	// see sidplayer.c: driver_size
+	// PSID main
+	0x4c,0x00,0x00,		// JMP endless loop
+	
+	// PSID playAddress specific IRQ handler
+	0x48,				// PHA
+	0x8A,				// TXA
+	0x48,				// PHA
+	0x98,				// TYA
+	0x48,				// PHA
+	0xA5,0x01,			// LDA $01
+	0x48,				// PHA
+	0xA9,0xFF,			// LDA #$FF
+	0x85,0x01,			// STA $01		PSID bank reset
+	0x20,0x00,0x00,		// JSR $0000	playAddress
+	0x68,				// PLA
+	0x85,0x01,			// STA $01		restore whatever INIT had setup.. not really needed
+	0xEE,0x19,0xD0,		// INC $D019
+	0xAD,0x0D,0xDC,		// LDA $DC0D	ACKN whatever IRQ might have been used
+	0x68,				// PLA
+	0xA8,				// TAY
+	0x68,				// PLA
+	0xAA,				// TAX
+	0x68,				// PLA
+	0x40,				// RTI
+};
 
 #ifdef TEST
 void memInitTest() {
@@ -261,6 +285,42 @@ void memResetKernelROM() {
 	_kernal_rom[0x1ffb]= 0xfe;
 }
 
+uint16_t memPsidMain(uint8_t bank, uint16_t play_addr) {
+	uint16_t free= envGetFreeSpace();
+	if (!free) {					
+		EM_ASM_({ console.log("FATAL ERROR: no free memory for driver");});
+		return 0;
+	} else {
+	    memcpy(&_memory[free], _driverPSID, 33);
+
+		// set JMP addr for endless loop
+		_memory[free+1]= free & 0xff;	
+		_memory[free+2]= free >> 8;
+
+		if (play_addr) {
+			// register IRQ handler
+			uint16_t handler= free +3;
+			uint16_t handler314= handler +5;	// skip initial register php sequence already part of the default handler
+						
+			_memory[0x0314]= handler314 & 0xff;
+			_memory[0x0315]= handler314 >> 8;
+
+			_memory[0xFFFE]= handler & 0xff;
+			_memory[0xFFFF]= handler >> 8;
+			
+			// patch-in the bank setting
+			_memory[free+12]= bank;
+
+			// patch-in the playAddress
+			_memory[free+16]= play_addr & 0xff;
+			_memory[free+17]= play_addr >> 8;			
+		} else {
+			// just use the endless loop for main
+		}
+		return free;
+	}		
+}
+
 void memRsidMain(uint16_t *init_addr) {
 	// For RSIDs that just RTS from their INIT (relying just on the
 	// IRQ/NMI they have started) there should better be something to return to..
@@ -271,10 +331,10 @@ void memRsidMain(uint16_t *init_addr) {
 	} else {
 		uint16_t loopAddr= free+3;
 		
-		_memory[free]= 0x20;
+		_memory[free]= 0x20;	// JSR
 		_memory[free+1]= (*init_addr) & 0xff;
 		_memory[free+2]= (*init_addr) >> 8;
-		_memory[free+3]= 0x4c;
+		_memory[free+3]= 0x4c;	// JMP
 		_memory[free+4]= loopAddr & 0xff;
 		_memory[free+5]= loopAddr >> 8;
 		

@@ -89,11 +89,13 @@ static uint32_t		_sample_rate;				// target playback sample rate
 struct SidState {
 	uint8_t is_6581;
 	
+	uint8_t digi_enabled;
+	
     struct Voice {
 //        uint8_t		wave;			// redundant: see Oscillator
 		uint16_t	freq;
         uint16_t	pulse;				// 12-bit "pulse width" from respective SID registers
-		uint8_t		not_muted;			// player's separate "mute" feature
+		uint8_t		enabled;			// player's separate "mute" feature
  
 		// add-ons snatched from Hermit's implementation
 		double		prev_wav_data;		// combined waveform handling
@@ -224,9 +226,11 @@ void SID::resetEngine(uint32_t sample_rate, uint8_t is_6581) {
 
 	for (uint8_t i=0; i<3; i++) {
 //		memset((uint8_t*)&_sid->voices[i], 0, sizeof(struct SidState::Voice));	// already included in _sid		
-		_sid->voices[i].not_muted= 1;
+		_sid->voices[i].enabled= 1;
 		_sid->voices[i].prev_wave_form_out= 0x7fff;	// use center to avoid distortions through envelope scaling
 	}
+	_sid->digi_enabled= 1;
+	
 	
 	// reset _osc
 	for (uint8_t i=0; i<3; i++) {
@@ -432,7 +436,7 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 	uint16_t outv= 0xffff;
 	uint8_t ctrl= _osc[voice]->wave;
 		
-	if (_sid->voices[voice].not_muted) {
+	if (_sid->voices[voice].enabled) {
 		int8_t combined= 0;	// flags some specifically handled "combined waveforms" (not all)
 		
 		// use special handling for certain combined waveforms
@@ -662,32 +666,32 @@ void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offs
 	
 		// now route the voice output to either the non-filtered or the
 		// filtered channel (with disabled filter outo is used)
-		_filter->routeSignal(&voiceOut, &outf, &outo, voice, &(_sid->voices[voice].not_muted));
+		_filter->routeSignal(&voiceOut, &outf, &outo, voice, &(_sid->voices[voice].enabled));
 
 		// trace output (always make it 16-bit)
 		if (synth_trace_bufs) {
 			int16_t *voice_trace_buffer= synth_trace_bufs[voice];
 
 			int32_t o= 0, f= 0;	// isolated from other voices
-			uint8_t is_filtered= _filter->routeSignal(&voiceOut, &f, &o, voice, &(_sid->voices[voice].not_muted));	// redundant.. see above		
+			uint8_t is_filtered= _filter->routeSignal(&voiceOut, &f, &o, voice, &(_sid->voices[voice].enabled));	// redundant.. see above		
 			
 			*(voice_trace_buffer+offset)= (int16_t)_filter->simOutput(voice, is_filtered, &f, &o);
 		}
 	}
 	
-	// add digi sample (FIXME: check if digi actually active)
-	int32_t digiOut= (((int32_t)_digi->getSample())*0x101 - 0x8000);	// d418 already DID reduce volume of all 3 voices!
-	uint8_t digiSrc= _digi->getSource();	
+	int32_t digiOut= 0;
+	if (_sid->digi_enabled) {
+		digiOut= (((int32_t)_digi->getSample())*0x101 - 0x8000);	// d418 already DID reduce volume of all 3 voices!
+		uint8_t digiSrc= _digi->getSource();
 
-// FIXME add "mute digi" feature
-// FIXME Acid_Preview - high pitched noise.. use same hack to turn off voice output?
-
-	if (digiSrc > 0 && _digi->isFiltered()) {
-		uint8_t enabled= 1;
-		_filter->routeSignal(&digiOut, &outf, &outo, digiSrc-1, &enabled);
-	} else {
-		outo+= digiOut;	// D418 always unfiltered
+		if (digiSrc > 0 && _digi->isFiltered()) {
+			uint8_t enabled= 1;
+			_filter->routeSignal(&digiOut, &outf, &outo, digiSrc-1, &enabled);
+		} else {
+			outo+= digiOut;	// D418 always unfiltered
+		}
 	}
+
 	if (synth_trace_bufs) {
 		int16_t *voice_trace_buffer= synth_trace_bufs[3];	// digi track
 		*(voice_trace_buffer+offset)= digiOut;				// save the trouble of filtering
@@ -741,8 +745,15 @@ uint16_t  SID::getDigiRate() {
 }
 		
 
-void SID::setMute(uint8_t voice, uint8_t value) {
-	_sid->voices[voice%3].not_muted= !value;
+void SID::setMute(uint8_t voice, uint8_t is_muted) {
+	if (voice > 3) voice= 3; 	// no more than 4 voices per SID
+	
+	if (voice == 3) {
+		_sid->digi_enabled= !is_muted;
+		
+	} else {
+		_sid->voices[voice].enabled= !is_muted;
+	}
 }
 
 void SID::resetStatistics() {
@@ -765,8 +776,10 @@ static uint8_t _mem2sid[MEM_MAP_SIZE];	// maps memory area d400-dfff to availabl
 static double _vol_map[]= { 1.0f, 0.6f, 0.4f };	
 
 
-void SID::setMute(uint8_t sid_idx, uint8_t voice, uint8_t value) {
-	_sids[sid_idx].setMute(voice, value);
+void SID::setMute(uint8_t sid_idx, uint8_t voice, uint8_t is_muted) {
+	if (sid_idx > 2) sid_idx= 2; 	// no more than 3 sids supported
+
+	_sids[sid_idx].setMute(voice, is_muted);
 }
 
 DigiType SID::getGlobalDigiType() {

@@ -132,20 +132,6 @@ uint8_t vicIRQ() {
 	return memReadIO(0xd019) & 0x80;
 }
 
-void vicFakeIrqPSID() {
-	// util used for PSID to setup fake RASTER IRQ environment
-	
-	if (_init_raster_PSID == -1) {
-		_init_raster_PSID= getRasterLatch(); 		// PSHIT crap may reset D012 to NOT to be used shit from within its PLAY - test-case: Galdrumway.sid
-	}
-	_y= _init_raster_PSID;
-	
-	
-	memWriteIO(0xd01a, memReadIO(0xd01a) | 0x1);	// mask: RASTER IRQ
-	memWriteIO(0xd019, 0x81);
-	
-}
-
 /*
 	 "A Bad Line Condition is given at any arbitrary clock cycle, if at the
 	 negative edge of ø0 at the beginning of the cycle RASTER >= $30 and RASTER
@@ -191,15 +177,18 @@ void vicReset(uint8_t is_rsid, uint8_t ntsc_mode) {
 	
 	vicSetModel(ntsc_mode); 
 	
+	// by default C64 is configured with CIA1 timer / not raster irq
+			
+	memWriteIO(0xd019, 0x01); 	// presumable "the machine" has been running for more than one frame before the prog is run
+	memWriteIO(0xd01a, 0x00); 	// raster irq not active
+	
 	if (is_rsid) {
-		// by default C64 is configured with CIA1 timer / not raster irq
-				
-		memWriteIO(0xd019, 0x01); 	// presumable "the machine" has been running for more than one frame before the prog is run
-		memWriteIO(0xd01a, 0x00); 	// raster irq not active
-
 		// RASTER default to 0x137 (see real HW) 
 		memWriteIO(0xd011, 0x9B);
 		memWriteIO(0xd012, 0x37); 	// raster at line x
+	} else {
+		memWriteIO(0xd011, 0x1B);
+		memWriteIO(0xd012, 0x0); 	// raster must be below 0x100
 	}
 }
 
