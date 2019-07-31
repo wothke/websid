@@ -1676,7 +1676,7 @@ void cpuClock(void) {
 			_exe_instr_opcode= start_nmi_op;
 			_exe_instr_cycles= _opbase_frame_cycles[_exe_instr_opcode];
 				
-		} else if (pendingIRQ()) {	// interrupts are like a BRK command 
+		} else if (pendingIRQ()) {	// interrupts are like a BRK command
 			_irq_committed= 0;
 
 			_exe_instr_opcode= start_irq_op;

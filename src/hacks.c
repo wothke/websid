@@ -36,7 +36,7 @@ static void patchThatsAllFolksIfNeeded(uint16_t *initAddr) {
 	}
 }
 
-void hackIfNeeded(uint16_t *initAddr) {
+void hackIfNeeded(uint16_t *initAddr) {		
 	patchThatsAllFolksIfNeeded(initAddr);
 	
 	patchImmigrantSongIfNeeded(initAddr);

@@ -31,6 +31,7 @@ An online demo of the emulator can be accessed using: http://www.wothke.ch/tinyr
 * old/original TinySid PSID emulator code (there is not much left of it..) - Copyright (C) 1999-2012 T. Hinrichs, R. Sinsch
 * "combined waveform" generation, "waveform anti-aliasing" and "filter" implementation by Hermit (see http://hermit.sidrip.com)
 * based on various reverse engineering information by: Christian Bauer, Wolfgang Lorenz, resid team, etc
+* playback of Compute! .mus files is based on "Enhanced Sidplayer" by Craig Chamberlain
 
 
 ## Howto build

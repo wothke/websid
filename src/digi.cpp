@@ -76,7 +76,7 @@ DigiDetector::DigiDetector(SID *sid) {
 
 
 DigiType DigiDetector::getType() {
-	return _usedDigiType;
+	return getRate() ? _usedDigiType : DigiNone;
 }
 
 const char* _typeDesc[7] = {
@@ -90,12 +90,12 @@ const char* _typeDesc[7] = {
 };
 
 const char * DigiDetector::getTypeDesc() {
-	return _typeDesc[_usedDigiType];
+	return _typeDesc[getType()];
 }
 
 uint16_t DigiDetector::getRate() {
 	uint16_t r= round(vicFPS() *_digiCount);
-	return r > 10 ? r : 0;
+	return r > 800 ? r : 0;
 }
 
 // detection of test-bit based samples

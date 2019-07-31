@@ -378,7 +378,7 @@ static uint16_t loadComputeSidplayerData(uint8_t *mus_song_file, uint32_t mus_so
 	_load_end_addr= 0x9fff;
 
 	_init_addr= MUS_BASE_ADDR;
-	_play_addr=  0x1a07;
+	_play_addr=  0x1a07;		// unused in RSID emulation
 	
 	uint16_t pSize= COMPUTESIDPLAYER_LENGTH;
 	if((pSize > MUS_MAX_SIZE) || (mus_song_file_len > MUS_MAX_SONG_SIZE)) return 0; // ERROR
@@ -388,6 +388,12 @@ static uint16_t loadComputeSidplayerData(uint8_t *mus_song_file, uint32_t mus_so
 		_musMemBuffer= (uint8_t*)malloc(_mus_mem_buffer_size);	// represents mem from MUS_BASE_ADDR to $9fff
 	}
 	memcpy(_musMemBuffer, computeSidplayer, pSize);
+	
+	// patch: put INIT in endless loop rather than RTS (more convenient for RSID emulation)
+	_musMemBuffer[0x002e]=	0x4c;
+	_musMemBuffer[0x002f]=	0xde;
+	_musMemBuffer[0x030]=	0x17;
+	
 
 	// patch/configure the MUS player
 	_musMemBuffer[0x17ca -MUS_BASE_ADDR]= (!_ntsc_mode) & 0x1;	// NTSC by default.. so this is not really needed
@@ -420,9 +426,6 @@ extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 #ifdef TEST
 	return 0;
 #endif
-	if (_mus_mode && musIsTrackEnd(0)) {
-		return -1;
-	}
 	_number_of_samples_rendered = 0;
 			
 	uint32_t sample_buffer_idx=0;
@@ -510,6 +513,11 @@ extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 			_number_of_samples_to_render = 0;
 		} 
 	}
+	
+	if (_mus_mode && musIsTrackEnd(0)) {	// "play" must have been called before 1st use of this check
+		return -1;
+	}
+	
 	return (_number_of_samples_rendered);
 }
 
@@ -726,16 +734,18 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void * in_
 	uint8_t ntscMode= 0;	// default is PAL
 
 	
-	setRsidMode(is_mus || (input_file_buffer[0x00] == 0x50) ? 0 : 1);
+	setRsidMode(is_mus || (input_file_buffer[0x00] != 0x50) ? 1 : 0);
 
 	memResetRAM(envIsPSID());
 	
 	if ((_mus_mode= is_mus)) {
-		// todo: the same kind of impl could be used for .sid files that contain .mus data.. (see respectice flag)
+		// todo: the same kind of impl could be used for .sid files that contain .mus data.. (see respective flag)
 		if (!loadComputeSidplayerData(input_file_buffer, in_buf_size)) {
 			return 1;
 		}
-		Core::loadSongBinary(_musMemBuffer, _load_addr, _mus_mem_buffer_size);		
+		
+		Core::loadSongBinary(_musMemBuffer, _load_addr, _mus_mem_buffer_size);
+				
 	} else {
 		_sid_version= input_file_buffer[0x05];
 				
