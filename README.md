@@ -15,10 +15,7 @@ new implementation is computationally much more expensive (50-100% more CPU).
 
 The emulator logic is written in C/C++. This code is then cross-compiled into a JavaScript library suitable for the Web.
 
-Known limitations: The emulator does not include the Commodore ROM code and music programs written in BASIC therefore are not 
-supported. Also VIC timing with regard to the use of "sprites" is not modelled. There are very few songs that actually depend 
-on respective "sprite" timing delays (e.g. Vicious_SID_2-15638Hz.sid - which now plays too fast due to the "missing" delays) 
-but most songs do not, and there is no point in making the emulation more CPU intensive for everybody else. 
+Known limitations: see src/KnownLimitations.txt for details 
 
 
 ![alt text](https://github.com/wothke/websid/raw/master/tinyrsid.jpg "Tiny'R'Sid HVSC Explorer")
