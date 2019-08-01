@@ -634,16 +634,16 @@ void ciaWriteMem(uint16_t addr, uint8_t value) {
 		case 0xdc04:
 		case 0xdc05:
 		case 0xdc06:
-		case 0xdc07:	
+		case 0xdc07:
 			setTimerLatch(&(_cia[CIA1]), addr-ADDR_CIA1, value);
 			break;	
-		case 0xdc08: 
+		case 0xdc08:
 			updateTimeOfDay10thOfSec(value);
 			break;
-		case 0xdc09: 
+		case 0xdc09:
 			updateTimeOfDaySec(value);
 			break;						
-		case 0xdc0d:		
+		case 0xdc0d:
 			setInterruptMask(&(_cia[CIA1]), value);
 			break;			
 		case 0xdc0e:
@@ -661,6 +661,9 @@ void ciaWriteMem(uint16_t addr, uint8_t value) {
 			setTimerLatch(&(_cia[CIA2]), addr-ADDR_CIA2, value);
 			break;
 		case 0xdd0d:
+			if (envIsPSID()) {
+				value &= 0x7f;	// don't allow PSID crap to trigger NMIs
+			}		
 			setInterruptMask(&(_cia[CIA2]), value);
 			break;
 		case 0xdd0e:

@@ -1665,7 +1665,7 @@ void cpuClock(void) {
 
 	if (_exe_instr_opcode < 0) {	// get next instruction	
 
-		if(envIsRSID() && pendingNMI()) {								// has higher prio than IRQ
+		if(pendingNMI()) {								// has higher prio than IRQ
 			// some old PlaySID files (with recorded digis) files actually 
 			// use NMI settings that must not be used here
 			
