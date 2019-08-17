@@ -285,10 +285,18 @@ static void setControl(struct Timer *t, uint8_t timer_idx, uint8_t ctrl_new) {	/
 		// "timer will count from its current position to 0, two clocks after the flag 
 		// has been set, the timer starts counting" 
 		
+		// fixme: what about "stop toggle"
+		
 		// test-case "CIA1TB123" (test 3): +2 delay before start
 		t->ts[timer_idx].scripted_transition= (START_STOP_MASK<<16) | (delay_mask<<8) | (delay_mask);		// after 3 cycle resume normally
 	}
 
+	// handle external CNT-pin (testcase: So-Phisticated_III_loader.sid)
+	if (ctrl_new & 0x20) {	// CNT-pin clocked
+		// this timer should never count anything ... so just don't start it (to avoid costly extra check later)
+		ctrl_new &= 0xfe; // clear the "start" bit
+	}
+	
 	memWriteIO(addr, ctrl_new);
 }
 
