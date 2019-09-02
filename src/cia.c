@@ -133,9 +133,17 @@ static uint8_t _offset_hi_byte[2] = {0x05, 0x07};
 */
 struct Timer {
 	uint16_t 	memory_address;
+
+		// optimizations
+	uint16_t 	memory_address_0d;
+	uint16_t 	memory_address_0e;
+	uint16_t 	memory_address_0f;
+	
+	
     struct TimerState {
 		uint16_t 	timer_latch; 			// used to re-load counter		
 		uint32_t 	scripted_transition;
+		uint16_t	counter;
 	} ts[2];								// timers A & B
 	
 	uint8_t delay_INT;						// delayed INTERRUPT signaling (depends on chip model)
@@ -159,9 +167,10 @@ uint8_t ciaIRQ() {
 }
 
 static uint16_t readCounter(struct Timer *t, uint8_t timer_idx) {
-
-	uint16_t addr= t->memory_address + _offset_lo_byte[timer_idx];	
-	return (memReadIO(addr)|(memReadIO(addr+1)<<8));
+	return t->ts[timer_idx].counter;
+	
+//	uint16_t addr= t->memory_address + _offset_lo_byte[timer_idx];	
+//	return (memReadIO(addr)|(memReadIO(addr+1)<<8));
 }
 
 static void writeCounter(struct Timer *t, uint8_t timer_idx, uint16_t value) {
@@ -171,16 +180,22 @@ static void writeCounter(struct Timer *t, uint8_t timer_idx, uint16_t value) {
 //	2) on force load (see setControl)
 //	3) hi-byte prescaler write *while stopped* (see setTimerLatch())
 
-	uint16_t addr= t->memory_address + _offset_lo_byte[timer_idx];
+	 t->ts[timer_idx].counter= value;
+
+//	uint16_t addr= t->memory_address + _offset_lo_byte[timer_idx];
 	
-	memWriteIO(addr, value&0xff);		// FIXME add 16-bit counter var to simplify handling
-	memWriteIO(addr+1, value >>8);
+//	memWriteIO(addr, value&0xff);		// FIXME add 16-bit counter var to simplify handling
+//	memWriteIO(addr+1, value >>8);
 }
 
 static void initTimer(struct Timer *t, uint8_t timer_idx) {
+	// bootstrap using current memory settings..
+	uint16_t addr= t->memory_address + _offset_lo_byte[timer_idx];	
+	uint16_t timer=  (memReadIO(addr)|(memReadIO(addr+1)<<8));
 	
-	uint16_t timer= readCounter(t, timer_idx);		// bootstrap using current memory settings..
+//	uint16_t timer= readCounter(t, timer_idx);		// bootstrap using current memory settings..
 	t->ts[timer_idx].timer_latch= timer;
+	t->ts[timer_idx].counter= 0;
 	
 	t->ts[timer_idx].scripted_transition= 0;	
 }
@@ -188,6 +203,11 @@ static void initTimer(struct Timer *t, uint8_t timer_idx) {
 static void initTimerData(uint16_t memory_address, struct Timer *t) {
 
 	t->memory_address= memory_address;
+	
+		// optimization to save "addition" later
+	t->memory_address_0d= memory_address + 0x0d;
+	t->memory_address_0e= memory_address + 0x0e;
+	t->memory_address_0f= memory_address + 0x0f;
 	
 	initTimer(t, TIMER_A);
 	initTimer(t, TIMER_B);
@@ -209,7 +229,7 @@ static void handleInterrupt(struct Timer *t) {
 	// detection logic and it seem safer to impersonate the old chip) - also it is what Wolfgang
 	// Lorenz's test-suite expects.
 
-	uint8_t interrupt_mask= memReadIO(t->memory_address + 0x0d) & 0x3;
+	uint8_t interrupt_mask= memReadIO(t->memory_address_0d) & 0x3;
 		
 	// handle previously scheduled interrupt:
 	if (t->delay_INT) {
@@ -233,7 +253,7 @@ static void handleInterrupt(struct Timer *t) {
 
 static void setInterruptMask(struct Timer *t, uint8_t mask) {
 	// i.e. $Dx0D, handle updates of the CIA interrupt control mask	
-	uint16_t addr= t->memory_address + 0x0d;
+	const uint16_t addr= t->memory_address_0d;
 	
 	if (mask & ICR_SRC_SET) {
 		memWriteIO(addr, memReadIO(addr) | (mask&0x1f));		// set mask bits
@@ -247,8 +267,8 @@ static void setInterruptMask(struct Timer *t, uint8_t mask) {
 
 static void setControl(struct Timer *t, uint8_t timer_idx, uint8_t ctrl_new) {	// i.e. $Dx0E
 
-	uint16_t addr= t->memory_address + 0x0e + timer_idx;
-	uint8_t ctrl_old= memReadIO(addr);
+	const uint16_t addr= t->memory_address_0e + timer_idx;
+	const uint8_t ctrl_old= memReadIO(addr);
 	
 	/* fixme: verify if this really works - or is actually needed
 	// test-case: "FLIPOS" doesn't seem to care
@@ -260,10 +280,10 @@ static void setControl(struct Timer *t, uint8_t timer_idx, uint8_t ctrl_new) {	/
 	}
 	*/
 	
-	uint8_t was_started= ctrl_old & 0x1;
-	uint8_t toggled= was_started != (ctrl_new & 0x1);
+	const uint8_t was_started= ctrl_old & 0x1;
+	const uint8_t toggled= was_started != (ctrl_new & 0x1);
 	
-	uint8_t delay_mask = was_started ? DELAY_STARTED_MASK : 0;
+	const uint8_t delay_mask = was_started ? DELAY_STARTED_MASK : 0;
 
 	if (ctrl_new & CRA_FORCE_LOAD) {	// "force load" counter from latch
 
@@ -302,7 +322,7 @@ static void setControl(struct Timer *t, uint8_t timer_idx, uint8_t ctrl_new) {	/
 
 static uint8_t acknInterruptStatus(struct Timer *t) {
 	
-	uint8_t result= t->interrupt_status;			// read of the respective DX0D register
+	const uint8_t result= t->interrupt_status;	// read of the respective DX0D register
 	t->interrupt_status= 0;						// acknowledges/clears the status
 #ifdef TEST
 	return result & ICR_IGNORE_FLAG_PIN; 		// propably no help here either..
@@ -312,11 +332,11 @@ static uint8_t acknInterruptStatus(struct Timer *t) {
 }
 
 static int isStarted(struct Timer *t, uint8_t timer_idx) {
-	return (memReadIO(t->memory_address + (0x0e + timer_idx)) & 0x1);
+	return (memReadIO(t->memory_address_0e + timer_idx) & 0x1);
 }
 
 static void stopTimer(struct Timer *t, uint8_t timer_idx) {
-	uint16_t addr= t->memory_address + (0x0e + timer_idx);
+	const uint16_t addr= t->memory_address_0e + timer_idx;
 	memWriteIO(addr, memReadIO(addr) & (~0x1));	
 }
 
@@ -327,12 +347,12 @@ static void stopTimer(struct Timer *t, uint8_t timer_idx) {
 *             reload the latched value, and repeat the procedure continously.
 */
 static int isOneShot(struct Timer *t, uint8_t timer_idx) {
-	uint16_t addr= t->memory_address + 0x0e + timer_idx;
+	const uint16_t addr= t->memory_address_0e + timer_idx;
 	return memReadIO(addr) & CRA_ONE_SHOT;
 }
 
 static void underflow(struct Timer *t, uint8_t timer_idx) {
-	uint8_t interrupt_mask= memReadIO(t->memory_address + 0x0d) & (1<<timer_idx);
+	const uint8_t interrupt_mask= memReadIO(t->memory_address_0d) & (1<<timer_idx);
 	if (t->interrupt_status & interrupt_mask) {
 		t->delay_INT= 1; // makes sure it triggers directly in the next cycle
 	}
@@ -382,7 +402,7 @@ static void writeLatch(struct Timer *t, uint8_t timer_idx, uint16_t value, uint8
 	
 	if (reset && !isStarted(t, timer_idx)) {
 		// a hi-byte prescaler (aka latch) written *while timer is stopped* will reset the counter
-		uint16_t latch= t->ts[timer_idx].timer_latch;
+		const uint16_t latch= t->ts[timer_idx].timer_latch;
 		writeCounter(t, timer_idx, latch);
 	}		
 }
@@ -405,7 +425,7 @@ static void setTimerLatch(struct Timer *t, uint16_t offset, uint8_t value) {
 }
 
 static int isBLinkedToA(struct Timer *t) {
-	return ((memReadIO(t->memory_address + 0x0f) & CRB_MODE_MASK) == CRB_MODE_UNDERFLOW_A);
+	return ((memReadIO(t->memory_address_0f) & CRB_MODE_MASK) == CRB_MODE_UNDERFLOW_A);
 }
 
 
@@ -421,7 +441,7 @@ static uint8_t clockT(struct Timer *t, uint8_t timer_idx) {
 	
 	if (t->ts[timer_idx].scripted_transition) {
 
-		uint8_t mask= t->ts[timer_idx].scripted_transition & 0xff;		// for this cycle
+		const uint8_t mask= t->ts[timer_idx].scripted_transition & 0xff;		// for this cycle
 		t->ts[timer_idx].scripted_transition >>=  8;						// remainder for next cycles
 
 		if (!(mask & NO_DELAY_MASK )) {
@@ -466,7 +486,7 @@ static uint8_t clockT(struct Timer *t, uint8_t timer_idx) {
 	
 	// handle regular counter mode
 
-	if (delayed_stop || isStarted(t, timer_idx)) {
+	if (isStarted(t, timer_idx) || delayed_stop) {
 		
 		if (!count(t, timer_idx)) {
 			// reached underflow
@@ -702,7 +722,7 @@ void ciaReset60HzPSID() {
 	if (envIsTimerDrivenPSID()) {
 		// if an idiotic PSID does not setup any timer it then expects 60Hz..
 		if (!memReadIO(0xdc04) && !memReadIO(0xdc05)) {
-			uint32_t c= envClockRate()/60;
+			const uint32_t c= envClockRate()/60;
 			initMem(0xdc04, c&0xff);
 			initMem(0xdc05, c>>8);
 		}

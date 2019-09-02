@@ -58,7 +58,7 @@ static void reset(uint32_t sample_rate, uint8_t ntsc_mode, uint8_t compatibility
 		
 	vicReset(envIsRSID(), ntsc_mode);
 	
-	SID::resetAll(sample_rate, envSIDAddresses(), envSID6581s(), compatibility, 1);
+	SID::resetAll(sample_rate, envSIDAddresses(), envSID6581s(), envSIDOutputChannels(), compatibility, 1);
 	
 	_sample_cycles= 0;
 }
@@ -98,6 +98,17 @@ void Core::rsidRunTest() {
 }
 #endif
 
+// who knows what people might use to wire up the output signals of their
+// multi-SID configurations... it probably depends on the song what might be "good" 
+// settings here.. alternatively I could just let the clipping do its work (without any 
+// rescaling). but for now I'll use Hermit's settings - this will make for a better user 
+// experience in DeepSID when switching players..
+
+// FIXME: only designed for even number of SIDs.. if there actually are 3SID (etc) stereo
+// songs then something more sophisticated would be needed...
+
+static double _vol_map[]= { 1.0f, 0.6f, 0.4f, 0.3f, 0.3f, 0.3f, 0.3f, 0.3f };	
+
 
 void runEmulation(int16_t *synth_buffer, int16_t **synth_trace_bufs, uint16_t samples_per_call) {
 	double n= SID::getCyclesPerSample();
@@ -106,22 +117,74 @@ void runEmulation(int16_t *synth_buffer, int16_t **synth_trace_bufs, uint16_t sa
 	// ϕ1 pin. The CPU pin that then outputs the system clock rate for use by other components is 
 	// called Phase 2 or Phi2 (ϕ2).
 
-	for (int i = 0; i<samples_per_call; i++) {
-		while(_sample_cycles < n) {
+	// performance info: JavaScript performance.now() measurements with a 8SID song suggest that
+	// only a small fraction of the overall runtime is spent in the below synthSample() and most of the time 
+	// is spent in the earlier clock-by-clock emulation of the system components; 2 (5) vs 12 (21)
 
-			// VIC always uses the 1st phase of each ϕ2 clock cycle (for bus access) so it should be clocked first
-			vicClock();
-			ciaClock();	
-			SID::clockAll();
+	if (envSidVersion() != MULTI_SID_TYPE ) {
+		double scale= _vol_map[SID::getNumberUsedChips()-1] / 0xff;	// 0xff serves to normalize the 8-bit envelope
+
+		for (int i = 0; i<samples_per_call; i++) {
+			while(_sample_cycles < n) {
+
+				// VIC always uses the 1st phase of each ϕ2 clock cycle (for bus access) so it should be clocked first
+				vicClock();
+				ciaClock();
+				SID::clockAll();
+				
+				cpuClock();	// invalid "main" should just keep burning cycles one-by-one
+				
+				cpuClockSystem();
+				_sample_cycles++;
+			}
+
+			_sample_cycles-= n;	// keep overflow
 			
-			cpuClock();	// invalid "main" should just keep burning cycles one-by-one
-			
-			cpuClockSystem();
-			_sample_cycles++;
+			SID::synthSample(synth_buffer, synth_trace_bufs, &scale, i);
 		}
-		_sample_cycles-= n;	// keep overflow
+
+		// stereo is currently only generated for LMan's 8SID configuration
+		for (int i = 0; i<samples_per_call; i++) {
+			synth_buffer[(i<<1) + 1]= synth_buffer[i<<1]; 	// just copy the mono signal
+		}
+	} else {
+//		EM_ASM_({ window['start']= performance.now();});
+		double scale= _vol_map[env2ndOutputChanIdx() ? SID::getNumberUsedChips()>>1 : SID::getNumberUsedChips()-1]	/ 0xff;
 		
-		SID::synthSample(synth_buffer, synth_trace_bufs, i);
+		// optimization: no filter for trace buffers & no digis
+		for (int i = 0; i<samples_per_call; i++) {
+			while(_sample_cycles < n) {
+
+				// VIC always uses the 1st phase of each ϕ2 clock cycle (for bus access) so it should be clocked first
+				vicClock();
+				ciaClock();
+				SID::clockAll();
+				
+				cpuClock();	// invalid "main" should just keep burning cycles one-by-one
+				
+				cpuClockSystem();
+				_sample_cycles++;
+			}
+
+			_sample_cycles-= n;	// keep overflow
+			
+			SID::synthSampleStripped(synth_buffer, synth_trace_bufs, &scale, i);
+		}
+/*
+		EM_ASM_({ 
+			window['start']= performance.now()-window['start'];
+			if (typeof window['count'] == 'undefined') { window['count']= 0; window['sum']= 0; }
+			
+			window['sum']+= window['start'];
+			window['count']+= 1;
+			
+			if (window['count'] == 100) {
+				console.log("t: "+window['sum']/100);
+				 window['count']= 0; 
+				 window['sum']= 0;
+			}			
+		});
+*/
 	}
 }
 

@@ -41,7 +41,8 @@ protected:
 	uint8_t getVolume();
 
 protected:
-	void resetInput();
+	void resetInput6581(int32_t filtin);
+	void resetInput8580();
 private:
 	friend struct FilterState* getState(Filter *e);
 

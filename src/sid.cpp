@@ -72,7 +72,8 @@ static uint8_t getBit(uint32_t val, uint8_t b) { return (uint8_t) ((val >> b) & 
 #define PULSE_BITMASK 	0x40		
 #define NOISE_BITMASK 	0x80
 
-const uint8_t MAX_SID_CHIPS= 3;
+
+const uint8_t MAX_SID_CHIPS= MAX_SIDS;
 static uint8_t _used_sids= 0;
 static SID _sids[MAX_SID_CHIPS];	// allocate the maximum
 
@@ -107,6 +108,12 @@ struct SidState {
 struct Oscillator {
     double		freq_inc_sample;		// osc increment per sample (for Hermit's anti-aliasing)
     uint32_t	freq_inc_cycle;			// osc increment per cycle
+
+		// optimization: derived from freq_inc_sample
+    double		freq_saw_step;
+    uint32_t	freq_pulse_base;
+	double		freq_pulse_step;
+
 	
     uint32_t	pulse;					// 16-bit "pulse width" replicated from Voice struct (<<4 shifted for convenience)
     uint8_t		wave;
@@ -328,10 +335,17 @@ uint16_t SID::combinedWF(uint8_t channel, double *wfarray, uint16_t index, uint8
 	//on 6581 most combined waveforms are essentially halved 8580-like waves
 	
 	if (differ6581 && _sid->is_6581) index &= 0x7ff;
+	/* orig
 	double combiwf = (wfarray[index] + _sid->voices[channel].prev_wav_data) / 2;
-	_sid->voices[channel].prev_wav_data = wfarray[index];
-	
+	_sid->voices[channel].prev_wav_data = wfarray[index];	
 	return (uint16_t)round(combiwf);
+	*/
+	
+	// optimization?
+	uint32_t combiwf = ((uint32_t)(wfarray[index] + _sid->voices[channel].prev_wav_data)) >> 1;	// missing rounding might not make much of a difference
+	_sid->voices[channel].prev_wav_data = wfarray[index];
+	return (uint16_t)combiwf;
+	
 }
 
 uint16_t SID::createTriangleOutput(uint8_t voice) {
@@ -344,7 +358,7 @@ uint16_t SID::createSawOutput(uint8_t voice) {	// test-case: Alien.sid, Kawasaki
 	// Hermit's "anti-aliasing"
 
 	double wfout = _osc[voice]->counter >> 8;	// top 16-bits
-	double step = _osc[voice]->freq_inc_sample / 0x1200000;
+	const double step = _osc[voice]->freq_saw_step;
 	
 	if (step != 0) {
 		wfout += wfout * step;
@@ -356,7 +370,7 @@ uint16_t SID::createSawOutput(uint8_t voice) {	// test-case: Alien.sid, Kawasaki
 void SID::calcPulseBase(uint8_t voice, uint32_t *tmp, uint32_t *pw) {
 	// based on Hermit's impl
 	(*pw) = _osc[voice]->pulse;								// 16 bit
-	(*tmp) = ((uint32_t)_osc[voice]->freq_inc_sample) >> 9;	// 15 MSB needed
+	(*tmp) = _osc[voice]->freq_pulse_base;					// 15 MSB needed
 	
 	if ((0 < (*pw)) && ((*pw) < (*tmp))) { (*pw) = (*tmp); }
 	(*tmp) ^= 0xffff;
@@ -365,9 +379,10 @@ void SID::calcPulseBase(uint8_t voice, uint32_t *tmp, uint32_t *pw) {
 }
 
 uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// elementary pulse
-	if (isTestBit(voice)) return 0xffff;	// pulse start position
+//	if (isTestBit(voice)) return 0xffff;	// pulse start position: whatever DC level means.. but this is the output value PEEKed in this scenario 
+	if (isTestBit(voice)) return 0x8000;
 	
-	// int32_t wfout = ((_osc[voice]->counter>>8 > _osc[voice]->pulse)-1); // plain impl
+//	int32_t wfout = ((_osc[voice]->counter>>8 > _osc[voice]->pulse))? 0 : 0xffff; // XXX plain impl
 	
 	// Hermit's "anti-aliasing" pulse
 	
@@ -378,8 +393,8 @@ uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// e
 	// test-case: Touch_Me.sid - for some reason avoiding the "division by zero" actually breaks this song..
 	
 //	double step= ((double)256.0) / (_osc[voice]->freq_inc_sample / (1<<16));	// Hermit's original shift-impl was prone to division-by-zero
-    double step = 256 / (((uint32_t)_osc[voice]->freq_inc_sample) >> 16); 	// simple pulse, most often used waveform, make it sound as clean as possible without oversampling
-
+    const double step = _osc[voice]->freq_pulse_step; 	// simple pulse, most often used waveform, make it sound as clean as possible without oversampling
+	
 	double lim;
 	int32_t wfout;
 	if (tmp < pw) {	// rising edge (i.e. 0x0 side)	(in graph this is: TOP)
@@ -394,7 +409,7 @@ uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// e
 		if (wfout >= 0) { wfout = 0xffff; }
 		wfout &= 0xffff;
 	}
-	return wfout;
+	return wfout;	//NOTE: Hermit's original may actually be flipped due to filter.. which might cause problems with deliberate clicks.. see Geir Tjelta's feedback
 }	
 
 // combined noise-waveform will feed back into noiseval shift-register potentially clearing
@@ -416,8 +431,10 @@ uint16_t SID::createNoiseOutput(uint8_t voice) {
 		
 		// impl consistent with: http://www.sidmusic.org/sid/sidtech5.html
 		// doc here is probably wrong: http://www.oxyron.de/html/registers_sid.html
-		_osc[voice]->noiseout = 
-				(getBit(_osc[voice]->noiseval,22) << 7) |
+		
+		// performance: compared to rand() this impl is about 2x slower! 
+	/*	_osc[voice]->noiseout = 
+				(getBit(_osc[voice]->noiseval,22) << 7) |	// FIXME: the extra back shifts could be eliminated 
 				(getBit(_osc[voice]->noiseval,20) << 6) |
 				(getBit(_osc[voice]->noiseval,16) << 5) |
 				(getBit(_osc[voice]->noiseval,13) << 4) |
@@ -425,16 +442,28 @@ uint16_t SID::createNoiseOutput(uint8_t voice) {
 				(getBit(_osc[voice]->noiseval, 7) << 2) |
 				(getBit(_osc[voice]->noiseval, 4) << 1) |
 				(getBit(_osc[voice]->noiseval, 2) << 0);
-				
+		*/		
+		// same as above but without unnecessary shifting
+		uint32_t * n= &(_osc[voice]->noiseval);
+		_osc[voice]->noiseout = (((*n) >> (22-7) ) & 0x80 ) |
+								(((*n) >> (20-6) ) & 0x40 ) |
+								(((*n) >> (16-5) ) & 0x20 ) |
+								(((*n) >> (13-4) ) & 0x10 ) |
+								(((*n) >> (11-3) ) & 0x08 ) |
+								(((*n) >> (7-2) ) & 0x04 ) |
+								(((*n) >> (4-1) ) & 0x02 ) |
+								(((*n) >> (2) ) & 0x01 );
+
 		_osc[voice]->noiseval = (_osc[voice]->noiseval << 1) |
 				(getBit(_osc[voice]->noiseval,22) ^ getBit(_osc[voice]->noiseval,17));	
+		
 	}
 	return ((uint16_t)_osc[voice]->noiseout) << 8;
 }
 
 uint16_t SID::createWaveOutput(int8_t voice) {
 	uint16_t outv= 0xffff;
-	uint8_t ctrl= _osc[voice]->wave;
+	const uint8_t ctrl= _osc[voice]->wave;
 		
 	if (_sid->voices[voice].enabled) {
 		int8_t combined= 0;	// flags some specifically handled "combined waveforms" (not all)
@@ -531,21 +560,23 @@ uint16_t SID::getBaseAddr() {
 void SID::resetModel(uint8_t is_6581) {
 	_sid->is_6581= is_6581;	
 	
-	_filter->resetInput();
-	
+	if (is_6581) {
+		_filter->resetInput6581(0);
+	} else {
+		_filter->resetInput8580();
+	}
 	_digi->resetModel(is_6581);
-
 }
 
-void SID::reset(uint16_t addr, uint32_t sample_rate, uint8_t is_6581, uint8_t compatibility) {
+void SID::reset(uint16_t addr, uint32_t sample_rate, uint8_t is_6581, uint8_t compatibility, uint8_t output_channel) {
 	_addr= addr;
+	_dest_channel= output_channel;
 	
 	resetEngine(sample_rate, is_6581);
 	
 	Envelope::resetConfiguration(sample_rate);
 	
 	_digi->reset(compatibility, is_6581);
-
 }
 
 uint8_t SID::isModel6581() {
@@ -556,14 +587,23 @@ uint8_t SID::readMem(uint16_t addr) {
 	uint16_t offset= addr-_addr;
 	switch (offset) {
 	case 0x1b:									// "oscillator"		
-		if(_osc[2]->wave & SAW_BITMASK) 
-			return _osc[2]->counter >> 16;		// OK for IceGuys.sid
-		return createWaveOutput(2) >> 4;		// not at all what the specs claim - but right for pollytracker
+//		if(_osc[2]->wave & SAW_BITMASK) 		// obsolete
+//			return _osc[2]->counter >> 16;		// for IceGuys.sid
+		return createWaveOutput(2) >> 8;
 		
 	case 0x1c:									// envelope
 		return _env[2]->getOutput();
 	}
 	return memReadIO(addr);
+}
+
+void SID::updateFreqCache(uint8_t voice) {
+	_osc[voice]->freq_inc_sample= _cycles_per_sample * _sid->voices[voice].freq;	// per 1-sample interval (e.g. ~22 cycles)
+
+	// optimization for Hermit's waveform generation:
+	_osc[voice]->freq_saw_step = _osc[voice]->freq_inc_sample / 0x1200000;	// for SAW
+	_osc[voice]->freq_pulse_base= ((uint32_t)_osc[voice]->freq_inc_sample) >> 9;	// for PULSE: 15 MSB needed
+	_osc[voice]->freq_pulse_step= 256 / (((uint32_t)_osc[voice]->freq_inc_sample) >> 16);
 }
 
 void SID::poke(uint8_t reg, uint8_t val) {
@@ -592,7 +632,8 @@ void SID::poke(uint8_t reg, uint8_t val) {
 			_sid->voices[voice].freq = (_sid->voices[voice].freq&0xff00) | val;
 			
 			// convenience:
-			_osc[voice]->freq_inc_sample= _cycles_per_sample * _sid->voices[voice].freq;	// per 1-sample interval (e.g. ~22 cycles)
+			updateFreqCache(voice);
+			
 			_osc[voice]->freq_inc_cycle= ((uint32_t)_sid->voices[voice].freq);		
             break;
         }
@@ -600,7 +641,7 @@ void SID::poke(uint8_t reg, uint8_t val) {
             _sid->voices[voice].freq = (_sid->voices[voice].freq&0xff) | (val<<8);
 			
 			// convenience:
-			_osc[voice]->freq_inc_sample= _cycles_per_sample * _sid->voices[voice].freq;	// per 1-sample interval (e.g. ~22 cycles)
+			updateFreqCache(voice);
 			_osc[voice]->freq_inc_cycle= ((uint32_t)_sid->voices[voice].freq);		
             break;
         }
@@ -627,14 +668,17 @@ void SID::writeMem(uint16_t addr, uint8_t value) {
 	_digi->detectSample(addr, value);
 	
 	// no reason anymore to NOT always write (unlike old/un-synced version)
-	poke(addr&0x1f, value);
+	
+	const uint16_t reg= addr&0x1f;
+	
+	poke(reg, value);
 	memWriteIO(addr, value);
 
 	// some crappy songs like Aliens_Symphony.sid actually use d5xx instead of d4xx for their SID
 	// settings.. i.e. they use mirrored addresses that might actually be used by additional SID chips.
 	// always map to standard address to ease debug output handling, e.g. visualization in DeepSid
 	if (_used_sids == 1) {
-		addr= 0xd400 | (addr&0x1f);
+		addr= 0xd400 | reg;
 		memWriteIO(addr, value);
 	}
 }
@@ -647,8 +691,7 @@ void SID::clock() {
 	}
 }
 
-void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offset, double scale, uint8_t do_clear) {
-	
+void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offset, double *scale, uint8_t do_clear) {	
 	// just try the cycle based logic to be used in cleaned up emu
 		
 	// generate the two output signals (filtered / non-filtered)
@@ -656,13 +699,18 @@ void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offs
 	
 	// sim duration of 1 sample (might try higher sampling for better quality - see filter adjustments)
 
-	// creature output sample based on current snapshot 
+	// create output sample based on current SID state
 	for (uint8_t voice=0; voice<3; voice++) {
 		uint16_t outv = createWaveOutput(voice);
 		
-		// envelopeOutput has 8-bit and and outv 16	(Hermit's impl based on 16-bit wave output)		
+		// envelopeOutput has 8-bit and and outv 16	(Hermit's impl based on 16-bit wave output)
 		// => scale back to signed 16bit
-		int32_t voiceOut= scale * _env[voice]->getOutput()/0xff*(((int32_t)outv)-0x8000);
+		
+		// failed optimization: putting the "scaling" directly into the "getOutput" makes for WORSE performance...
+		// which is not intuitive since updates of the envelope would seem to occur less often then the rendering here.
+		
+		int32_t voiceOut= (*scale) * _env[voice]->getOutput()*(((int32_t)outv)-0x8000);
+//		int32_t voiceOut= (*scale) * _env[voice]->getOutput()/0xff*(((int32_t)outv)-0x8000);	// 0xff moved into to scale
 	
 		// now route the voice output to either the non-filtered or the
 		// filtered channel (with disabled filter outo is used)
@@ -673,7 +721,7 @@ void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offs
 			int16_t *voice_trace_buffer= synth_trace_bufs[voice];
 
 			int32_t o= 0, f= 0;	// isolated from other voices
-			uint8_t is_filtered= _filter->routeSignal(&voiceOut, &f, &o, voice, &(_sid->voices[voice].enabled));	// redundant.. see above		
+			uint8_t is_filtered= _filter->routeSignal(&voiceOut, &f, &o, voice, &(_sid->voices[voice].enabled));	// redundant.. see above
 			
 			*(voice_trace_buffer+offset)= (int16_t)_filter->simOutput(voice, is_filtered, &f, &o);
 		}
@@ -696,12 +744,14 @@ void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offs
 		int16_t *voice_trace_buffer= synth_trace_bufs[3];	// digi track
 		*(voice_trace_buffer+offset)= digiOut;				// save the trouble of filtering
 	}
-
+	
 	int32_t final_sample= _filter->getOutput(&outf, &outo, _cycles_per_sample);
 	
 	final_sample=  _digi->genPsidSample(final_sample);	// recorded PSID digis are merged in directly
 
-	if (!do_clear) final_sample+= *(buffer+offset);
+	int16_t *dest= buffer+(offset<<1)+_dest_channel; 	// always use interleaved stereo buffer
+	
+	if (!do_clear) final_sample+= *(dest);
 
 	// clipping (filter, multi-SID as well as PSID digi may bring output over the edge)
 	const int32_t clip_value = 32767;
@@ -709,8 +759,47 @@ void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offs
 		final_sample = -clip_value;
 	} else if ( final_sample > clip_value ) {
 		final_sample = clip_value;
-	}				
-	*(buffer+offset)= (int16_t)final_sample;
+	}
+	*(dest)= (int16_t)final_sample;
+}
+
+// same as above but without digi & no filter for trace buffers - once faster PCs are
+// more widely in use, then this optimization may be ditched..
+void SID::synthSampleStripped(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offset, double *scale, uint8_t do_clear) {	
+	int32_t outf= 0, outo= 0;	// outf and outo here end up with the sum of 3 voices..
+	
+	for (uint8_t voice=0; voice<3; voice++) {
+		uint16_t outv = createWaveOutput(voice);
+		
+//		int32_t voiceOut= (*scale) * _env[voice]->getOutput()/0xff*(((int32_t)outv)-0x8000);	// 0xff moved into scale
+		int32_t voiceOut= (*scale) * _env[voice]->getOutput()*(((int32_t)outv)-0x8000);
+		_filter->routeSignal(&voiceOut, &outf, &outo, voice, &(_sid->voices[voice].enabled));
+		
+		// trace output (always make it 16-bit)
+		if (synth_trace_bufs) {
+			// performance note: specially for multi-SID (e.g. 8SID) songs use of the filter for trace buffers
+			// has a significant runtime cost (e.g. 8*3= 24 additional filter calculations - per sample - instead of just 1).
+			// switching to display of non-filtered data may make the difference between "still playing" and
+			// "much too slow" -> like on my old machine
+			
+			int16_t *voice_trace_buffer= synth_trace_bufs[voice];
+			*(voice_trace_buffer+offset)= (int16_t)voiceOut;
+		}
+	}
+	
+	int32_t final_sample= _filter->getOutput(&outf, &outo, _cycles_per_sample);
+	int16_t *dest= buffer+(offset<<1)+_dest_channel; 	// always use interleaved stereo buffer
+	
+	if (!do_clear) final_sample+= *(dest);
+
+	// clipping (filter, multi-SID as well as PSID digi may bring output over the edge)
+	const int32_t clip_value = 32767;
+	if ( final_sample < -clip_value ) {
+		final_sample = -clip_value;
+	} else if ( final_sample > clip_value ) {
+		final_sample = clip_value;
+	}
+	*(dest)= (int16_t)final_sample;
 }
 
 // "friends only" accessors
@@ -767,17 +856,8 @@ void SID::resetStatistics() {
 const int MEM_MAP_SIZE = 0xbff;
 static uint8_t _mem2sid[MEM_MAP_SIZE];	// maps memory area d400-dfff to available SIDs 
 
-// who knows what people might use to wire up the output signals of their
-// multi-SID configurations... it probably depends on the song what might be "good" 
-// settings here.. alternatively I could just let the clipping do its work (without any 
-// rescaling). but for now I'll use Hermit's settings - this will make for a better user 
-// experience in DeepSID when switching players..
-
-static double _vol_map[]= { 1.0f, 0.6f, 0.4f };	
-
-
 void SID::setMute(uint8_t sid_idx, uint8_t voice, uint8_t is_muted) {
-	if (sid_idx > 2) sid_idx= 2; 	// no more than 3 sids supported
+	if (sid_idx > 9) sid_idx= 9; 	// no more than 10 sids supported
 
 	_sids[sid_idx].setMute(voice, is_muted);
 }
@@ -800,15 +880,20 @@ void SID::clockAll() {
 	}
 }
 
-void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offset) {
-	// note: use offset so 
-	double scale= _vol_map[_used_sids-1];
-	
+
+void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, double* scale, uint32_t offset) {
 	for (uint8_t i= 0; i<_used_sids; i++) {
-		SID &sid= _sids[i];			
-		
-		int16_t **sub_buf= !synth_trace_bufs ? 0 : &synth_trace_bufs[i*4];	// synthSample uses 4 entries..
+		SID &sid= _sids[i];					
+		int16_t **sub_buf= !synth_trace_bufs ? 0 : &synth_trace_bufs[i<<2];	// synthSample uses 4 entries..
 		sid.synthSample(buffer, sub_buf, offset, scale, !i);
+	}
+}
+
+void SID::synthSampleStripped(int16_t *buffer, int16_t **synth_trace_bufs, double* scale, uint32_t offset) {
+	for (uint8_t i= 0; i<_used_sids; i++) {
+		SID &sid= _sids[i];
+		int16_t **sub_buf= !synth_trace_bufs ? 0 : &synth_trace_bufs[i<<2];	// synthSample uses 4 entries..
+		sid.synthSampleStripped(buffer, sub_buf, offset, scale, (i==0) || (i==env2ndOutputChanIdx()));
 	}
 }
 
@@ -830,25 +915,28 @@ uint8_t SID::getNumberUsedChips() {
 	return _used_sids;
 }
 
-void SID::resetAll(uint32_t sample_rate, uint16_t *addrs, uint8_t *is_6581, uint8_t compatibility, uint8_t resetVol) {
+void SID::resetAll(uint32_t sample_rate, uint16_t *addrs, uint8_t *is_6581, uint8_t *output_chan, uint8_t compatibility, uint8_t resetVol) {
 	_used_sids= 0;
 	memset(_mem2sid, 0, MEM_MAP_SIZE); // default is SID #0
 
-	// setup the configured SID chips & make map where to find them
+	// determine the number of used SIDs
 	for (uint8_t i= 0; i<MAX_SID_CHIPS; i++) {
 		if (addrs[i]) {
-			SID &sid= _sids[_used_sids];			
-			sid.reset(addrs[i], sample_rate, is_6581[i], compatibility);
-			
-			if (resetVol) {
-				memWriteIO(sid.getBaseAddr()+0x18, 0xf);		// turn on full volume	
-				sid.poke(0x18, 0xf);  	
-			}
-			
-			if (i) {	// 1st entry is always the regular default SID
-				memset((void*)(_mem2sid+addrs[i]-0xd400), _used_sids, 0x1f);
-			}
 			_used_sids++;
+		}
+	}
+	// setup the configured SID chips & make map where to find them
+	for (uint8_t i= 0; i<_used_sids; i++) {
+		SID &sid= _sids[i];
+		sid.reset(addrs[i], sample_rate, is_6581[i], compatibility, output_chan[i]);	// stereo only used for my extended sid-file format
+		
+		if (resetVol) {
+			memWriteIO(sid.getBaseAddr()+0x18, 0xf);		// turn on full volume
+			sid.poke(0x18, 0xf);
+		}
+		
+		if (i) {	// 1st entry is always the regular default SID
+			memset((void*)(_mem2sid+addrs[i]-0xd400), i, 0x1f);
 		}
 	}
 }

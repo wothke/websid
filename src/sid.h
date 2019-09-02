@@ -33,7 +33,7 @@ public:
 	* Resets this instance according to the passed params.
 	*/
 	void resetModel(uint8_t is_6581);
-	void reset(uint16_t addr, uint32_t sample_rate, uint8_t is_6581, uint8_t compatibility);
+	void reset(uint16_t addr, uint32_t sample_rate, uint8_t is_6581, uint8_t compatibility, uint8_t output_channel);
 	void resetStatistics();
 		
 	/**
@@ -64,7 +64,8 @@ public:
 	* @param synth_trace_bufs when used it must be an array[4] containing
 	*                       buffers of at least length "offset"
 	*/		
-	void synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offset, double scale, uint8_t do_clear);
+	void synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offset, double *scale, uint8_t do_clear);
+	void synthSampleStripped(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offset, double *scale, uint8_t do_clear);
 
 	/**
 	* Measures the length if one sample in system cycles.
@@ -86,7 +87,7 @@ public:
 	/**
 	* Resets all used SID chips.
 	*/
-	static void resetAll(uint32_t sample_rate, uint16_t *addrs, uint8_t *is_6581, uint8_t compatibility, uint8_t resetVol);
+	static void resetAll(uint32_t sample_rate, uint16_t *addrs, uint8_t *is_6581, uint8_t *output_chan, uint8_t compatibility, uint8_t resetVol);
 
 	/**
 	* Clock all used SID chips.
@@ -129,7 +130,8 @@ public:
 	/**
 	* Renders the combined output of all currently used SIDs.
 	*/
-	static void	synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offset);
+	static void	synthSample(int16_t *buffer, int16_t **synth_trace_bufs, double* scale, uint32_t offset);
+	static void	synthSampleStripped(int16_t *buffer, int16_t **synth_trace_bufs, double* scale, uint32_t offset);
 	
 protected:
 	friend class Envelope;
@@ -159,6 +161,8 @@ private:
 	void		clockOscillators();
 		
 	// wave form generation
+	void		updateFreqCache(uint8_t voice);
+	
 	uint16_t	combinedWF(uint8_t channel, double *wfarray, uint16_t index, uint8_t differ6581);
 	uint16_t	createTriangleOutput(uint8_t voice);
 	uint16_t	createSawOutput(uint8_t voice);
@@ -176,7 +180,8 @@ private:
 	class Envelope *_env[3];
 	class Filter *_filter;
 	
-	uint16_t _addr;		// start memory address that the SID is mapped to	
+	uint16_t _addr;			// start memory address that the SID is mapped to
+	uint8_t _dest_channel;		// which stereo channel to output to
 };
 
 

@@ -678,6 +678,8 @@ uint8_t DigiDetector::getD418Sample( uint8_t value) {
 }
 
 uint8_t DigiDetector::detectSample(uint16_t addr, uint8_t value) {
+	if (envSidVersion() == MULTI_SID_TYPE) return 0;	// optimization for multi-SID  
+	
 	if ((SID::getNumberUsedChips() == 1) && _isC64compatible) addr&= ~(0x3e0); // mask out alternative addresses of d400 SID (see 5-Channel_Digi-Tune).. use in PSID would crash playback of recorded samples
 	
 	if (envIsPSID() && _isC64compatible) return 0;	// for songs like MicroProse_Soccer_V1.sid tracks >5 (PSID digis must still be handled.. like Demi-Demo_4_PSID.sid)

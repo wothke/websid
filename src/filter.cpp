@@ -27,169 +27,8 @@ extern "C" {
 // switch to completely disable use of the filter
 #define USE_FILTER
 
-// internal filter def
-struct FilterState {
-    uint8_t  low_ena;
-	uint8_t  band_ena;
-    uint8_t  hi_ena;
-    uint8_t  v3ena;
-    uint8_t  vol;
-	
-	uint8_t filter_enabled[3];	// activation per voice
-	
-	// derived from Hermit's filter implementation: see http://hermit.sidrip.com/jsSID.html	
-	double low_pass;		// previous "low pass" output
-    double band_pass;	// previous "band pass" output
-	
-	// filter output for simulated individual voice data (not used for actual playback)
-	// allows to visualize the approximate effect the filter had on the respective voices (if any)
-	double sim_low_pass[3];
-    double sim_band_pass[3];
-
-	double cutoff_ratio_8580;
-    double cutoff_ratio_6581;
-	
-    uint8_t cutoff_low;			// filter cutoff low (3 bits)
-    uint8_t cutoff_high;		// filter cutoff high (8 bits)
-    uint8_t res_filt;			// resonance (4bits) / Filt
-    uint8_t ftp_vol;			// mode (hi/band/lo pass) / volume
-	double cutoff, resonance; 	// convenience calculated from the above
-
-	
-	// external filter (using "double" to avoid issues with denormals)
-	double low_pass_ext;		// previous "low pass" output external filter
-	double high_pass_ext;		// previous "high pass" output external filter
-	double cutoff_low_pass_ext;	// cutoff "low pass" external filter
-	double cutoff_high_pass_ext;// cutoff "high pass" external filter
-};
-
-// When looking at real-HW recordings of pulse-wave based songs (e.g. see Superman-Man_of_Steel.sid) 
-// I noticed characteristic distortions like those caused by single-time-constant high-pass filters (see 
-// https://global.oup.com/us/companion.websites/fdscontent/uscompanion/us/static/companion.websites/9780199339136/Appendices/Appendix_E.pdf
-// - figure E.14 ) an effect that my emulator so far had not reproduced at all.. While investigating the 
-// origin of the effect I found that investigators at reSid had already identified the culprit as what they called the SID's "external filter".
-// I don't know how accurate their analysis really is, but the additional low-/high-pass filter that they propose creates distortions that 
-// are pretty much in line with what can be observed in the SOASC recordings. What they say sounds like a very plausible explanation and
-// I therefore added the same kind of filter configuration here (thanks to the resid team for their impressive reverse-engineering efforts!).
-
-inline double extFilter(struct FilterState* state, double in, double cycles) {
-	double out;
-	for (int i= 0; i<cycles; i++) {
-		out= state->low_pass_ext - state->high_pass_ext;
-		state->high_pass_ext+= state->cutoff_high_pass_ext * out;
-		state->low_pass_ext+= state->cutoff_low_pass_ext * (in - state->low_pass_ext);
-	}
-	return out;
-}
-
-struct FilterState* getState(Filter *e) {	// this should rather be static - but "friend" wouldn't work then
-	return (struct FilterState*)e->_state;
-}
-
-Filter::Filter(SID *sid) {
-	_sid= sid;
-	
-	_state= (void*) malloc(sizeof(struct FilterState));
-}
-
-void Filter::reset(uint32_t sample_rate) {
-	struct FilterState* state= getState(this); 
-
-	// init "filter" structures
-	memset((uint8_t*)state, 0, sizeof(struct FilterState));
-	
-    state->cutoff_ratio_8580 = ((double)-2.0) * 3.1415926535897932385 * (12500.0 / 256) / sample_rate;
-    state->cutoff_ratio_6581 = ((double)-2.0) * 3.1415926535897932385 * (20000.0 / 256) / sample_rate;
-//	state->band_pass = 0;	// redundant
-//	state->low_pass = 0;
-
-//	state->low_pass_ext= state->high_pass_ext= 0;
-
-	// could use the real clock frequency here.. but with the sample based rounding 
-	// the imprecision is already so big that a fake precision here would be overkill..
-	const double frequency= 1000000; 
-	
-	// cutoff: w0=1/RC  // capacitor: 1 F=1000000 uF; 1 uF= 1000000 pF (i.e. 10e-12 F)	
-	state->cutoff_high_pass_ext = ((double)100) / frequency;	// hi-pass: R=1kOhm, C=10uF; i.e. w0=100
-	state->cutoff_low_pass_ext = ((double)100000) / frequency;	// lo-pass: R=10kOhm, C=1000pF; i.e. w0=100000
-}
-
-/* Get the bit from an uint32_t at a specified position */
-static uint8_t getBit(uint32_t val, uint8_t b) { return (uint8_t) ((val >> b) & 1); }
-
-void Filter::poke(uint8_t reg, uint8_t val) {
-	struct FilterState* state= getState(this); 
-	switch (reg) {
-        case 0x15: { state->cutoff_low = val & 0x7; resetInput(); break; }
-        case 0x16: { state->cutoff_high = val; resetInput(); break; }
-        case 0x17: { 
-				state->res_filt = val & 0xf7;	// ignore FiltEx		
-				resetInput();
-				
-				for (uint8_t voice=0; voice<3; voice++) {
-					state->filter_enabled[voice]  = getBit(val, voice);
-				}
-	
-			break; 
-			}
-        case 0x18: { 
-				state->ftp_vol = val;
-#ifdef USE_FILTER
-				state->low_ena = getBit(val,4);	// lowpass
-				state->band_ena = getBit(val,5);	// bandpass
-				state->hi_ena = getBit(val,6);		// highpass
-				state->v3ena = !getBit(val,7);	// chan3 off
-#endif  
-				state->vol   = (val & 0xf);		// main volume	
-			break;
-			}
-	};
-}
-
-uint8_t Filter::getVolume() {
-	struct FilterState* state= getState(this);
-	return state->ftp_vol;
-}
-
-// voice output visualization works better if the effect of the filter is included
-int32_t Filter::simOutput(uint8_t voice, uint8_t is_filtered, int32_t *filter_in, int32_t *out) {
-	struct FilterState* state= getState(this);
-#ifdef USE_FILTER	
-	double output=	runFilter((double)-(*filter_in), (double)(*out), &(state->sim_band_pass[voice]), &(state->sim_low_pass[voice]));
-		
-	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)
-	// (using a reduced OUTPUT_SCALEDOWN risks integer overflow - see A_Desire_Welcome.sid - 
-	// but allows to amplify otherwise badly visible graphs..)
-	double OUTPUT_SCALEDOWN = 0x6 * 0xf / (is_filtered ? 1.3 : 4.0);	// 
-	return round(output * state->vol / OUTPUT_SCALEDOWN); // SID output
-#else
-	int32_t OUTPUT_SCALEDOWN = 0x6 * 0xf;
-	return (*out)* state->vol / OUTPUT_SCALEDOWN;
-#endif
-}
-
-int32_t Filter::getOutput(int32_t *filter_in, int32_t *out, double cycles_per_sample) {
-
-	struct FilterState* state= getState(this);
-	int32_t OUTPUT_SCALEDOWN = 0x6 * 0xf;	// hand tuned with "424"
-#ifdef USE_FILTER
-
-	// note: filter impl seems to invert the data (see 2012_High-Score_Power_Ballad where two voices playing
-	// the same notes cancelled each other out..)
-	double output= 	runFilter((double)-(*filter_in), (double)(*out), &(state->band_pass), &(state->low_pass));
-	
-	output *= state->vol;
-
-	output= extFilter(state, output, cycles_per_sample);
-	
-	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)
-	return round(output / OUTPUT_SCALEDOWN); // SID output
-#else
-	return (*out)* state->vol / OUTPUT_SCALEDOWN;
-#endif
-}
-
-//#define USE_C_MATH
+// note: there doesn't seem to be any peformance difference ..
+#define USE_C_MATH
 
 // for some reason Hermit's JavaScript impl does seem to sound different (in some situations)
 // though the filter impl should be identical (maybe some border-base in math impls?)
@@ -224,22 +63,281 @@ static double myPow(double i1, double i2) {
 #endif
 }
 
-void Filter::resetInput() {// FIXME this would probably need to be re-adjusted for higher sampling rate
+static double _scope_vol[0x10];
+static double _scope_vol_filtered[0x10];
+
+static void initScopeCache() {
+	// cache prescaled volume to avoid calculations later:
+	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)
+	// (using a reduced OUTPUT_SCALEDOWN risks integer overflow - see A_Desire_Welcome.sid - 
+	// but allows to amplify otherwise badly visible graphs..)
+	
+	// FIXME: memory access may actually be slower than just recalculating the stuff! todo: profile!
+	
+	for (uint8_t i= 0; i<0x10; i++) {
+		double OUTPUT_SCALEDOWN = 0x6 * 0xf;	
+		_scope_vol_filtered[i]= ((double)i) / (OUTPUT_SCALEDOWN);	// // testcase filtered: The_Human_Race_is_Dying_Out.sid
+		_scope_vol[i]= ((double)i) / (OUTPUT_SCALEDOWN / 4.0);
+	}
+}
+
+/*
+// Hermit's 6581 filter distortion impl - unused
+#define VCR_SHUNT_6581 1500 //kOhm //cca 1.5 MOhm Rshunt across VCR FET drain and source (causing 220Hz bottom cutoff with 470pF integrator capacitors in old C64)
+#define VCR_FET_TRESHOLD 192 //Vth (on cutoff numeric range 0..2048) for the VCR cutoff-frequency control FET below which it doesn't conduct
+#define CAP_6581 0.470 //nF //filter capacitor value for 6581
+#define CAP_6581_RECIPROCAL (-1000000 / CAP_6581)
+#define FILTER_DARKNESS_6581 22.0 //the bigger the value, the darker the filter control is (that is, cutoff frequency increases less with the same cutoff-value)
+#define FILTER_DISTORTION_6581 0.0016 //the bigger the value the more of resistance-modulation (filter distortion) is applied for 6581 cutoff-control
+*/
+
+// internal filter def
+struct FilterState {
+    uint8_t  low_ena;
+	uint8_t  band_ena;
+    uint8_t  hi_ena;
+    uint8_t  v3ena;
+    uint8_t  vol;
+	
+	uint8_t filter_enabled[3];	// activation per voice
+	
+	// derived from Hermit's filter implementation: see http://hermit.sidrip.com/jsSID.html	
+	double low_pass;		// previous "low pass" output
+    double band_pass;	// previous "band pass" output
+	
+	// filter output for simulated individual voice data (not used for actual playback)
+	// allows to visualize the approximate effect the filter had on the respective voices (if any)
+	double sim_low_pass[3];
+    double sim_band_pass[3];
+
+	double cutoff_ratio_8580;
+    double cutoff_ratio_6581, cutoff_bias_6581;
+
+// Hermit's 6581 filter distortion impl - unused
+//	double cutoff_steepness_6581, rDS_VCR_FET;
+	
+	uint32_t sample_rate;
+	
+    uint8_t cutoff_low;			// filter cutoff low (3 bits)
+    uint8_t cutoff_high;		// filter cutoff high (8 bits)
+    uint8_t res_filt;			// resonance (4bits) / Filt
+    uint8_t ftp_vol;			// mode (hi/band/lo pass) / volume
+	double cutoff, resonance; 	// convenience calculated from the above
+
+	
+	// external filter (using "double" to avoid issues with denormals)
+	double low_pass_ext;		// previous "low pass" output external filter
+	double high_pass_ext;		// previous "high pass" output external filter
+	
+//	double cutoff_low_pass_ext;	// cutoff "low pass" external filter
+//	double cutoff_high_pass_ext;// cutoff "high pass" external filter
+};
+
+// When looking at real-HW recordings of pulse-wave based songs (e.g. see Superman-Man_of_Steel.sid) 
+// I noticed characteristic distortions like those caused by single-time-constant high-pass filters (see 
+// https://global.oup.com/us/companion.websites/fdscontent/uscompanion/us/static/companion.websites/9780199339136/Appendices/Appendix_E.pdf
+// - figure E.14 ) an effect that my emulator so far had not reproduced at all.. While investigating the 
+// origin of the effect I found that investigators at reSid had already identified the culprit as what they called the SID's "external filter".
+// I don't know how accurate their analysis really is, but the additional low-/high-pass filter that they propose creates distortions that 
+// are pretty much in line with what can be observed in the SOASC recordings. What they say sounds like a very plausible explanation and
+// I therefore added the same kind of filter configuration here (thanks to the resid team for their impressive reverse-engineering efforts!).
+
+// external filter config
+#define FREQUENCY 1000000 // // could use the real clock frequency here.. but  a fake precision here would be overkill
+
+inline double extFilter(struct FilterState* state, double in, double cycles) {
+/*
+	// note: the cycle-by-cycle loop-impl is a performance killer and seems to have been the
+	// main reason why some multi-SID songs stated to stutter on my old PC..	
+	double out;
+	for (int i= 0; i<cycles; i++) {
+		out= state->low_pass_ext - state->high_pass_ext;
+		state->high_pass_ext+= state->cutoff_high_pass_ext * out;
+		state->low_pass_ext+= state->cutoff_low_pass_ext * (in - state->low_pass_ext);
+	}
+	return out;
+*/	
+
+	// cutoff: w0=1/RC  // capacitor: 1 F=1000000 uF; 1 uF= 1000000 pF (i.e. 10e-12 F)
+	const double cutoff_high_pass_ext = ((double)100) / state->sample_rate;	// hi-pass: R=1kOhm, C=10uF; i.e. w0=100	=> causes the "saw look" on pulse WFs
+//	const double cutoff_low_pass_ext = ((double)100000) / FREQUENCY;	// lo-pass: R=10kOhm, C=1000pF; i.e. w0=100000  .. no point at low sample rate
+	
+	double out= state->low_pass_ext - state->high_pass_ext;
+	state->high_pass_ext+= cutoff_high_pass_ext * out;
+	state->low_pass_ext+= (in - state->low_pass_ext);
+//	state->low_pass_ext+= cutoff_low_pass_ext * (in - state->low_pass_ext);
+
+	return out;
+}
+
+struct FilterState* getState(Filter *e) {	// this should rather be static - but "friend" wouldn't work then
+	return (struct FilterState*)e->_state;
+}
+
+Filter::Filter(SID *sid) {
+	_sid= sid;
+	
+	_state= (void*) malloc(sizeof(struct FilterState));
+}
+
+void Filter::reset(uint32_t sample_rate) {
+	struct FilterState* state= getState(this); 
+
+	// init "filter" structures
+	memset((uint8_t*)state, 0, sizeof(struct FilterState));
+
+	state->sample_rate= sample_rate;
+
+	// 8580 
+    state->cutoff_ratio_8580 = ((double)-2.0) * 3.1415926535897932385 * (12500.0 / 2048) / sample_rate;
+
+	// 6581: old cSID impl
+    state->cutoff_ratio_6581 = ((double)-2.0) * 3.1415926535897932385 * (20000.0 / 2048) / sample_rate;
+	state->cutoff_bias_6581 = 1 - myExp(-2 * 3.14 * 220 / sample_rate); //around 220Hz below treshold
+
+// Hermit's 6581 filter distortion impl - unused
+//	state->cutoff_steepness_6581 = FILTER_DARKNESS_6581 * (2048.0 - VCR_FET_TRESHOLD); //pre-scale for 0...2048 cutoff-value range //lighten CPU-load in sample-callback
+
+//	state->band_pass = 0;	// redundant
+//	state->low_pass = 0;
+
+//	state->low_pass_ext= state->high_pass_ext= 0;
+	
+	initScopeCache();
+}
+
+/* Get the bit from an uint32_t at a specified position */
+static uint8_t getBit(uint32_t val, uint8_t b) { return (uint8_t) ((val >> b) & 1); }
+
+void Filter::poke(uint8_t reg, uint8_t val) {
+	struct FilterState* state= getState(this); 
+	switch (reg) {
+        case 0x15: { state->cutoff_low = val & 0x7; _sid->isModel6581() ? resetInput6581(0) : resetInput8580();  break; }
+        case 0x16: { state->cutoff_high = val; _sid->isModel6581() ? resetInput6581(0) : resetInput8580();  break; }
+        case 0x17: { 
+				state->res_filt = val & 0xf7;	// ignore FiltEx
+
+				_sid->isModel6581() ? resetInput6581(0) : resetInput8580(); 
+				
+				for (uint8_t voice=0; voice<3; voice++) {
+					state->filter_enabled[voice] = getBit(val, voice);
+					
+					// ditch cached stuff when filter is turned off
+					if (!state->filter_enabled[voice]) state->sim_low_pass[voice]= state->sim_band_pass[voice]= 0;
+				}
+	
+			break; 
+			}
+        case 0x18: { 
+				state->ftp_vol = val;
+#ifdef USE_FILTER
+				state->low_ena = getBit(val,4);	// lowpass
+				state->band_ena = getBit(val,5);	// bandpass
+				state->hi_ena = getBit(val,6);		// highpass
+				state->v3ena = !getBit(val,7);	// chan3 off
+				
+				if (!(val & 0x70)) {
+					// when filter is disabled the cached stuff should better be ditched
+					state->low_pass= state->band_pass= 0;
+					state->sim_low_pass[0]= state->sim_low_pass[1]= state->sim_low_pass[2];
+					state->sim_band_pass[0]= state->sim_band_pass[1]= state->sim_band_pass[2];
+				}
+				
+#endif  
+				state->vol   = (val & 0xf);		// main volume	
+			break;
+			}
+	};
+}
+
+uint8_t Filter::getVolume() {
+	struct FilterState* state= getState(this);
+	return state->ftp_vol;
+}
+
+#define OUTPUT_SCALEDOWN (0x6*0xf)	// hand tuned with "424"
+
+// voice output visualization works better if the effect of the filter is included
+int32_t Filter::simOutput(uint8_t voice, uint8_t is_filtered, int32_t *filter_in, int32_t *out) {
+	struct FilterState* state= getState(this);
+#ifdef USE_FILTER	
+	double output=	runFilter((double)(*filter_in), (double)(*out), &(state->sim_band_pass[voice]), &(state->sim_low_pass[voice]));		
+	return is_filtered ? (output * _scope_vol_filtered[state->vol]) :  (output * _scope_vol[state->vol]);
+
+/*	
+	// re-calculating might be faster then memory access?
+	// seems it makes hardly any difference.. the surrounding measurement noise seems to
+	// be much bigger.. the position of the "stuttering" in the playback seems to shift betweeen
+	// measurements and it seems like a safe guess that it is caused by the browser's garbage collection
+	
+	return is_filtered ? 
+			(output * (((double)state->vol) / (((double)OUTPUT_SCALEDOWN)))) :  
+			(output * (((double)state->vol) / (((double)OUTPUT_SCALEDOWN) / 4.0)));
+*/	
+#else
+	return (*out)* state->vol / OUTPUT_SCALEDOWN;
+#endif
+}
+
+int32_t Filter::getOutput(int32_t *filter_in, int32_t *out, double cycles_per_sample) {
+
+	struct FilterState* state= getState(this);
+#ifdef USE_FILTER
+
+	// note: filter impl seems to invert the data (see 2012_High-Score_Power_Ballad where two voices playing
+	// the same notes cancelled each other out..)
+// XXX orig	double output= 	runFilter((double)-(*filter_in), (double)(*out), &(state->band_pass), &(state->low_pass));
+	double output= 	runFilter((double)(*filter_in), (double)(*out), &(state->band_pass), &(state->low_pass));
+	
+	output *= state->vol;	// XXX FIXME why not scaledown here and save the below division?
+
+	output= extFilter(state, output, cycles_per_sample);
+	
+	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)
+	return round(output / OUTPUT_SCALEDOWN); // SID output
+#else
+	return (*out)* state->vol / OUTPUT_SCALEDOWN;
+#endif
+}
+
+
+void Filter::resetInput8580() {
+	// since this only depends on the sid regs, it is sufficient to update this after reg updates
 #ifdef USE_FILTER
 	struct FilterState* state= getState(this);
 	
-	// weird scale.. - using the "lo" register as a fractional part..
-	state->cutoff = ((double)(state->cutoff_low)) / 8 +  state->cutoff_high + 0.2;	// why the +0.2 ? should max not be 256?
+	// derived from Hermit's cSID-light impl	
+	// NOTE: +1 is meant to model that even a 0 cutoff will still let through some signal..
+	state->cutoff = ((double)state->cutoff_low) +  state->cutoff_high*8 +1;	// cutoff_low is already 3 bits
 		
-	if (!_sid->isModel6581()) {
-		state->cutoff = 1.0 - myExp(state->cutoff * state->cutoff_ratio_8580);
-		state->resonance = myPow(2.0, ((4.0 - (state->res_filt >> 4)) / 8));				// i.e. 1.41 to 0.39
-				
-	} else {
-		if (state->cutoff < 24.0) { state->cutoff = 0.035; }
-		else { state->cutoff = 1.0 - 1.263 * myExp(state->cutoff * state->cutoff_ratio_6581); }
-		state->resonance = (state->res_filt > 0x5F) ? 8.0 / (state->res_filt >> 4) : 1.41;	// i.e. 1.41 to 0.53
-	}
+	state->cutoff = 1.0 - myExp(state->cutoff * state->cutoff_ratio_8580);
+	state->resonance = myPow(2.0, ((4.0 - (state->res_filt >> 4)) / 8));				// i.e. 1.41 to 0.39
+#endif
+}
+void Filter::resetInput6581(int32_t filtin) {
+	// note: this method would need to be called between samples if Hermit's distortion impl ever was to be used 
+#ifdef USE_FILTER
+	struct FilterState* state= getState(this);
+	
+	// derived from Hermit's cSID-light impl	
+	state->cutoff = ((double)state->cutoff_low) +  state->cutoff_high*8+1;	// cutoff_low is already 3 bits
+		
+	// Hermit's sSID-light filter distortion impl must be updated with every sample, 
+	// see filtin below - i.e. much more expensive and it doesn't seem to be worth the trouble
+	// see additional clicks in John Ames's "Teen Spirit 1 main guitar"
+/*
+	state->cutoff += round(filtin * FILTER_DISTORTION_6581); //MOSFET-VCR control-voltage-modulation (resistance-modulation aka 6581 filter distortion) emulation
+
+	state->rDS_VCR_FET = state->cutoff <= VCR_FET_TRESHOLD ? 
+					100000000.0 //below Vth treshold Vgs control-voltage FET presents an open circuit
+					: state->cutoff_steepness_6581 / (state->cutoff - VCR_FET_TRESHOLD); // rDS ~ (-Vth*rDSon) / (Vgs-Vth)  //above Vth FET drain-source resistance is proportional to reciprocal of cutoff-control voltage
+	state->cutoff = (1 - exp(CAP_6581_RECIPROCAL / (VCR_SHUNT_6581 * state->rDS_VCR_FET / (VCR_SHUNT_6581 + state->rDS_VCR_FET)) / state->sample_rate)); //curve with 1.5MOhm VCR parallel Rshunt emulation
+*/	
+	
+	// old cSID impl
+	state->cutoff = (state->cutoff_bias_6581 + ((state->cutoff < 192) ? 0 : 1 - myExp((state->cutoff - 192) * state->cutoff_ratio_6581)));
+	
+	state->resonance = ((state->res_filt > 0x5F) ? 8.0 / (state->res_filt >> 4) : 1.41);
 #endif
 }
 
@@ -289,10 +387,13 @@ double Filter::runFilter(double filter_in, double output, double *band_pass, dou
 		output+= filter_in; 	// see Dancing_in_the_Moonlight
 	} else {		
 		if (state->hi_ena) { output -= tmp;} 
+		
 		tmp = (*band_pass) - tmp * state->cutoff;
 		(*band_pass) = tmp;
 		
-		if (state->band_ena) { output -= tmp; }
+// 		if (state->band_ena) { output -= tmp; }	// orig: supposedly this is what Hermit observed on his real HW
+		if (state->band_ena) { output += tmp; }	// make it look like reSID (even if it's wrong)
+		
 		tmp = (*low_pass) + tmp * state->cutoff;
 		(*low_pass) = tmp;
 		

@@ -42,6 +42,8 @@ static uint32_t _total_cycles_per_screen;
 static uint8_t _x;	// in cycles
 static uint16_t _y;	// in rasters
 
+static uint32_t _raster_latch;	// optimization: D012 + D011-bit 8 combined
+
 static int16_t _init_raster_PSID;
 
 double vicFPS() {
@@ -90,15 +92,11 @@ void vicSetModel(uint8_t ntsc_mode) {
 	_init_raster_PSID= -1;
 }
 
-uint16_t getRasterLatch() {
-	return memReadIO(0xd012) + (((uint16_t)memReadIO(0xd011)&0x80)<<1);
-}
-
-void checkIRQ() {
+static void checkIRQ() {
 	// "The test for reaching the interrupt raster line is done in cycle 0 of 
 	// every line (for line 0, in cycle 1)."	
 	
-	if (_y == getRasterLatch()) {			
+	if (_y == _raster_latch) {
 		uint8_t latch= memReadIO(0xd019) | 0x1;	// always signal (test case: Wally Beben songs that use CIA 1 timer for IRQ but check for this flag)
 
 		uint8_t interrupt_enable= memReadIO(0xd01a) & 0x1;			
@@ -141,7 +139,7 @@ uint8_t vicIRQ() {
 	 KNOWN LIMITATION: Additional 2 cycles per sprite may be needed - which isn't implemented here.
 */
 uint8_t vicStunCPU() {
-	uint8_t ctrl= memReadIO(0xd011);
+	const uint8_t ctrl= memReadIO(0xd011);
 	if (ctrl & 0x10) {	// display enabled
 		if ((_y >= 0x30) && (_y <= 0xf7) && ((ctrl & 0x7) == (_y & 0x7))) {
 			/*  this is a badline:
@@ -172,6 +170,9 @@ uint8_t vicStunCPU() {
 	return 0;
 }
 
+static void cacheRasterLatch() {
+	_raster_latch= memReadIO(0xd012) + (((uint16_t)memReadIO(0xd011)&0x80)<<1);
+}
 
 void vicReset(uint8_t is_rsid, uint8_t ntsc_mode) {
 	
@@ -190,6 +191,7 @@ void vicReset(uint8_t is_rsid, uint8_t ntsc_mode) {
 		memWriteIO(0xd011, 0x1B);
 		memWriteIO(0xd012, 0x0); 	// raster must be below 0x100
 	}
+	cacheRasterLatch();
 }
 
 // -----------------------------  VIC I/O -------------------------------------------
@@ -229,6 +231,11 @@ static void writeD01A(uint8_t value) {
 
 void vicWriteMem(uint16_t addr, uint8_t value) {
 	switch (addr) {
+		case 0xd011:
+		case 0xd012:
+			memWriteIO(addr, value);
+			cacheRasterLatch();
+			break;
 		case 0xd019:
 			writeD019(value);
 			break;

@@ -33,6 +33,7 @@
 #include <emscripten.h>
 
 extern "C" {
+#include "env.h"
 #include "cia.h"	
 #include "vic.h"	
 #include "core.h"
@@ -45,14 +46,17 @@ extern "C" {
 
 // ----------------- audio output buffer management ------------------------------------------
 
+
 //#define BUFLEN 8*882	// make it large enough for data of 8 screens (for NTSC 8*735 would be sufficient)
 #define BUFLEN 96000/50	// keep it down to one screen to allow for more direct feedback to WebAudio side..
 
 static uint32_t 		_soundBufferLen= BUFLEN;
-static int16_t 			_soundBuffer[BUFLEN];
 
-#define MAX_VOICES 			12					// max 3 sids*4 voices (1 digi channel)
-#define MAX_SCOPE_BUFFERS 	12
+#define CHANNELS 2
+static int16_t 			_soundBuffer[BUFLEN*CHANNELS];
+
+#define MAX_VOICES 			40					// max 10 sids*4 voices (1 digi channel) - fixme: no digi used in multi-SID
+#define MAX_SCOPE_BUFFERS 	40
 
 static int16_t* 		_scope_buffers[MAX_SCOPE_BUFFERS];	// output "scope" streams corresponding to final audio buffer
 
@@ -80,8 +84,11 @@ static uint8_t 	_sid_version;
 static uint8_t	_is_rsid;
 static uint8_t	_is_psid;			// redundancy to avoid runtime logic
 
-static uint16_t	_sid_addr[3];		// start addr of installed SID chips (0 means NOT available)
-static uint8_t 	_sid_is_6581[3];	// models of installed SID chips 
+static uint16_t	_sid_addr[MAX_SIDS];		// start addr of installed SID chips (0 means NOT available)
+static uint8_t 	_sid_is_6581[MAX_SIDS];	// models of installed SID chips 
+static uint8_t 	_sid_target_chan[MAX_SIDS];// output channel for this SID 
+static uint8_t 	_sid_2nd_chan_idx;
+
 
 static uint8_t 	_ntsc_mode= 0;
 static uint32_t	_clockRate;
@@ -160,18 +167,58 @@ uint16_t getSidAddr(uint8_t center_byte) {
 	return 0;
 }
 
-static void configureSids(uint16_t flags, uint8_t addr2, uint8_t addr3) {
+static void configureSids(uint16_t flags, uint8_t *addr_list) {
+	_sid_2nd_chan_idx= 0;
+	
 	_sid_addr[0]= 0xd400;
-	_sid_is_6581[0]= (flags>>4) & 0x3;	
+	_sid_is_6581[0]= (flags>>4) & 0x3;
 	_sid_is_6581[0]= !((_sid_is_6581[0]>>1) & 0x1); 	// only use 8580 when bit is explicitly set
 	
-	_sid_addr[1]= getSidAddr(addr2);
-	_sid_is_6581[1]= (flags>>6) & 0x3;
-	_sid_is_6581[1]= !_sid_is_6581[1] ? _sid_is_6581[0] : !((_sid_is_6581[1]>>1) & 0x1); 
+	if (_sid_version != MULTI_SID_TYPE) {	// allow max of 3 SIDs
+		_sid_target_chan[0]= 0;	// no stereo support
 		
-	_sid_addr[2]= getSidAddr(addr3);
-	_sid_is_6581[2]= (flags>>8) & 0x3;
-	_sid_is_6581[2]= !_sid_is_6581[2] ? _sid_is_6581[0] : !((_sid_is_6581[2]>>1) & 0x1); 
+		// standard PSID maxes out at 3 sids
+		_sid_addr[1]= getSidAddr((addr_list && (_sid_version>2))?addr_list[0x0]:0);
+		_sid_is_6581[1]= (flags>>6) & 0x3;
+		_sid_is_6581[1]= !_sid_is_6581[1] ? _sid_is_6581[0] : !((_sid_is_6581[1]>>1) & 0x1);
+		_sid_target_chan[1]= 0;
+		
+		_sid_addr[2]= getSidAddr((addr_list && (_sid_version>3))?addr_list[0x1]:0);
+		_sid_is_6581[2]= (flags>>8) & 0x3;
+		_sid_is_6581[2]= !_sid_is_6581[2] ? _sid_is_6581[0] : !((_sid_is_6581[2]>>1) & 0x1);
+		_sid_target_chan[2]= 0;
+	} else {	// allow max of 10 SIDs
+		_sid_target_chan[0]= (flags>>6) & 0x1;
+		
+		uint8_t prev_chan= _sid_target_chan[0];
+		
+		uint16_t *addr_list2= (uint16_t*)addr_list;	// is at even offset so there should be no alignment issue
+		
+		uint8_t i;
+		for (i= 0; i<(MAX_SIDS-1); i++) {
+			uint16_t flags2= addr_list2[i];	// bytes are flipped here
+			if (!flags2) break;
+			
+			_sid_addr[1+i]= getSidAddr(flags2&0xff);
+			_sid_is_6581[1+i]= (flags2>>12) & 0x3;
+			_sid_target_chan[1+i]= (flags2>>14) & 0x1;
+
+			if (!_sid_2nd_chan_idx) {
+				if (prev_chan != _sid_target_chan[1+i] ) {
+					_sid_2nd_chan_idx= i+1;	// 0 is the $d400 SID
+					
+					prev_chan= _sid_target_chan[1+i];
+				}
+			}
+			
+			if (!_sid_is_6581[1+i]) _sid_is_6581[1+i]= _sid_is_6581[0];	// default to whatever main SID is using
+		}
+		for (; i<(MAX_SIDS-1); i++) {	// mark as unused
+			_sid_addr[1+i]= 0;
+			_sid_is_6581[1+i]= 0;
+			_sid_target_chan[1+i]= 0;
+		}
+	}
 }
 
 extern "C" uint16_t* envSIDAddresses() {
@@ -179,6 +226,10 @@ extern "C" uint16_t* envSIDAddresses() {
 }
 extern "C" uint8_t*  envSID6581s() {
 	return _sid_is_6581;
+}
+
+extern "C" uint8_t*  envSIDOutputChannels() {
+	return _sid_target_chan;
 }
 
 extern "C" uint8_t envIsRSID() {
@@ -219,6 +270,10 @@ extern "C" int8_t envIsTimerDrivenPSID() {
 	return (envIsPSID() && (envCurrentSongSpeed() == 1));
 }
 
+extern "C" uint8_t env2ndOutputChanIdx() {
+	return _sid_2nd_chan_idx;
+}
+
 extern "C" int8_t envIsRasterDrivenPSID() {
 	return (envIsPSID() && (envCurrentSongSpeed() == 0));
 }
@@ -250,7 +305,7 @@ static void resetAudioBuffers() {
 
 	if (_synth_buffer) free(_synth_buffer);
 
-	_synth_buffer= (int16_t*)malloc(sizeof(int16_t)*_number_of_samples_per_call + 1);
+	_synth_buffer= (int16_t*)malloc(sizeof(int16_t)*_number_of_samples_per_call*CHANNELS + 1);
 	
 	// trace output (corresponding to _synth_buffer)
 	if (_synth_trace_buffers) {
@@ -372,7 +427,7 @@ static uint16_t loadComputeSidplayerData(uint8_t *mus_song_file, uint32_t mus_so
 	envSetNTSC(1);	// .mus stuff is mostly from the US..
 
 	
-	configureSids(0, 0, 0); 	// just use one *old* SID at d400 
+	configureSids(0, 0); 	// just use one *old* SID at d400 
 	
 	_load_addr= MUS_BASE_ADDR;
 	_load_end_addr= 0x9fff;
@@ -423,6 +478,8 @@ static uint16_t loadComputeSidplayerData(uint8_t *mus_song_file, uint32_t mus_so
 
 extern "C" int32_t computeAudioSamples()  __attribute__((noinline));
 extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
+	int sid_voices= SID::getNumberUsedChips()*4;
+
 #ifdef TEST
 	return 0;
 #endif
@@ -462,6 +519,8 @@ extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 					// check if there is some output this time..
 					for (uint16_t j= 0; j<_number_of_samples_per_call; j++) {
 						if (_synth_buffer[j] > 30) {		// empty signal still returns some small values...
+							// FIXME: 8SID song is above this threshold (~85) even before anything is playing... 
+							// but even with higher value there is hardly any speedup.. 
 							_sound_started= 1;
 							break;
 						}
@@ -479,7 +538,7 @@ extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 		if (_number_of_samples_rendered + _number_of_samples_to_render > _chunk_size) {
 			uint32_t available_space = _chunk_size-_number_of_samples_rendered;
 			
-			memcpy(&_soundBuffer[_number_of_samples_rendered], &_synth_buffer[sample_buffer_idx], sizeof(int16_t)*available_space);
+			memcpy(&_soundBuffer[_number_of_samples_rendered], &_synth_buffer[sample_buffer_idx], sizeof(int16_t)*available_space*CHANNELS);
 				
 			/*
 			* In addition to the actual sample data played by WebAudio, buffers containing raw voice data are also
@@ -490,23 +549,23 @@ extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 			*/
 	
 			if (_trace_sid) {
-				int sid_voices= SID::getNumberUsedChips()*4;			
 				// do the same for the respective voice traces
 				for (int i= 0; i<sid_voices; i++) {
-					memcpy(&(_scope_buffers[i][_number_of_samples_rendered]), &(_synth_trace_buffers[i][sample_buffer_idx]), sizeof(int16_t)*available_space);
+					if ((_sid_version != MULTI_SID_TYPE) || (sid_voices % 4) != 3)	// no digi 
+						memcpy(&(_scope_buffers[i][_number_of_samples_rendered]), &(_synth_trace_buffers[i][sample_buffer_idx]), sizeof(int16_t)*available_space);
 				}
 			}
 			sample_buffer_idx += available_space;
 			_number_of_samples_to_render -= available_space;
 			_number_of_samples_rendered = _chunk_size;
 		} else {
-			memcpy(&_soundBuffer[_number_of_samples_rendered], &_synth_buffer[sample_buffer_idx], sizeof(int16_t)*_number_of_samples_to_render);
+			memcpy(&_soundBuffer[_number_of_samples_rendered], &_synth_buffer[sample_buffer_idx], sizeof(int16_t)*CHANNELS*_number_of_samples_to_render);
 
 			if (_trace_sid) {
-				int sid_voices= SID::getNumberUsedChips()*4;
 				// do the same for the respecive voice traces
 				for (int i= 0; i<sid_voices; i++) {
-					memcpy(&(_scope_buffers[i][_number_of_samples_rendered]), &(_synth_trace_buffers[i][sample_buffer_idx]), sizeof(int16_t)*_number_of_samples_to_render);
+					if ((_sid_version != MULTI_SID_TYPE) || (sid_voices % 4) != 3)	// no digi 
+						memcpy(&(_scope_buffers[i][_number_of_samples_rendered]), &(_synth_trace_buffers[i][sample_buffer_idx]), sizeof(int16_t)*_number_of_samples_to_render);
 				}
 			}
 			_number_of_samples_rendered += _number_of_samples_to_render;
@@ -701,7 +760,7 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void * in_
 	
 	envSetNTSC(0);
 	
-	configureSids(0, 0, 0); 	// just use one *old* SID at d400 
+	configureSids(0, 0); 	// just use one *old* SID at d400 
 	
 	memInitTest();
 	
@@ -756,7 +815,7 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void * in_
 		_compatibility= ( (_sid_version & 0x2) &&  ((flags & 0x2) == 0));	
 		ntscMode= (_sid_version == 2) && envIsPSID() && (flags & 0x8); // NTSC bit
 		
-		configureSids(flags, _sid_version>2?input_file_buffer[0x7a]:0, _sid_version>3?input_file_buffer[0x7b]:0);
+		configureSids(flags, &(input_file_buffer[0x7a]));
 			
 		uint8_t i;
 		for (i=0;i<32;i++) _song_name[i] = input_file_buffer[0x16+i];
@@ -825,6 +884,11 @@ extern "C" uint8_t EMSCRIPTEN_KEEPALIVE envSetSID6581(uint8_t is6581) {
 extern "C" uint8_t getDigiType()  __attribute__((noinline));
 extern "C" uint8_t EMSCRIPTEN_KEEPALIVE getDigiType() {
 	return SID::getGlobalDigiType();
+}
+
+extern "C" uint8_t envSidVersion()  __attribute__((noinline));
+extern "C" uint8_t EMSCRIPTEN_KEEPALIVE envSidVersion() {
+	return _sid_version;
 }
 
 extern "C" const char* getDigiTypeDesc()  __attribute__((noinline));

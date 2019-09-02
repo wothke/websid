@@ -11,7 +11,7 @@
  (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
 SIDBackendAdapter = (function(){ var $this = function () { 
-		$this.base.call(this, backend_SID.Module, 1);
+		$this.base.call(this, backend_SID.Module, 2);	// use stereo (for the benefit of multi-SID songs)
 		this.playerSampleRate;
 		
 		this._scopeEnabled= false;
@@ -172,6 +172,13 @@ SIDBackendAdapter = (function(){ var $this = function () {
 
 		readFloatTrace: function(buffer, idx) {
 			return (this.Module.HEAP16[buffer+idx])/0x8000;
+		},
+		// perf optimization:
+		getCopiedScopeStream: function(input, len, output) {
+			for(var i= 0; i<len; i++){
+				output[i]=  this.Module.HEAP16[input+i]; // will be scaled later anyway.. avoid the extra division here /0x8000;
+			}
+			return len;
 		},
 
 		/**

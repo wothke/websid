@@ -16,9 +16,15 @@
 
 #include "base.h"
 
+#define MULTI_SID_TYPE 0x4E
+#define MAX_SIDS 10					// might eventually need to be increased 
+
 // *.sid file version
 uint8_t envIsPSID();
 uint8_t envIsRSID();
+
+uint8_t envSidVersion();
+uint8_t env2ndOutputChanIdx();
 
 uint32_t envClockRate();
 
@@ -44,5 +50,6 @@ uint16_t envNumberOfSamplesPerCall();
 // array with 3 elements, 0 means not available
 uint16_t* envSIDAddresses();
 uint8_t*  envSID6581s();
+uint8_t*  envSIDOutputChannels();
 
 #endif

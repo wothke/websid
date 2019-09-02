@@ -965,8 +965,13 @@ static void runNextOp(void)
     int32_t mode=_modes[opc];
 	
 	int32_t c;  // temp for "carry"
-    switch (cmd)
-    {
+	
+    switch (cmd) {
+		// ideally the most often used OPs should be retriveable most quickly.. but is is unclear what strategy
+		// the optimizer will actually be using to implement this (and the optimizer cannot know what programs
+		// will be emulated here so it has no clue what might be the most used OPs) .. let's just hope it
+		// is using some constant time access scheme.
+		
         case adc: {
 			uint8_t in1= _a;
 			uint8_t in2= getaddr(opc, mode);
@@ -1668,7 +1673,6 @@ void cpuClock(void) {
 		if(pendingNMI()) {								// has higher prio than IRQ
 			// some old PlaySID files (with recorded digis) files actually 
 			// use NMI settings that must not be used here
-			
 			_nmi_executing= 1;
 			_nmi_committed= 0;
 			_nmi_line_ts= 0;	// make that same trigger unusable (interrupt must be acknowledged before a new one can be triggered)
@@ -1678,7 +1682,6 @@ void cpuClock(void) {
 				
 		} else if (pendingIRQ()) {	// interrupts are like a BRK command
 			_irq_committed= 0;
-
 			_exe_instr_opcode= start_irq_op;
 			_exe_instr_cycles= _opbase_frame_cycles[_exe_instr_opcode];
 			
