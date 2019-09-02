@@ -86,7 +86,7 @@ New flag:
 - Bit  6     output channel for main $d400 SID - aka SID #0 (default: 0 )
 		     the bit allows for a maximum of 2 channels (which seems sufficient since 
 		     all the songs found so far seem to max out at 2 stereo channels, and support for 
-		     exotic scenarios like 5.1 etc seem to be overkill)
+		     exotic scenarios like 5.1 etc seems to be overkill)
 
 - Bits 7-15  unused
 
