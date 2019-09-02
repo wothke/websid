@@ -10,14 +10,14 @@ Jürgen Wothke (v4E)
 INTRODUCTION
 ============
 
-This document describes the "SID file format+" used for multi-SID tunes 
-played by WebSid. The format is a simple generalization of the respective 
+This document describes the "SID file format+" used for multi-SID tunes
+played by WebSid. The format is a simple generalization of the respective
 SID FILE FORMAT used by the HVSC and this document uses the same structure
-as the respective HVSC ducument. This is not an official HVSC format
+as the respective HVSC document. This is not an official HVSC format
 but a "proprietary" modification. It addresses shortcomings of the official
 SID FILE FORMAT with regard to multi-SID songs:
 
-1) it allows to use an arbitrarry number of SIDs (rather than hard coded special cases) 
+1) it allows to use an arbitrary number of SIDs (rather than hard coded special cases) 
 2) it allows to model how SIDs should be wired to available mono/stereo output channels
 
 Ideally the respective extensions should eventually be integrated as an official HVSC 
@@ -27,8 +27,8 @@ Since SID v4E is a simple modification of the respective v3/4 formats, only
 the differences are described below.
 
 An old/official version song file can be easily extended with the v4E specific 
-meta-data (e.g. using a hex editor) since except for the multi-SID specific additions (at the
-very end of the header) the file/header structure is unchanged.
+meta-data (e.g. using a hex editor) since except for the multi-SID specific additions at the
+very end of the header the file/header structure is unchanged.
 
 SID files use the .sid file extension.
 
@@ -36,7 +36,7 @@ SID files use the .sid file extension.
 LEGEND
 ======
 
-+xx - The hexadecimal offset of the field from the beginning of the SID file.
++xx - The hexadecimal offset of the field from the beginning of the SID file
 
 BYTE - 8-bit binary value
 
@@ -83,12 +83,12 @@ The only difference to the "official" HVSC versions is that the bits 6-7 and 8-9
 used for 2nd and 3rd SID specific information.
 
 New flag:
-- Bit  6   output channel for main $d400 SID - aka SID #0 (default: 0 )
-		   the bit allows for a maximum of 2 channels (which seems sufficient since 
-		   all the songs found so far seem to max out at 2 stereo channels, and support for 
-		   exotic scenarios like 5.1 etc seem to be overkill)
+- Bit  6     output channel for main $d400 SID - aka SID #0 (default: 0 )
+		     the bit allows for a maximum of 2 channels (which seems sufficient since 
+		     all the songs found so far seem to max out at 2 stereo channels, and support for 
+		     exotic scenarios like 5.1 etc seem to be overkill)
 
-- Bits 7-15 unused
+- Bits 7-15  unused
 
 
 +78    BYTE startPage unchanged
@@ -102,9 +102,9 @@ as an "end" marker, i.e. with only 1 SID the nSidFlags at +7A would be 0. (This 
 reserved 0 WORD that old versions require at 0x7A.)
 
 Flags used for additional SID:
-- Bits 0-3 unused
-- Bits 4-5 SID version (same as respective flag for main SID - see +76):
-	00 = Unknown: defaults to respective main SID setting
+- Bits 0-3  unused
+- Bits 4-5  SID version (same as respective flag for main SID - see +76):
+	        00 = Unknown: defaults to respective main SID setting
 	
 - Bit  6    output channel (same position as respective flag for main SID - see +76) 
 - Bits 7-15 address of SID chip (same "2 center nibbles" format as used in original HVSC formats,
