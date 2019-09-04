@@ -589,7 +589,7 @@ uint8_t ciaReadMem(uint16_t addr) {
 
 		// thx to Wilfred Bos for this trick (just to make Pollytracker happy)
 		case 0xdc00:
-			return (memReadIO(0xdc02)^0xff)|memReadIO(addr);
+			return memReadIO(addr); //see S_W_A_F_2_tune_1.sid - Wilfred's hack doesn't work for this song: (memReadIO(0xdc02)^0xff)|memReadIO(addr);
 		case 0xdc01:
 			return (memReadIO(0xdc03)^0xff)|memReadIO(addr);
 
@@ -731,7 +731,8 @@ void ciaReset60HzPSID() {
 
 void ciaReset(uint32_t cycles_per_screen, uint8_t is_rsid) {
 
-	initMem(0xdc00, 0x10);	 	// fire botton NOT pressed (see Alter_Digi_Piece.sid)
+//	initMem(0xdc00, 0x10);	 	// fire botton NOT pressed (see Alter_Digi_Piece.sid)
+	initMem(0xdc00, 0x7f);	 	// S_W_A_F_2_tune_1.sid
 	initMem(0xdc01, 0xff);	 	// Master_Blaster_intro.sid/instantfunk.sid actually check this
 	
 	// CIA 1 defaults	(by default C64 is configured with CIA1 timer / not raster irq)

@@ -120,7 +120,7 @@ void runEmulation(int16_t *synth_buffer, int16_t **synth_trace_bufs, uint16_t sa
 	// performance info: JavaScript performance.now() measurements with a 8SID song suggest that
 	// only a small fraction of the overall runtime is spent in the below synthSample() and most of the time 
 	// is spent in the earlier clock-by-clock emulation of the system components; 2 (5) vs 12 (21)
-
+	
 	if (envSidVersion() != MULTI_SID_TYPE ) {
 		double scale= _vol_map[SID::getNumberUsedChips()-1] / 0xff;	// 0xff serves to normalize the 8-bit envelope
 
