@@ -382,7 +382,7 @@ uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// e
 //	if (isTestBit(voice)) return 0xffff;	// pulse start position: whatever DC level means.. but this is the output value PEEKed in this scenario 
 	if (isTestBit(voice)) return 0x8000;
 	
-//	int32_t wfout = ((_osc[voice]->counter>>8 > _osc[voice]->pulse))? 0 : 0xffff; // XXX plain impl
+//	int32_t wfout = ((_osc[voice]->counter>>8 > _osc[voice]->pulse))? 0 : 0xffff; // plain impl
 	
 	// Hermit's "anti-aliasing" pulse
 	

@@ -19,8 +19,6 @@
 * WebSid (c) 2019 Jürgen Wothke
 * version 0.93
 *
-* Emulation approach: Each call to computeAudioSamples() delivers some fixed number of audio samples.
-*
 * Terms of Use: This software is licensed under a CC BY-NC-SA 
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
@@ -283,12 +281,12 @@ static void resetAudioBuffers() {
 	
 	// number of samples corresponding to one simulated frame/screen
 	// (granularity of emulation is 1 screen)
-	if(_ntsc_mode && envIsRasterDrivenPSID()) { 
-		_number_of_samples_per_call= _sample_rate/vicFPS(); 		// NTSC: 735*60=44100		800*60=48000
-	} else {
-		_number_of_samples_per_call= _sample_rate/vicFPS(); 		// PAL: 882*50=44100		960*50=48000
-	}
-//	_chunk_size= _number_of_samples_per_call*8; 	// e.g. data for 8 50hz screens (0.16 secs)
+	
+	// NTSC: 735*60=44100		800*60=48000  
+	// PAL: 882*50=44100		960*50=48000
+	_number_of_samples_per_call= _sample_rate/vicFPS();
+
+	//	_chunk_size= _number_of_samples_per_call*8; 	// e.g. data for 8 50hz screens (0.16 secs)
 	_chunk_size= _number_of_samples_per_call; 	// WebAudio side can still aggregate these..
 	// just to make sure these is no garbage left
 	
@@ -475,6 +473,9 @@ static uint16_t loadComputeSidplayerData(uint8_t *mus_song_file, uint32_t mus_so
 }
 
 // ----------------- generic handling --------------------------------------------------------
+
+// This is driving the emulation: Each call to computeAudioSamples() delivers some fixed number 
+// of audio samples and the necessary emulation timespan is derived from it:
 
 extern "C" int32_t computeAudioSamples()  __attribute__((noinline));
 extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
@@ -813,7 +814,7 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void * in_
 		_basic_prog= (envIsRSID() && (flags & 0x2));	// C64 BASIC program need to be started..
 		
 		_compatibility= ( (_sid_version & 0x2) &&  ((flags & 0x2) == 0));	
-		ntscMode= (_sid_version == 2) && envIsPSID() && (flags & 0x8); // NTSC bit
+		ntscMode= (_sid_version >= 2) && (flags & 0x8); // NTSC bit
 		
 		configureSids(flags, &(input_file_buffer[0x7a]));
 			
@@ -833,7 +834,6 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void * in_
 	
 	// global settings that depend on the loaded music file
 	envSetNTSC(ntscMode);
-	//resetTimings(_ntsc_mode);
 	
 	_load_result[0]= &_load_addr;
 	_load_result[1]= &_play_speed;
@@ -943,7 +943,9 @@ extern "C" const char** EMSCRIPTEN_KEEPALIVE getTraceStreams() {
 
 // ------------------ deprecated stuff that should no longer be used -----------------------
 
-// @deprecated bit0=voice0, bit1=voice1,..
+/**
+* @deprecated bit0=voice0, bit1=voice1,..
+*/
 extern "C" uint32_t enableVoices(uint32_t mask)  __attribute__((noinline));
 extern "C" uint32_t EMSCRIPTEN_KEEPALIVE enableVoices(uint32_t mask) {
 	for(uint8_t i= 0; i<3; i++) {
@@ -953,7 +955,6 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE enableVoices(uint32_t mask) {
 	
 	return 0;
 }
-
 /**
 * @deprecated use getTraceStreams instead
 */
