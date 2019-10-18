@@ -36,8 +36,9 @@ extern "C" {
 
 #include <emscripten.h>
 
-// if 'init' takes longer than 2 secs then something is wrong (mb in endless loop)
-#define CYCLELIMIT 2000000
+// if 'init' takes longer than 4 secs then something is wrong (mb in endless loop)
+// test case: PSID "ALiH" type players (e.g. Simulcra.sid) use more than 2M cycles in their INIT
+#define CYCLELIMIT 4000000
 
 
 /*
