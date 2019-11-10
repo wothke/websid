@@ -636,7 +636,13 @@ uint8_t ciaReadMem(uint16_t addr) {
 			struct Timer *t= &(_cia[CIA2]);
 			return (readCounter(t, TIMER_B) >> 8);
 		}
-			
+
+		case 0xdd08:	// testcase: Traffic.sid 
+			return (_tod_in_millies%1000)/100;				// TOD tenth of second
+		case 0xdd09: 
+			return ((uint16_t)(_tod_in_millies/1000))%60;	// TOD second
+
+		
 		case 0xdd0d:
 			return acknInterruptStatus(&(_cia[CIA2]));
 			
@@ -688,6 +694,14 @@ void ciaWriteMem(uint16_t addr, uint8_t value) {
 		case 0xdd07:
 			setTimerLatch(&(_cia[CIA2]), addr-ADDR_CIA2, value);
 			break;
+			
+		case 0xdd08:		// testcase: Traffic.sid (uses the RTC of timer2) XXX dead code
+			updateTimeOfDay10thOfSec(value);
+			break;
+		case 0xdd09:
+			updateTimeOfDaySec(value);
+			break;						
+			
 		case 0xdd0d:
 			if (envIsPSID()) {
 				value &= 0x7f;	// don't allow PSID crap to trigger NMIs

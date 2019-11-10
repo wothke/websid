@@ -194,7 +194,7 @@ const static uint8_t _schedule_ta_FF6E[18] ={0xA9,0x81,0x8D,0x0D,0xDC,0xAD,0x0E,
 const static uint8_t _serial_clock_hi_EE8E[9] ={0xAD,0x00,0xDD,0x09,0x10,0x8D,0x00,0xDD,0x60};
 #endif
 const static uint8_t _irq_handler_FF48[19] ={0x48,0x8A,0x48,0x98,0x48,0xBA,0xBD,0x04,0x01,0x29,0x10,0xF0,0x03,0xEA,0xEA,0xEA,0x6C,0x14,0x03};	// disabled BRK branch
-const static uint8_t _irq_handler_EA7C[11] ={0xE6,0xA2,0xAD,0x0D,0xDC,0x68,0xA8,0x68,0xAA,0x68,0x40};
+const static uint8_t _irq_handler_EA7B[12] ={0xE6,0xA2,0xEA, 0xAD,0x0D,0xDC,0x68,0xA8,0x68,0xAA,0x68,0x40};	// added "INC $a2" (i.e. "TOD" frame count); Double_Falcon.sid depends on the extra NOP
 const static uint8_t _nmi_handler_FE43[5] ={0x78,0x6c,0x18,0x03,0x40};
 const static uint8_t _irq_end_handler_FEBC[6] ={0x68,0xa8,0x68,0xaa,0x68,0x40};
 
@@ -233,7 +233,7 @@ void memInitTest() {
     memcpy(&_kernal_rom[0x1f48], _irq_handler_test_FF48, 19);	// $ff48 irq routine
 	
 	memset(&_kernal_rom[0x0a31], 0xea, 0x4d);				// $ea31 fill some NOPs
-    memcpy(&_kernal_rom[0x0a7C], _irq_handler_EA7C, 11);	// $ea31 return sequence with added 0xa2 increment to sim time of day (see P_A_S_S_Demo_3.sid)
+    memcpy(&_kernal_rom[0x0a7C], _irq_handler_EA7B, 12);	// $ea31 return sequence with added 0xa2 increment to sim time of day (see P_A_S_S_Demo_3.sid)
     memcpy(&_kernal_rom[0x1e43], _nmi_handler_FE43, 5);		// $fe43 nmi handler
     memcpy(&_kernal_rom[0x1ebc], _irq_end_handler_FEBC, 6);	// $febc irq return sequence (e.g. used by Contact_Us_tune_2)
 	
@@ -273,7 +273,7 @@ void memResetKernelROM() {
 	
     memcpy(&_kernal_rom[0x1f48], _irq_handler_FF48, 19);	// $ff48 irq routine
     memset(&_kernal_rom[0x0a31], 0xea, 0x4d);			// $ea31 fill some NOPs		(FIXME: nops may take longer than original..)
-    memcpy(&_kernal_rom[0x0a7C], _irq_handler_EA7C, 11);	// $ea31 return sequence with added 0xa2 increment to sim time of day (see P_A_S_S_Demo_3.sid)
+    memcpy(&_kernal_rom[0x0a7C], _irq_handler_EA7B, 12);	// $ea31 return sequence with added 0xa2 increment to sim time of day (see P_A_S_S_Demo_3.sid)
 
     memcpy(&_kernal_rom[0x1e43], _nmi_handler_FE43, 5);	// $fe43 nmi handler
     memcpy(&_kernal_rom[0x1ebc], _irq_end_handler_FEBC, 6);	// $febc irq return sequence (e.g. used by Contact_Us_tune_2)
