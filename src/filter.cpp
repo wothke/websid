@@ -2,7 +2,7 @@
 * This file contains everything to do with the emulation of the SID chip's filter.
 *
 * Credits:
-*  - the main filter implementation is based on Hermit's work
+*  - the main filter implementation is based on Hermit's work (this impl seems to be flawed.. e.g. see voice 1 in Giana_Sisters.sid)
 *  - the "external filter" is based on the analysis of the resid team
 * 
 * WebSid (c) 2019 Jürgen Wothke
@@ -11,12 +11,26 @@
 * Terms of Use: This software is licensed under a CC BY-NC-SA 
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
+
+// note: playback of D418 digi samples may radically change the "volume" that the filter uses to calculate one
+// complete sample (e.g. for a 22-CPU-cycle interval). Especially when this volume-change occurs towards the very end of the
+// interval the used volume may be very incorrect - as compared to the average volume that corresponds to the complete interval.
+// However for practical purposes the use of a "more realistic" average does not seem to have any noticable effect.. so
+// there is no point in making the emulation more expensive and I again removed the respective experimental impl.
+
 #include "filter.h"
 
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
+
+#define OUTPUT_SCALEDOWN (0x6*0xf)	// hand tuned with "424", etc (6581 specific songs are
+									// critical here since their signal is not symetrically distributed around 0)
+#define SCOPE_SCALE (0xb*0xf)	// trial & error: to avoid (most) overflows
+
+const double SCOPE_SCALEDOWN=  ((double)0xf)/SCOPE_SCALE;
+const double FILTERED_SCOPE_SCALEDOWN=  ((double)0xf*4.0)/SCOPE_SCALE;
 
 extern "C" {
 #include "env.h"
@@ -63,24 +77,6 @@ static double myPow(double i1, double i2) {
 #endif
 }
 
-static double _scope_vol[0x10];
-static double _scope_vol_filtered[0x10];
-
-static void initScopeCache() {
-	// cache prescaled volume to avoid calculations later:
-	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)
-	// (using a reduced OUTPUT_SCALEDOWN risks integer overflow - see A_Desire_Welcome.sid - 
-	// but allows to amplify otherwise badly visible graphs..)
-	
-	// FIXME: memory access may actually be slower than just recalculating the stuff! todo: profile!
-	
-	for (uint8_t i= 0; i<0x10; i++) {
-		double OUTPUT_SCALEDOWN = 0x6 * 0xf;	
-		_scope_vol_filtered[i]= ((double)i) / (OUTPUT_SCALEDOWN);	// // testcase filtered: The_Human_Race_is_Dying_Out.sid
-		_scope_vol[i]= ((double)i) / (OUTPUT_SCALEDOWN / 4.0);
-	}
-}
-
 /*
 // Hermit's 6581 filter distortion impl - unused
 #define VCR_SHUNT_6581 1500 //kOhm //cca 1.5 MOhm Rshunt across VCR FET drain and source (causing 220Hz bottom cutoff with 470pF integrator capacitors in old C64)
@@ -97,12 +93,13 @@ struct FilterState {
 	uint8_t  band_ena;
     uint8_t  hi_ena;
     uint8_t  v3ena;
-    uint8_t  vol;
 	
+    uint8_t  vol;
+		
 	uint8_t filter_enabled[3];	// activation per voice
 	
 	// derived from Hermit's filter implementation: see http://hermit.sidrip.com/jsSID.html	
-	double low_pass;		// previous "low pass" output
+	double low_pass;	// previous "low pass" output
     double band_pass;	// previous "band pass" output
 	
 	// filter output for simulated individual voice data (not used for actual playback)
@@ -137,7 +134,7 @@ struct FilterState {
 // I noticed characteristic distortions like those caused by single-time-constant high-pass filters (see 
 // https://global.oup.com/us/companion.websites/fdscontent/uscompanion/us/static/companion.websites/9780199339136/Appendices/Appendix_E.pdf
 // - figure E.14 ) an effect that my emulator so far had not reproduced at all.. While investigating the 
-// origin of the effect I found that investigators at reSid had already identified the culprit as what they called the SID's "external filter".
+// origin of the effect I found that investigators at resid had already identified the culprit as what they called the SID's "external filter".
 // I don't know how accurate their analysis really is, but the additional low-/high-pass filter that they propose creates distortions that 
 // are pretty much in line with what can be observed in the SOASC recordings. What they say sounds like a very plausible explanation and
 // I therefore added the same kind of filter configuration here (thanks to the resid team for their impressive reverse-engineering efforts!).
@@ -202,8 +199,6 @@ void Filter::reset(uint32_t sample_rate) {
 //	state->low_pass = 0;
 
 //	state->low_pass_ext= state->high_pass_ext= 0;
-	
-	initScopeCache();
 }
 
 /* Get the bit from an uint32_t at a specified position */
@@ -231,10 +226,10 @@ void Filter::poke(uint8_t reg, uint8_t val) {
         case 0x18: { 
 				state->ftp_vol = val;
 #ifdef USE_FILTER
-				state->low_ena = getBit(val,4);	// lowpass
+				state->low_ena = getBit(val,4);		// lowpass
 				state->band_ena = getBit(val,5);	// bandpass
 				state->hi_ena = getBit(val,6);		// highpass
-				state->v3ena = !getBit(val,7);	// chan3 off
+				state->v3ena = !getBit(val,7);		// chan3 off
 				
 				if (!(val & 0x70)) {
 					// when filter is disabled the cached stuff should better be ditched
@@ -255,27 +250,19 @@ uint8_t Filter::getVolume() {
 	return state->ftp_vol;
 }
 
-#define OUTPUT_SCALEDOWN (0x6*0xf)	// hand tuned with "424"
-
 // voice output visualization works better if the effect of the filter is included
 int32_t Filter::simOutput(uint8_t voice, uint8_t is_filtered, int32_t *filter_in, int32_t *out) {
 	struct FilterState* state= getState(this);
 #ifdef USE_FILTER	
-	double output=	runFilter((double)(*filter_in), (double)(*out), &(state->sim_band_pass[voice]), &(state->sim_low_pass[voice]));		
-	return is_filtered ? (output * _scope_vol_filtered[state->vol]) :  (output * _scope_vol[state->vol]);
+	double output=	runFilter((double)(*filter_in), (double)(*out), &(state->sim_band_pass[voice]), &(state->sim_low_pass[voice]));
 
-/*	
-	// re-calculating might be faster then memory access?
-	// seems it makes hardly any difference.. the surrounding measurement noise seems to
-	// be much bigger.. the position of the "stuttering" in the playback seems to shift betweeen
-	// measurements and it seems like a safe guess that it is caused by the browser's garbage collection
-	
+	// not using real volume here: "original" voice output is more interesting without potential distortions
+	// caused by the D418 digis.. (which are already tracked as a dedicated 4th voice)
 	return is_filtered ? 
-			(output * (((double)state->vol) / (((double)OUTPUT_SCALEDOWN)))) :  
-			(output * (((double)state->vol) / (((double)OUTPUT_SCALEDOWN) / 4.0)));
-*/	
+				output * SCOPE_SCALEDOWN :
+				output * FILTERED_SCOPE_SCALEDOWN;
 #else
-	return (*out)* state->vol / OUTPUT_SCALEDOWN;
+	return (*out) * SCOPE_SCALEDOWN;
 #endif
 }
 
@@ -286,15 +273,33 @@ int32_t Filter::getOutput(int32_t *filter_in, int32_t *out, double cycles_per_sa
 
 	// note: filter impl seems to invert the data (see 2012_High-Score_Power_Ballad where two voices playing
 	// the same notes cancelled each other out..)
-// XXX orig	double output= 	runFilter((double)-(*filter_in), (double)(*out), &(state->band_pass), &(state->low_pass));
+	
+// orig	double output= 	runFilter((double)-(*filter_in), (double)(*out), &(state->band_pass), &(state->low_pass));
 	double output= 	runFilter((double)(*filter_in), (double)(*out), &(state->band_pass), &(state->low_pass));
 	
-	output *= state->vol;	// XXX FIXME why not scaledown here and save the below division?
+	
+	// note on performance: see http://nicolas.limare.net/pro/notes/2014/12/12_arit_speed/
 
+	// example x86-64 (may differ depending on machine architecture):
+	// 278 Mips integer multiplication								=> 1
+	// 123 Mips integer division									=> 2.26 slower
+	// 138 Mips double multiplication (32-bit is actually slower)	=> 2.01 slower
+	// 67 Mips double division (32-bit is actually slower)			=> 4.15 slower
+	
+	// example: non-digi song, means per frame volume is set 1x and then 882 samples (or more) are rendered
+	// 			- cost without prescaling: 882 * (1 + 2.26) =>	2875.32
+	//			- cost with prescaling: 4.15 + 882 *(4.15)	=>	3664.45
+	// 			=> for a digi song the costs for prescaling would be even higher
+	
+	// => repeated integer oparations are probably cheaper when floating point divisions are the alternative
+	
+	output *= state->vol;
+	output /= OUTPUT_SCALEDOWN;
+	
 	output= extFilter(state, output, cycles_per_sample);
 	
 	// filter volume is 4 bits/ outo is ~16bits (16bit from 3 voices + filter effects)
-	return round(output / OUTPUT_SCALEDOWN); // SID output
+	return output;
 #else
 	return (*out)* state->vol / OUTPUT_SCALEDOWN;
 #endif
@@ -392,7 +397,7 @@ double Filter::runFilter(double filter_in, double output, double *band_pass, dou
 		(*band_pass) = tmp;
 		
 // 		if (state->band_ena) { output -= tmp; }	// orig: supposedly this is what Hermit observed on his real HW
-		if (state->band_ena) { output += tmp; }	// make it look like reSID (even if it's wrong)
+		if (state->band_ena) { output += tmp; }	// make it look like reSID (even if it might be wrong) fixme: check if 6581 and 8580 do this differently
 		
 		tmp = (*low_pass) + tmp * state->cutoff;
 		(*low_pass) = tmp;

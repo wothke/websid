@@ -51,14 +51,22 @@ protected:
 	void resetCount();
 
 	// result accessors
-	uint8_t getSample(); // get whatever digi-sample has last been written
+	int32_t getSample(); // get whatever digi-sample has last been written (as signed 16-bit)
 	uint8_t getSource();
-	uint8_t isFiltered();
 	int32_t genPsidSample(int32_t sample_in);	// legacy PSID digis
 
 	// detection of sample playback
 	uint8_t detectSample(uint16_t addr, uint8_t value);
 
+	void setEnabled(uint8_t value);
+
+	/**
+	* @param digi_out	returns digi signal, e.g. for tracing purposes
+	* @param outf	filtered output that digi_out is added to if necessary
+	* @param outo	unfiltered output that digi_out is added to if necessary
+	*/
+	void routeDigiSignal(class Filter *filter, int32_t *digi_out, int32_t *outf, int32_t *outo);
+	
 	// diagnostics
 	DigiType getType();
 	const char * getTypeDesc();
@@ -88,6 +96,8 @@ private:
 private:
 	SID *_sid;
 	uint16_t _baseAddr;
+
+	uint8_t _digi_enabled;	// for manual muting
 	
 	int8_t _digiSource;	// lo-nibble: voice +1 
 	
@@ -98,7 +108,7 @@ private:
 	DigiType _usedDigiType;
 
 	// last detected
-	uint8_t _currentDigiSample;
+	int32_t _currentDigiSample;
 	uint8_t _currentDigiSrc;
 
 	// FM: tracked timing state

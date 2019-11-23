@@ -26,7 +26,7 @@ static void patchImmigrantSongIfNeeded(uint16_t *initAddr) {
 }
 
 /*
-* Thats_All_Folks.sid: problem with nested IRQs
+* Thats_All_Folks.sid: still some problem with nested IRQs (todo: emu should be able to cope with this)
 */
 static void patchThatsAllFolksIfNeeded(uint16_t *initAddr) {
 	if (((*initAddr) == 0x4800) && (memReadRAM(0x4806)==0x48)) {	

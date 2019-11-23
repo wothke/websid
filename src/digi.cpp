@@ -10,9 +10,9 @@
 * prothesis to deal with certain known scenarios. (So that they can be merged on top of
 * the regular SID output.)
 *
-* Some of the techniques (e.g. frequency modulation based) will cause the imperfect
+* Some of the techniques (e.g. frequency modulation based) would cause the imperfect
 * SID emulation to generate wheezing noises (that may or may not be a problem on the
-* real hardware). In case use of a respective technique is detected, the regular SID
+* real hardware). In case that the use of a respective technique is detected, the regular SID
 * output is disabled to suppress that effect.
 *
 * Note: In the old predictive Tiny'R'Sid implementation this logic had been performed 
@@ -24,6 +24,26 @@
 * (test-case: Graphixmania_2_part_6.sid). This is probably due to the currently used 
 * ~22 cycles wide sampling interval which might cause an IRQ setting to be used for a 
 * complete sample even if it is actually reset from the NMI much more quickly.
+*
+* Regarding D418 digis:
+*
+*  D418 digis are created by modulating the SID's output and while there is no output this
+*  technique will NOT produce audible sounds either. This is why respective songs that do not
+*  also create some "carrier base signal" may not be audible on new 8580 SID models. Only when
+*  there is some base output signal (i.e. not 0) the D418 alternation will modulate that signal
+*  to create the audible digi playback. Old 6581 SID's are special in that they always produce
+*  a positive base signal, i.e. their idle-signal (which is almost 0 on new 8580 models) already
+*  produces an offset big enough to create audible d418 digis (see respectice SID model specific
+*  signal shifting).
+*
+*  On old 6581 SID models this large positive offset means that no output values are in the negative
+*  area (an area where D418 settings result in an inversion of the intended digi-signal). This is
+*  why D418 digis coexist pretty well with regular voice output on old SIDs - but NOT on new ones
+*  where the offsets are not that forgiving.
+*
+*  For regular d418-digis (except Mahoney's special case which is handled specifically to improve
+*  output quality) there is no need to add anything separate digi-signal to the output. The modulated
+*  voice-output will be all that is needed.
 *
 * WebSid (c) 2019 Jürgen Wothke
 * version 0.93
@@ -46,6 +66,7 @@ extern "C" {
 #include "vic.h"		// vicFPS()
 }
 #include "sid.h"
+#include "filter.h"
 
 #define MASK_DIGI_UNUSED 0x80
 
@@ -62,11 +83,6 @@ static int32_t _sampleNibble;
 static int32_t _internalPeriod, _internalOrder, _internalStart, _internalEnd,
 _internalAdd, _internalRepeatTimes, _internalRepeatStart;
 
-
-uint8_t DigiDetector::isFiltered() {
-	return (_usedDigiType == DigiPWMTest) || (_usedDigiType == DigiFM) || (_usedDigiType == DigiPWM);
-}
-
 DigiDetector::DigiDetector(SID *sid) {	
 	_sid= sid;
 	_baseAddr= 0;	// not available at this point
@@ -74,6 +90,30 @@ DigiDetector::DigiDetector(SID *sid) {
 	_isC64compatible= 1;
 }
 
+void DigiDetector::routeDigiSignal(Filter *filter, int32_t *digi_out, int32_t *outf, int32_t *outo) {
+	if ((_usedDigiType != DigiNone) && _digi_enabled) {
+		(*digi_out)= getSample();
+		
+		// note: _usedDigiType can change within same song.. (see Storebror.sid)
+		
+		switch (_usedDigiType) {
+			case DigiD418:
+				// regular D418: need no special handling since the effect is already
+				//               achieved modulating the regular voice output
+				break;
+			case DigiMahoneyD418:
+				// special handling for Mahoney's D418 approach
+				(*outo)+= (*digi_out);
+				break;
+			default:
+				// all the other digi techniques
+				uint8_t enabled= 1;
+				filter->routeSignal(digi_out, outf, outo,  getSource()-1, &enabled);
+				
+				(*digi_out)>>= 1;	// scale down to match D418 signals
+		}
+	}
+}
 
 DigiType DigiDetector::getType() {
 	return getRate() ? _usedDigiType : DigiNone;
@@ -105,7 +145,7 @@ const uint8_t TB_TIMEOUT = 22; // was 12 earlier;	 	// minimum that still works 
 const uint8_t TB_PULSE_TIMEOUT = 7; // already reduced this one to avoid false positive in "Yie_ar_kung_fu.sid"
 
 
-uint8_t DigiDetector::getSample() {
+int32_t DigiDetector::getSample() {
 	return _currentDigiSample;
 }
 
@@ -117,7 +157,10 @@ uint8_t DigiDetector::getSource() {
 void DigiDetector::recordSample(uint8_t sample, uint8_t voice) {
 	
 	// SID emu will just use the last set value
-	_currentDigiSample= sample;
+	uint8_t shift= (voice == 0) ? 1 : 0;	// for D418 technique digis need to be less loud.. but not for voice specific techniques..
+	
+	_currentDigiSample= (((int32_t)sample)*0x101 - 0x8000) >> shift;	// optimization: calc here 1x instead of recalculating it for each output sample
+																		// reduced max amplitude to reduce risk of overflows (see Batman-Mix.sid)
 	_currentDigiSrc= voice;
 	
 	_digiCount++;
@@ -345,9 +388,13 @@ uint8_t DigiDetector::handlePulseModulationDigi(uint8_t voice, uint8_t reg, uint
 
 // -------------------------------------------------------------------------------------------
 // Mahoney's D418 "8-bit" digi sample technique..
+
+// note: the regular D418 handling would meanwhile (with the cycle-by-cycle emulation) also
+// play this, except that the result would propabably still be lower quality due to the
+// flaws in the filter implementation.
 // -------------------------------------------------------------------------------------------
 
-// based on Mahoney's amplitude_table_8580.txt (not using SID model specific sample logic so this should be good enough)
+// based on Mahoney's amplitude_table_8580.txt (respective songs usually use the new SID)
 static const uint8_t _mahoneySample[256]= {
 	164, 170, 176, 182, 188, 194, 199, 205, 212, 218, 224, 230, 236, 242, 248, 254, 
 	164, 159, 153, 148, 142, 137, 132, 127, 120, 115, 110, 105, 99, 94, 89, 84, 
@@ -371,11 +418,12 @@ uint8_t DigiDetector::isMahoneyDigi() {
 	// Mahoney's "8-bit" D418 sample-technique requires a specific SID setup
 	
 	// The idea of the approach is that the combined effect of the output of all three voices 
-	// (2 filtered, 1 unfiltered) will create the output sample that is written into the d418 
-	// register (this is actually audible without using a separate digi-track - though the
-	// quality seems to be lacking with the current -filter?- emulation)
+	// (2 filtered, 1 unfiltered) creates a carrier base signal what is modulated not only
+	// by the 4-bit volume but also by the filter settings in D418 allowing for more than 4-bit
+	// digi resolution (the name is misleading since the actual resolution is probably closer
+	// to 6 or 7 bits..)
 	
-	// Either the voice-output OR the separately recorded input sample but be used in the
+	// Either the voice-output OR the separately recorded input sample can be used in the
 	// output signal - but not both! (using the later here)
 	
 	//  We_Are_Demo_tune_2.sid seems to be using the same approach only the SR uses 0xfb instead of 0xff
@@ -439,19 +487,19 @@ uint8_t DigiDetector::handleSwallowDigi(uint8_t voice, uint8_t reg, uint16_t add
 		}
 	} else if (_swallowPWM[0] && (reg == 3)) {
 		/* 
-		depending in the specific player routine, the sample info is available 
+		depending on the specific player routine, the sample info is available
 		in different registers(d402/d403 and d409/a) ..  for retrieval d403 
 		seems to work for most player impls
 		*/
 		switch(_swallowPWM[voice]) {
 			case 1:
-				recordSample((value<<4) & 0xff, voice+1);
+				recordSample((value & 0xf)*0x11, voice+1);
 				break;
 			case 2: 
-				recordSample((value<<4) | (value>>4), voice+1);				
+				recordSample(((value<<4) | (value>>4)), voice+1);	// trial & error
 				break;
 			case 3: 
-				recordSample((value<<4) & 0xff, voice+1);
+				recordSample((value & 0xf)*0x11, voice+1);
 				break;
 		}
 		
@@ -609,12 +657,18 @@ void DigiDetector::resetModel(uint8_t is_6581) {
 	// currently unused.. might add handling for chip specific bahavior at some later stage
 }
 
+void DigiDetector::setEnabled(uint8_t value) {
+	_digi_enabled= value;
+}
+
 void DigiDetector::reset(uint8_t compatibility, uint8_t is_6581) {
 	
 	_baseAddr= _sid->getBaseAddr();
 	
 	_isC64compatible= compatibility;
 
+	_digi_enabled= 1;
+	
 	resetModel(is_6581);
 
 	memset( (uint8_t*)&_swallowPWM, 0, sizeof(_swallowPWM) ); 	
