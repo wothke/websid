@@ -91,7 +91,6 @@ struct SidState {
 	// SID model specific distortions (based on resid's analysis)
 	int32_t wf_zero;
 	int32_t dac_offset;
-	int32_t recenter_offset;
 		
     struct Voice {
 //        uint8_t		wave;			// redundant: see Oscillator
@@ -562,13 +561,11 @@ void SID::resetModel(uint8_t is_6581) {
 	if (is_6581) {
 		_sid->wf_zero= -0x3800;
 		_sid->dac_offset= 0x8000*0xff;
-		_sid->recenter_offset= -0x4000;	// the above put the signal in the positive, recenter to waste less of the available signed 16-bit range
 		
 		_filter->resetInput6581(0);
 	} else {
 		_sid->wf_zero= -0x8000;
 		_sid->dac_offset= -0x1000*0xff;
-		_sid->recenter_offset= 0;
 		
 		_filter->resetInput8580();
 	}
@@ -696,8 +693,6 @@ void SID::clock() {
 	for (uint8_t voice=0; voice<3; voice++) {
 		_env[voice]->clockEnvelope();
 	}
-	
-//	_filter->clock();
 }
 
 void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offset, double *scale, uint8_t do_clear) {	
@@ -741,7 +736,7 @@ void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offs
 		*(voice_trace_buffer+offset)= digi_out;				// save the trouble of filtering
 	}
 	
-	int32_t final_sample= _filter->getOutput(&outf, &outo, _cycles_per_sample) + _sid->recenter_offset;	// note: external filter is included here
+	int32_t final_sample= _filter->getOutput(&outf, &outo, _cycles_per_sample);	// note: external filter is included here
 	
 	final_sample=  _digi->genPsidSample(final_sample);	// recorded PSID digis are merged in directly
 
@@ -779,11 +774,11 @@ void SID::synthSampleStripped(int16_t *buffer, int16_t **synth_trace_bufs, uint3
 			// "much too slow" -> like on my old machine
 			
 			int16_t *voice_trace_buffer= synth_trace_bufs[voice];
-			*(voice_trace_buffer+offset)= (int16_t)(voiceOut + _sid->recenter_offset);
+			*(voice_trace_buffer+offset)= (int16_t)(voiceOut);
 		}
 	}
 	
-	int32_t final_sample= _filter->getOutput(&outf, &outo, _cycles_per_sample) + _sid->recenter_offset;
+	int32_t final_sample= _filter->getOutput(&outf, &outo, _cycles_per_sample);
 	int16_t *dest= buffer+(offset<<1)+_dest_channel; 	// always use interleaved stereo buffer
 	
 	if (!do_clear) final_sample+= *(dest);

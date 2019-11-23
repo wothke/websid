@@ -163,6 +163,11 @@ uint8_t _delayed_sei= 0;
 static uint8_t _irq_committed= 0;		// CPU is committed to running the IRQ
 static uint32_t _irq_line_ts= 0;
 
+// #define TRACE_IRQ_TIMING
+
+#ifdef TRACE_IRQ_TIMING
+uint32_t _irq_start;
+#endif
 
 void checkForIRQ(void) {
 	// test-case: Humphrey_Bogart.sid, Monster_Museum.sid
@@ -1436,6 +1441,14 @@ static void runNextOp(void)
             _pc=_wval;	// not like 'rts'! correct address is expected here!
 			
 			_nmi_executing= 0;	// hack to improve digi output
+
+#ifdef TRACE_IRQ_TIMING
+			if (_irq_start) {
+				_irq_start= _cycles-_irq_start;
+				EM_ASM_({ console.log('irq t: ' + ($0).toString(16));}, _irq_start);
+				_irq_start= 0;
+			}
+#endif
             break;
         case rts:		
             _wval=pop();
@@ -1613,7 +1626,7 @@ static void runNextOp(void)
 int8_t isStunned(void) {	
 	// VIC badline handling (i.e. CPU may be paused/stunned)
 //	uint8_t is_stunned= envIsRSID() && vicStunCPU();
-	uint8_t is_stunned= vicStunCPU();			// it won't not hurt to also STUN the crappy PSID songs
+	uint8_t is_stunned= vicStunCPU();			// it won't hurt to also STUN the crappy PSID songs
 	if (is_stunned) {
 		if ((is_stunned == 2) || (_exe_instr_opcode < 0)) {
 			return 1;
@@ -1657,8 +1670,6 @@ int8_t isStunned(void) {
 *            this case, BFlag on the stack will not be cleared."
 "
 */
-
-
 void cpuClock(void) {
 	// note: on the real HW the respective check happends in ø2 phase of the previous CPU cycle and the respective internal
 	// interrupt signal then goes high in the ø1 phase after (the potential problem of the below impl is that by performing 
@@ -1685,6 +1696,9 @@ void cpuClock(void) {
 			_exe_instr_opcode= start_irq_op;
 			_exe_instr_cycles= _opbase_frame_cycles[_exe_instr_opcode];
 			
+#ifdef TRACE_IRQ_TIMING
+			_irq_start= _cycles;
+#endif
 		} else {
 			// default: start execution of next instruction (determine exact timing)
 			prefetchOP( &_exe_instr_opcode, &_exe_instr_cycles);

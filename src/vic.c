@@ -199,14 +199,19 @@ void vicReset(uint8_t is_rsid, uint8_t ntsc_mode) {
 static void writeD019(uint8_t value) {
 	// ackn vic interrupt, i.e. a setting a bit actually clears it
 	
-	// note: :some players use "INC D019" (etc) to ackn the interrupt (all Read-Modify-Write instructions write the 
-	// original value before they write the new value, i.e. the intermediate write does the clearing..) 
+	// note: :some players use "INC D019" (etc) to ackn the interrupt (all Read-Modify-Write instructions write the
+	// original value before they write the new value, i.e. the intermediate write does the clearing..)
 	// (see cpu.c emulation)
 	
-	// "The bit 7 in the latch $d019 reflects the inverted state of the IRQ output of the VIC.", i.e. if the 
-	// source conditions clear, so does the overall output.
+	// "The bit 7 in the latch $d019 reflects the inverted state of the IRQ output of the VIC.", i.e. if the
+	// source conditions clear, so does the overall output. XXX when is this status updated?
 	
-	// test-case: some songs only clear the "RASTER" but not the "IRQ" flag (e.g. Ozone.sid)
+	// test-case: some songs only clear the "RASTER" but not the "IRQ" flag (e.g. Ozone.sid - which takes about 12000 cycles)
+	
+	// PROBLEM: Utopia_tune_6.sid (takes about 25000 cycles) uses the same ACKN as Ozone.sid but it "expects" the IRQ to be
+	// immediately retriggered.. what's the difference in this long running IRQ handler? XXX some special case does not
+	// seem to be handled correctly yet!
+
 	
 	uint8_t v=  memReadIO(0xd019);
 	v = v&(~value);					// clear (source) flags directly
