@@ -198,6 +198,8 @@ const static uint8_t _irq_handler_EA7B[12] ={0xE6,0xA2,0xEA, 0xAD,0x0D,0xDC,0x68
 const static uint8_t _nmi_handler_FE43[5] ={0x78,0x6c,0x18,0x03,0x40};
 const static uint8_t _irq_end_handler_FEBC[6] ={0x68,0xa8,0x68,0xaa,0x68,0x40};
 
+const static uint8_t _delay_handler_EEB3[8] ={0x8a,0xa2,0xb8,0xca,0xd0,0xfd,0xaa,0x60};	// used by Random_Ninja.sid
+
 const static uint8_t _driverPSID[33] = {	// see sidplayer.c: driver_size
 	// PSID main
 	0x4c,0x00,0x00,		// JMP endless loop
@@ -274,10 +276,11 @@ void memResetKernelROM() {
     memcpy(&_kernal_rom[0x1f48], _irq_handler_FF48, 19);	// $ff48 irq routine
     memset(&_kernal_rom[0x0a31], 0xea, 0x4d);			// $ea31 fill some NOPs		(FIXME: nops may take longer than original..)
     memcpy(&_kernal_rom[0x0a7B], _irq_handler_EA7B, 12);	// $ea31 return sequence with added 0xa2 increment to sim time of day (see P_A_S_S_Demo_3.sid)
+	memcpy(&_kernal_rom[0x0eb3], _delay_handler_EEB3, 8);	// delay 1 milli
 
     memcpy(&_kernal_rom[0x1e43], _nmi_handler_FE43, 5);	// $fe43 nmi handler
     memcpy(&_kernal_rom[0x1ebc], _irq_end_handler_FEBC, 6);	// $febc irq return sequence (e.g. used by Contact_Us_tune_2)
-
+	
 	_kernal_rom[0x1ffe]= 0x48;
 	_kernal_rom[0x1fff]= 0xff;
 		

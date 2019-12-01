@@ -36,10 +36,29 @@ static void patchThatsAllFolksIfNeeded(uint16_t *initAddr) {
 	}
 }
 
+/*
+* Utopia_tune_6.sid: hardcore sprite timing
+*/
+static void patchUtopia6IfNeeded(uint16_t *initAddr) {
+	// timing critical song that depends on sprite-delays.. for some unknown reason 
+	// the IRQ-handler seems to use up more than 1 PAL-frame worth of cycles (it uses ~25000
+	// in the emulation) - causing the next IRQ to be skipped. 
+	// fixme: there must be some bug in the timing logic eventhough the individual OP times seem to 
+	// be correct, and badline delays and page-boundary crossing do NOT seem to play any role here
+	
+	uint8_t pattern[] = {0xce, 0x16, 0xd0, 0xee, 0x16, 0xd0};	
+	if (((*initAddr) == 0x9200) && memMatch(0x8b05, pattern, 6)) {	
+		memWriteRAM(0x8E49, 0x0);	// disable IRQ ACKN.. causing the IRQ handler to be immediately called again
+	}
+}
+
+
 void hackIfNeeded(uint16_t *initAddr) {
 	patchThatsAllFolksIfNeeded(initAddr);
 	
 	patchImmigrantSongIfNeeded(initAddr);
+	
+	patchUtopia6IfNeeded(initAddr);
 }
 
 

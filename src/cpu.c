@@ -631,15 +631,7 @@ static void prefetchOP( int16_t *opcode, int8_t *cycles) {
 		_delayed_cli= 0;
 	}
 	*/
-	
-	/* no longer needed - now that PSIDs use proper driver/wrapper
-	if (!cpuPcIsValid()) {
-		// init returned to non existing "main".. just burn cycles for imaginary "main" and wait for next interrupt
-		*opcode= null_op;		
-		*cycles= _opbase_frame_cycles[*opcode];	// just burn some cycles
-		return;
-	}*/
-	
+		
 	uint16_t _orig_pc= _pc;	// _pc will be used/corrupted via getaddr anyway
 
     uint8_t opc=memGet(_pc++);
@@ -651,7 +643,7 @@ static void prefetchOP( int16_t *opcode, int8_t *cycles) {
 	_next_instruction_cycles= _opbase_frame_cycles[opc];
     
 	// calc adjustments 
-   switch (_opcodes[opc])
+	switch (_opcodes[opc])
     {
         case adc: 
 		case alr:
@@ -958,7 +950,7 @@ static void runNextOp(void)
 	
 	
 	// The operation MUST BE fetched in the 1st cycle (i.e. when prefetching is none - or the wrong command
-	// could be used later .. see "cia1tb123" test - where the command byte is updates by the timer - changing
+	// could be used later .. see "cia1tb123" test - where the command byte is updated by the timer - changing
 	// the OP while the instruction is already executed)
     uint8_t opc=memGet(_pc++);	// might be invalid by now
 	opc= _exe_instr_opcode;
@@ -1696,17 +1688,18 @@ void cpuClock(void) {
 			_exe_instr_opcode= start_irq_op;
 			_exe_instr_cycles= _opbase_frame_cycles[_exe_instr_opcode];
 			
-#ifdef TRACE_IRQ_TIMING
-			_irq_start= _cycles;
-#endif
 		} else {
 			// default: start execution of next instruction (determine exact timing)
 			prefetchOP( &_exe_instr_opcode, &_exe_instr_cycles);
 		}
+		// since there are no 1-cycle ops nothing else needs to be done right now
 		_exe_instr_cycles_remain=  _exe_instr_cycles - 1;					// we already are in 1st cycle here
 	} else {
 		
 		// handle "current" instruction
+//		if (_exe_instr_cycles_remain <=0) {
+//			fprintf(stderr, "ERROR: _exe_instr_cycles_remain <= 0\n");
+//		}
 		_exe_instr_cycles_remain--;	
 		
 		if(_exe_instr_cycles_remain == 0) {
@@ -1721,6 +1714,9 @@ void cpuClock(void) {
 
 				_pc=memGet(0xfffe);			// IRQ vector
 				_pc|=memGet(0xffff)<<8;
+#ifdef TRACE_IRQ_TIMING
+				_irq_start= _cycles;
+#endif
 				
 			} else if (_exe_instr_opcode == start_nmi_op) {			
 				push(_pc>>8);	// where to resume after the interrupt
@@ -1743,7 +1739,7 @@ void cpuClock(void) {
 		}
 	}
 //	 if (_exe_instr_cycles_remain <0) {
-//			fprintf(stderr, "ERROR: _exe_instr_cycles_remain < 0\n");
+//		fprintf(stderr, "ERROR: _exe_instr_cycles_remain < 0\n");
 //	}
 }
 
