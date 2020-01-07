@@ -91,12 +91,16 @@ struct SidState {
 	// SID model specific distortions (based on resid's analysis)
 	int32_t wf_zero;
 	int32_t dac_offset;
-		
+	
+	// bus bahavior for "write only" registers
+	uint8_t bus_write;
+	
+	
     struct Voice {
 //        uint8_t		wave;			// redundant: see Oscillator
 		uint16_t	freq;
         uint16_t	pulse;				// 12-bit "pulse width" from respective SID registers
-		uint8_t		enabled;			// player's separate "mute" feature
+		uint8_t		not_muted;			// player's separate "mute" feature
  
 		// add-ons snatched from Hermit's implementation
 		double		prev_wav_data;		// combined waveform handling
@@ -233,7 +237,7 @@ void SID::resetEngine(uint32_t sample_rate, uint8_t is_6581) {
 
 	for (uint8_t i=0; i<3; i++) {
 //		memset((uint8_t*)&_sid->voices[i], 0, sizeof(struct SidState::Voice));	// already included in _sid		
-		_sid->voices[i].enabled= 1;
+		_sid->voices[i].not_muted= 1;
 		_sid->voices[i].prev_wave_form_out= 0x7fff;	// use center to avoid distortions through envelope scaling
 	}
 	
@@ -376,7 +380,7 @@ void SID::calcPulseBase(uint8_t voice, uint32_t *tmp, uint32_t *pw) {
 }
 
 uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// elementary pulse
-	if (isTestBit(voice)) return 0xffff;	// pulse start position: this is the output value PEEKed in this scenario 
+	if (isTestBit(voice)) return 0xffff;	// pulse start position
 	
 //	1) int32_t wfout = ((_osc[voice]->counter>>8 >= _osc[voice]->pulse))? 0 : 0xffff; // plain impl - inverted compared to resid
 //	2) int32_t wfout = ((_osc[voice]->counter>>8 < _osc[voice]->pulse))? 0 : 0xffff; // plain impl
@@ -463,7 +467,7 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 	uint16_t outv= 0xffff;
 	const uint8_t ctrl= _osc[voice]->wave;
 		
-	if (_sid->voices[voice].enabled) {
+	if (_sid->voices[voice].not_muted) {
 		int8_t combined= 0;	// flags some specifically handled "combined waveforms" (not all)
 		
 		// use special handling for certain combined waveforms
@@ -558,6 +562,8 @@ uint16_t SID::getBaseAddr() {
 void SID::resetModel(uint8_t is_6581) {
 	_sid->is_6581= is_6581;	
 		
+	_sid->bus_write= 0;
+		
 	if (is_6581) {
 		_sid->wf_zero= -0x3800;
 		_sid->dac_offset= 0x8000*0xff;
@@ -591,23 +597,33 @@ uint8_t SID::readMem(uint16_t addr) {
 	uint16_t offset= addr-_addr;
 	switch (offset) {
 	case 0x1b:									// "oscillator"		
-//		if(_osc[2]->wave & SAW_BITMASK) 		// obsolete
-//			return _osc[2]->counter >> 16;		// for IceGuys.sid
 		return createWaveOutput(2) >> 8;
 		
 	case 0x1c:									// envelope
 		return _env[2]->getOutput();
 	}
-	return memReadIO(addr);
+	
+	// reading of "write only" registers returns whatever has been last written to the bus
+	// (register independent) and that value normally would also fade away eventually..
+	// only few songs use this and NONE seem to depend on "fading" to be actually
+	// implemented; testcase: Mysterious_Mountain.sid 
+	
+	return _sid->bus_write;
 }
 
 void SID::updateFreqCache(uint8_t voice) {
 	_osc[voice]->freq_inc_sample= _cycles_per_sample * _sid->voices[voice].freq;	// per 1-sample interval (e.g. ~22 cycles)
 
 	// optimization for Hermit's waveform generation:
-	_osc[voice]->freq_saw_step = _osc[voice]->freq_inc_sample / 0x1200000;	// for SAW
+	_osc[voice]->freq_saw_step = _osc[voice]->freq_inc_sample / 0x1200000;			// for SAW
 	_osc[voice]->freq_pulse_base= ((uint32_t)_osc[voice]->freq_inc_sample) >> 9;	// for PULSE: 15 MSB needed
-	_osc[voice]->freq_pulse_step= 256 / (((uint32_t)_osc[voice]->freq_inc_sample) >> 16);
+		
+	if (_osc[voice]->freq_inc_sample) {	// no point to divide by 0
+		// input freq_inc_sample is a double with around (5+16)-bit and a freq=1 would translate to something like ~22
+		_osc[voice]->freq_pulse_step= 0x100 * 0x10000 / _osc[voice]->freq_inc_sample;
+	} else {
+		_osc[voice]->freq_pulse_step= 0;	// testcase: Ice_Guys digis
+	}
 }
 
 void SID::poke(uint8_t reg, uint8_t val) {
@@ -638,7 +654,7 @@ void SID::poke(uint8_t reg, uint8_t val) {
 			// convenience:
 			updateFreqCache(voice);
 			
-			_osc[voice]->freq_inc_cycle= ((uint32_t)_sid->voices[voice].freq);		
+			_osc[voice]->freq_inc_cycle= ((uint32_t)_sid->voices[voice].freq);
             break;
         }
         case 0x1: { // Set frequency: High byte
@@ -646,7 +662,7 @@ void SID::poke(uint8_t reg, uint8_t val) {
 			
 			// convenience:
 			updateFreqCache(voice);
-			_osc[voice]->freq_inc_cycle= ((uint32_t)_sid->voices[voice].freq);		
+			_osc[voice]->freq_inc_cycle= ((uint32_t)_sid->voices[voice].freq);
             break;
         }
         case 0x2: { // Set pulse width: Low byte
@@ -670,6 +686,8 @@ void SID::poke(uint8_t reg, uint8_t val) {
 
 void SID::writeMem(uint16_t addr, uint8_t value) {
 	_digi->detectSample(addr, value);
+
+	_sid->bus_write= value;
 	
 	// no reason anymore to NOT always write (unlike old/un-synced version)
 	
@@ -705,24 +723,34 @@ void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offs
 	
 	// create output sample based on current SID state
 	for (uint8_t voice=0; voice<3; voice++) {
-		int32_t outv = createWaveOutput(voice);	// at this point an unsigned 16-bit value (see Hermit's impl)	
-												// envelopeOutput has 8-bit
+		int32_t voiceOut;
+		
+		if ((!_sid->voices[voice].not_muted) || _filter->isSilenced(voice)) {
+			// mute voice while still using SID model specific "base voltage"
 
-		// the ideal voiceOut would be signed 16-bit - but more bits are actually needed particularily
-		// for the massively shifted 6581 signal (needed for D418 digis to work correctly)
-		int32_t voiceOut= (*scale) * ( _env[voice]->getOutput() * (outv + _sid->wf_zero) + _sid->dac_offset);
+			// todo: find out what exactely a real SID does in this scenario
+//			voiceOut= (*scale) * ( _env[voice]->getOutput() * (0 + _sid->wf_zero) + _sid->dac_offset);
+			voiceOut= (*scale) * ( 0xff * (0 + _sid->wf_zero) + _sid->dac_offset);
+		} else {
+			int32_t outv = createWaveOutput(voice);	// at this point an unsigned 16-bit value (see Hermit's impl)
+													// envelopeOutput has 8-bit
+
+			// the ideal voiceOut would be signed 16-bit - but more bits are actually needed - particularily
+			// for the massively shifted 6581 signal (needed for D418 digis to work correctly)
+			voiceOut= (*scale) * ( _env[voice]->getOutput() * (outv + _sid->wf_zero) + _sid->dac_offset);
+		}
 		
 		// now route the voice output to either the non-filtered or the
 		// filtered channel (with disabled filter outo is used)
 		
-		_filter->routeSignal(&voiceOut, &outf, &outo, voice, &(_sid->voices[voice].enabled));
+		_filter->routeSignal(&voiceOut, &outf, &outo, voice);
 
 		// trace output (always make it 16-bit)
 		if (synth_trace_bufs) {
 			int16_t *voice_trace_buffer= synth_trace_bufs[voice];
 
 			int32_t o= 0, f= 0;	// isolated from other voices
-			uint8_t is_filtered= _filter->routeSignal(&voiceOut, &f, &o, voice, &(_sid->voices[voice].enabled));	// redundant.. see above
+			uint8_t is_filtered= _filter->routeSignal(&voiceOut, &f, &o, voice);	// redundant.. see above
 			
 			*(voice_trace_buffer+offset)= (int16_t)_filter->simOutput(voice, is_filtered, &f, &o);
 		}
@@ -764,7 +792,7 @@ void SID::synthSampleStripped(int16_t *buffer, int16_t **synth_trace_bufs, uint3
 		
 		int32_t voiceOut= (*scale) * ( _env[voice]->getOutput() * (outv + _sid->wf_zero) + _sid->dac_offset);
 //		int32_t voiceOut= (*scale) * _env[voice]->getOutput()*(((int32_t)outv)-0x8000);
-		_filter->routeSignal(&voiceOut, &outf, &outo, voice, &(_sid->voices[voice].enabled));
+		_filter->routeSignal(&voiceOut, &outf, &outo, voice);
 		
 		// trace output (always make it 16-bit)
 		if (synth_trace_bufs) {
@@ -832,7 +860,7 @@ void SID::setMute(uint8_t voice, uint8_t is_muted) {
 		_digi->setEnabled(!is_muted);
 		
 	} else {
-		_sid->voices[voice].enabled= !is_muted;
+		_sid->voices[voice].not_muted= !is_muted;
 	}
 }
 

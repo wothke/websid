@@ -31,13 +31,13 @@ protected:
 	/**
 	* @return true if voice is filtered
 	*/
-	uint8_t routeSignal(int32_t *voiceOut, int32_t *outf, int32_t *outo, uint8_t voice, uint8_t *voiceEnabled);
+	uint8_t routeSignal(int32_t *voiceOut, int32_t *outf, int32_t *outo, uint8_t voice);
 	/**
 	* Handle those SID writes that impact the filter.
 	*/
 	void poke(uint8_t reg, uint8_t val);
 	
-	uint8_t getVolume();
+	uint8_t isSilenced(uint8_t voice);
 protected:
 	void resetInput6581(int32_t filtin);
 	void resetInput8580();

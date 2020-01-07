@@ -2,7 +2,9 @@
 * This file contains everything to do with the emulation of the SID chip's filter.
 *
 * Credits:
-*  - the main filter implementation is based on Hermit's work (this impl seems to be flawed.. e.g. see voice 1 in Giana_Sisters.sid)
+*  - The main filter implementation is based on Hermit's work (this impl still seems to be flawed.. e.g. see voice 1 in 
+*    Giana_Sisters.sid). This impl is certainly an improvement as compared to the original filter impl from TinySid
+*    but it is likely THE most important root cause of remaining output quality issues.
 *  - the "external filter" is based on the analysis of the resid team
 * 
 * WebSid (c) 2019 Jürgen Wothke
@@ -93,6 +95,7 @@ struct FilterState {
 	uint8_t  band_ena;
     uint8_t  hi_ena;
     uint8_t  v3ena;
+    uint8_t  no_filter;			// redundancy: no filter mode selected
 	
     uint8_t  vol;
 		
@@ -119,6 +122,7 @@ struct FilterState {
     uint8_t cutoff_high;		// filter cutoff high (8 bits)
     uint8_t res_filt;			// resonance (4bits) / Filt
     uint8_t ftp_vol;			// mode (hi/band/lo pass) / volume
+	
 	double cutoff, resonance; 	// convenience calculated from the above
 
 	
@@ -218,12 +222,23 @@ void Filter::poke(uint8_t reg, uint8_t val) {
 					state->filter_enabled[voice] = getBit(val, voice);
 					
 					// ditch cached stuff when filter is turned off
-					if (!state->filter_enabled[voice]) state->sim_low_pass[voice]= state->sim_band_pass[voice]= 0;
+					if (!state->filter_enabled[voice]) {
+						state->sim_low_pass[voice]= state->sim_band_pass[voice]= 0;
+					}
 				}
 	
 			break; 
 			}
-        case 0x18: { 
+        case 0x18: {
+				//  test-case Kapla_Caves and Immigrant_Song: song "randomly switches between 
+				// filter modes which will also occationally disable all filters:
+								
+//				if ((val & 0x70) != (state->ftp_vol & 0x70)) {	// it seems to be a bad idea to reset filter state in this scenario.. 
+				if (!(val & 0x70)) {
+					state->low_pass = state->band_pass= 0;
+					state->sim_low_pass[0] = state->sim_low_pass[1]= state->sim_low_pass[2]= 0;
+					state->sim_band_pass[0] = state->sim_band_pass[1]= state->sim_band_pass[2]= 0;
+				}
 				state->ftp_vol = val;
 #ifdef USE_FILTER
 				state->low_ena = getBit(val,4);		// lowpass
@@ -231,23 +246,12 @@ void Filter::poke(uint8_t reg, uint8_t val) {
 				state->hi_ena = getBit(val,6);		// highpass
 				state->v3ena = !getBit(val,7);		// chan3 off
 				
-				if (!(val & 0x70)) {
-					// when filter is disabled the cached stuff should better be ditched
-					state->low_pass= state->band_pass= 0;
-					state->sim_low_pass[0]= state->sim_low_pass[1]= state->sim_low_pass[2];
-					state->sim_band_pass[0]= state->sim_band_pass[1]= state->sim_band_pass[2];
-				}
-				
+				state->no_filter = !(val & 0x70);	// optimization
 #endif  
-				state->vol   = (val & 0xf);		// main volume	
+				state->vol = (val & 0xf);			// main volume
 			break;
 			}
 	};
-}
-
-uint8_t Filter::getVolume() {
-	struct FilterState* state= getState(this);
-	return state->ftp_vol;
 }
 
 // voice output visualization works better if the effect of the filter is included
@@ -346,39 +350,40 @@ void Filter::resetInput6581(int32_t filtin) {
 #endif
 }
 
-uint8_t Filter::routeSignal(int32_t *voice_out, int32_t *outf, int32_t *outo, uint8_t voice, uint8_t *not_muted) {
+uint8_t Filter::isSilenced(uint8_t voice) {
+	struct FilterState* state= getState(this);
+	return ((voice == 2) && (!state->v3ena) && (!state->filter_enabled[2]));
+}
+
+uint8_t Filter::routeSignal(int32_t *voice_out, int32_t *outf, int32_t *outo, uint8_t voice) {
+#ifdef USE_FILTER
 	// note: compared to other emus output volume is quite high.. maybe better reduce it a bit?
 	struct FilterState* state= getState(this);
 
-#ifdef USE_FILTER
-	if ((!state->v3ena && (voice == 2) && !state->filter_enabled[2]) || !(*not_muted)) {
-		// voice 3 not silenced by !v3ena if routed through filter!
+	// regular routing
+	if (state->filter_enabled[voice]) {
+		// route to filter
+		(*outf)+= (*voice_out);
+		return 1;
 	} else {
-		// regular routing
-		if (state->filter_enabled[voice]) {
-			// route to filter
-			(*outf)+= (*voice_out);
-			return 1;
-		} else {
-			// route directly to output
-			(*outo)+= (*voice_out);
-			return 0;
-		}		
+		// route directly to output
+		(*outo)+= (*voice_out);
+		return 0;
 	}
 #else
 	// Don't use filters, just mix all voices together
 	if (*not_muted) { 
 		(*outo)+= (*voice_out); 
 	}
-#endif
 	return 0;
+#endif
 }
 
 double Filter::runFilter(double filter_in, double output, double *band_pass, double *low_pass) {
 	// derived from Hermit's filter implementation:
-	//	"FILTER: two integrator loop bi-quadratic filter, workings learned from resid code, but I kindof simplified the equations
-	//	 The phases of lowpass and highpass outputs are inverted compared to the input, but bandpass IS in phase with the input signal.
-	//	 The 8580 cutoff frequency control-curve is ideal, while the 6581 has a threshold, and below it outputs a constant lowpass frequency."
+	//	"FILTER: two integrator loop bi-quadratic filter, workings learned from resid code, but I kindof simplified the equations.
+	//	The phases of lowpass and highpass outputs are inverted compared to the input, but bandpass IS in phase with the input signal.
+	//	The 8580 cutoff frequency control-curve is ideal, while the 6581 has a threshold, and below it outputs a constant lowpass frequency."
 	
 	// Filter creates/amplifies ugly effect on Vortex's digi channel - the root cause might be a flawed timing of the emulation
 	// causing the first samples (of each frame) of that song to be rendered somewhat off.. and the filter probably just
@@ -386,7 +391,7 @@ double Filter::runFilter(double filter_in, double output, double *band_pass, dou
 	struct FilterState* state= getState(this);
 	double tmp = filter_in + (*band_pass) * state->resonance + (*low_pass);
 	
-	if (!(state->ftp_vol & 0x70)) { 
+	if (state->no_filter) {
 		// FIX bug in Hermit's impl: when neither high, band, nor lowpass is active then the 
 		// 'output'(i.e. unfiltered signal) was returned and 'filter_in' was completely ignored!
 		output+= filter_in; 	// see Dancing_in_the_Moonlight

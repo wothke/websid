@@ -107,8 +107,7 @@ void DigiDetector::routeDigiSignal(Filter *filter, int32_t *digi_out, int32_t *o
 				break;
 			default:
 				// all the other digi techniques
-				uint8_t enabled= 1;
-				filter->routeSignal(digi_out, outf, outo,  getSource()-1, &enabled);
+				filter->routeSignal(digi_out, outf, outo,  getSource()-1);
 				
 				(*digi_out)>>= 1;	// scale down to match D418 signals
 		}
@@ -126,7 +125,6 @@ const char* _typeDesc[7] = {
 	"FM",
 	"PWM",
 	"PWM T",
-	"WFM",
 };
 
 const char * DigiDetector::getTypeDesc() {
