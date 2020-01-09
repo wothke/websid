@@ -599,7 +599,7 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE playTune(uint32_t selected_track, uint3
 	_sound_started= 0;
 	_skip_silence_loop= 100;
 
-	Core::startupSong(_sample_rate, _ntsc_mode, _compatibility, &_init_addr, _load_end_addr, _play_addr, _actual_subsong);
+	Core::startupSong(_sample_rate, _ntsc_mode, _compatibility, _basic_prog, &_init_addr, _load_end_addr, _play_addr, _actual_subsong);
 
 	resetAudioBuffers();
 
@@ -646,7 +646,7 @@ static uint16_t loadSIDFromMemory(void *sid_data,
 
     *init_addr = pdata[10]<<8;
     *init_addr|= pdata[11];
-
+	
     *play_addr = pdata[12]<<8;
     *play_addr|= pdata[13];
 
@@ -704,7 +704,7 @@ static uint16_t loadSIDFromMemory(void *sid_data,
 	}
 	
 	Core::loadSongBinary(&pdata[data_file_offset], *load_addr, size);
-
+	
     return *load_addr;
 }
 
@@ -726,19 +726,25 @@ static uint16_t parseSYS(uint16_t start, uint16_t end) {
 	return result;
 }	
 
-// extracts the SYS $.... address from trivial BASIC program amd patches (*initAddr) accordingly
-void startFromBasic(uint16_t *init_addr) {
-	// don't have C64 BASIC ROM if BASIC program is just used to 
-	// jump to some address (SYS $....) then try to do that for 
-	// simple one line programs..
+void startFromBasic(uint16_t *init_addr, uint8_t has_ROMs) {
+	if (has_ROMs) {
+		// suppose all the necessarry ROMs are available
+		(*init_addr)= 0xa7ae;	// BASIC "next statement"
+	} else {
+		// don't have C64 BASIC ROM. if BASIC program is just used to 
+		// jump to some address (SYS $....) then try to do that for 
+		// simple one line programs..
+		
+		// extracts the SYS $.... address from trivial BASIC program amd patches (*initAddr) accordingly
 
-	if ((*init_addr) == 0x0801) {
-		uint16_t nextLine= memReadRAM(*init_addr) | ((memReadRAM((*init_addr)+1)) << 8);
-		if (!memReadRAM(nextLine)) {
-			// one line program	(bad luck if additional REM etc lines are used..)
-			if (memReadRAM(((*init_addr) + 4)) == 0x9e) {	// command is SYS
-				 (*init_addr) = parseSYS((*init_addr) + 5, nextLine);
-			}			
+		if ((*init_addr) == 0x0801) {	// typical garbage: points to BASIC tokens..
+			uint16_t nextLine= memReadRAM(*init_addr) | ((memReadRAM((*init_addr)+1)) << 8);
+			if (!memReadRAM(nextLine)) {
+				// one line program	(bad luck if additional REM etc lines are used..)
+				if (memReadRAM(((*init_addr) + 4)) == 0x9e) {	// command is SYS
+					 (*init_addr) = parseSYS((*init_addr) + 5, nextLine);
+				}
+			}
 		}
 	}
 }
@@ -748,8 +754,8 @@ void setRsidMode(uint8_t is_rsid) {
 	_is_psid= !is_rsid;
 }
 
-extern "C" uint32_t loadSidFile(uint32_t is_mus, void * in_buffer, uint32_t in_buf_size, uint32_t sample_rate, char *filename )  __attribute__((noinline));
-extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void * in_buffer, uint32_t in_buf_size, uint32_t sample_rate, char *filename ) {
+extern "C" uint32_t loadSidFile(uint32_t is_mus, void *in_buffer, uint32_t in_buf_size, uint32_t sample_rate, char *filename, void *basic_ROM, void *char_ROM, void *kernal_ROM)  __attribute__((noinline));
+extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void *in_buffer, uint32_t in_buf_size, uint32_t sample_rate, char *filename, void *basic_ROM, void *char_ROM, void *kernal_ROM) {
 #ifdef TEST
 	fprintf(stderr, "starting test %s\n", filename);
 	
@@ -782,7 +788,7 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void * in_
 	
 	if (!is_mus && (in_buf_size < 0x7c)) return 1;	// we need at least a header..
 
-	memResetKernelROM();		// read only (only need to do this once)
+	memResetKernelROM((uint8_t *)kernal_ROM);
 
     _sample_rate= sample_rate > 96000 ? 48000 : sample_rate; // see hardcoded BUFLEN
 	_init_addr= 0;
@@ -796,7 +802,7 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void * in_
 	
 	setRsidMode(is_mus || (input_file_buffer[0x00] != 0x50) ? 1 : 0);
 
-	memResetRAM(envIsPSID());
+	memResetRAM(envIsPSID());	// dummy env that still may be overridden by hard RESET used for BASIC progs
 	
 	if ((_mus_mode= is_mus)) {
 		// todo: the same kind of impl could be used for .sid files that contain .mus data.. (see respective flag)
@@ -811,8 +817,19 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void * in_
 				
 		uint16_t flags= (_sid_version > 1) ? (((uint16_t)input_file_buffer[0x77]) | (((uint16_t)input_file_buffer[0x77])<<8)) : 0x0;
 				
-		_basic_prog= (envIsRSID() && (flags & 0x2));	// C64 BASIC program need to be started..
+		_basic_prog= (envIsRSID() && (flags & 0x2));	// a C64 BASIC program needs to be started..
+
+		if (_basic_prog) {
+			// only  needed for BASIC progs
+			memResetBasicROM((uint8_t *)basic_ROM);
+			
+			if (basic_ROM && kernal_ROM) {
+				Core::resetC64();
+			}
+		}
 		
+		if (envIsRSID()) memResetCharROM((uint8_t *)char_ROM);
+
 		_compatibility= ( (_sid_version & 0x2) &&  ((flags & 0x2) == 0));	
 		ntscMode= (_sid_version >= 2) && (flags & 0x8); // NTSC bit
 		
@@ -823,14 +840,14 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void * in_
 		for (i=0;i<32;i++) _song_author[i] = input_file_buffer[0x36+i]; 
 		for (i=0;i<32;i++) _song_copyright[i] = input_file_buffer[0x56+i];
 
+		// loading of song binary is the last step in the general memory initialization
 		if (!loadSIDFromMemory(input_file_buffer, &_load_addr, &_load_end_addr, &_init_addr, 
 				&_play_addr, &_max_subsong, &_actual_subsong, &_play_speed, in_buf_size)) {
 			return 1;	// could not load file
 		}	
 	}
-		
-
-	if (_basic_prog) startFromBasic(&_init_addr);
+	
+	if (_basic_prog) startFromBasic(&_init_addr, basic_ROM && kernal_ROM);
 	
 	// global settings that depend on the loaded music file
 	envSetNTSC(ntscMode);

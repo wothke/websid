@@ -30,11 +30,16 @@ extern void		vicWriteMem(uint16_t addr, uint8_t value);
 
 static uint8_t _memory[MEMORY_SIZE];
 
-#define KERNAL_SIZE 8192
+#define BASIC_SIZE 0x2000
+static uint8_t _basic_rom[BASIC_SIZE];		// mapped to $a000-$bfff
+
+#define KERNAL_SIZE 0x2000
 static uint8_t _kernal_rom[KERNAL_SIZE];	// mapped to $e000-$ffff
 
-#define IO_AREA_SIZE 4096
-static uint8_t _io_area[IO_AREA_SIZE];	// mapped to $d000-$dfff
+#define IO_AREA_SIZE 0x1000
+static uint8_t _char_rom[IO_AREA_SIZE];		// mapped to $d000-$dfff
+
+static uint8_t _io_area[IO_AREA_SIZE];		// mapped to $d000-$dfff
 
 
 uint8_t memMatch(uint16_t addr, uint8_t *pattern, uint8_t len) {
@@ -96,6 +101,20 @@ static uint8_t isKernalRomVisible() {
 }
 
 /*
+* @return 0 if RAM is visible; 1 if ROM is visible
+*/ 
+static uint8_t isBasicRomVisible() {
+	return (_memory[0x0001] & 0x3) == 3;
+}
+
+/*
+* @return 0 if RAM is visible; 1 if ROM is visible
+*/ 
+static uint8_t isCharRomVisible() {
+	return !(_memory[0x0001] & 0x4) && (_memory[0x0001] & 0x3);
+}
+
+/*
 * @return 0 if RAM/ROM is visible; 1 if IO area is visible
 */ 
 static uint8_t isIoAreaVisible() {
@@ -127,9 +146,10 @@ void memCopyFromRAM(uint8_t *dest, uint16_t srcAddr, uint32_t len) {
 }
 
 uint8_t memGet(uint16_t addr)
-{
-	if (addr < 0xd000) {
-		return  _memory[addr];	// basic rom not implemented
+{	
+	if ((addr < 0xa000) || ((addr >= 0xc000) && (addr < 0xd000))) {
+		// make this the "normal", i.e. least expensive path
+		return  _memory[addr];
 	} else if ((addr >= 0xd000) && (addr < 0xe000)) {	// handle I/O area 		
 		if (isIoAreaVisible()) {		
 			if ((addr >= 0xd000) && (addr < 0xd400)) {
@@ -138,13 +158,22 @@ uint8_t memGet(uint16_t addr)
 				return sidReadMem(addr);
 			} else if ((addr >= 0xdc00) && (addr < 0xde00)) {
 				return ciaReadMem(addr);
-			} 
+			}
 			return memReadIO(addr);
+		} else if(isCharRomVisible()) {
+			return _char_rom[addr - 0xd000];
 		} else {
 			// normal RAM access
 			return  _memory[addr];
 		}
-	} else {	// handle kernal ROM
+	} else if ((addr >= 0xa000) && (addr < 0xc000)) {	// handle basic ROM
+		if (isBasicRomVisible()) {
+			return _basic_rom[addr - 0xa000];
+		} else {
+			// normal RAM access
+			return  _memory[addr];
+		}
+	} else {											// handle kernal ROM
 		if (isKernalRomVisible()) {
 			return _kernal_rom[addr - 0xe000];
 		} else {
@@ -260,32 +289,59 @@ void memInitTest() {
 
 	setMemBank(0x37);
 		
-    memcpy(&_memory[0xe000], _kernal_rom, 0x1fff);	// just in case there is a banking issue
+    memcpy(&_memory[0xe000], _kernal_rom, KERNAL_SIZE);	// just in case there is a banking issue
 }
 #endif
 
-void memResetKernelROM() {
-	// we dont have the complete rom but in order to ensure consistent stack handling (regardless of
-	// which vector the sid-program is using) we provide dummy versions of the respective standard 
-	// IRQ/NMI routines..
-	
-	// use RTS as default ROM content: some songs actually try to call stuff, e.g. mountain march.sid, 
-	// Soundking_V1.sid(basic rom init routines: 0x1D50, 0x1D15, 0x1F5E), Voodoo_People_part_1.sid (0x1F81)
-    memset(&_kernal_rom[0], 0x60, KERNAL_SIZE);			// RTS by default 
-	
-    memcpy(&_kernal_rom[0x1f48], _irq_handler_FF48, 19);	// $ff48 irq routine
-    memset(&_kernal_rom[0x0a31], 0xea, 0x4d);			// $ea31 fill some NOPs		(FIXME: nops may take longer than original..)
-    memcpy(&_kernal_rom[0x0a7B], _irq_handler_EA7B, 12);	// $ea31 return sequence with added 0xa2 increment to sim time of day (see P_A_S_S_Demo_3.sid)
-	memcpy(&_kernal_rom[0x0eb3], _delay_handler_EEB3, 8);	// delay 1 milli
+void memResetBasicROM(uint8_t *rom) {
+	if (rom) {
+		// optional: for those that bring their own ROM
+		memcpy(_basic_rom, rom, BASIC_SIZE);	
+	}
+}
 
-    memcpy(&_kernal_rom[0x1e43], _nmi_handler_FE43, 5);	// $fe43 nmi handler
-    memcpy(&_kernal_rom[0x1ebc], _irq_end_handler_FEBC, 6);	// $febc irq return sequence (e.g. used by Contact_Us_tune_2)
-	
-	_kernal_rom[0x1ffe]= 0x48;
-	_kernal_rom[0x1fff]= 0xff;
+void memResetCharROM(uint8_t *rom) {
+	if (rom) {
+		// optional: for those that bring their own ROM
+		memcpy(_char_rom, rom, IO_AREA_SIZE);
+	}
+}
+
+void memResetKernelROM(uint8_t *rom) {
+	if (rom) {
+		// optional: for those that bring their own ROM (precondition for BASIC songs)
+		memcpy(_kernal_rom, rom, KERNAL_SIZE);
 		
-	_kernal_rom[0x1ffa]= 0x43;	// standard NMI vectors (this will point into the void at: 0318/19)
-	_kernal_rom[0x1ffb]= 0xfe;
+		// note: RESET routine at E394 originally performs;
+			// e453	init 0300 vectors
+			// e3bf initialization of basic
+			// e422 print BASIC startup messages
+		
+		_kernal_rom[0x039a]= 0x60;	// abort "BASIC start up messages" so as not to enter BASIC idle-loop 
+		
+	} else {
+		// we dont have the complete rom but in order to ensure consistent stack handling (regardless of
+		// which vector the sid-program is using) we provide dummy versions of the respective standard 
+		// IRQ/NMI routines..
+		
+		// use RTS as default ROM content: some songs actually try to call stuff, e.g. mountain march.sid, 
+		// Soundking_V1.sid(basic rom init routines: 0x1D50, 0x1D15, 0x1F5E), Voodoo_People_part_1.sid (0x1F81)
+		memset(&_kernal_rom[0], 0x60, KERNAL_SIZE);			// RTS by default 
+		
+		memcpy(&_kernal_rom[0x1f48], _irq_handler_FF48, 19);	// $ff48 irq routine
+		memset(&_kernal_rom[0x0a31], 0xea, 0x4d);			// $ea31 fill some NOPs		(FIXME: nops may take longer than original..)
+		memcpy(&_kernal_rom[0x0a7B], _irq_handler_EA7B, 12);	// $ea31 return sequence with added 0xa2 increment to sim time of day (see P_A_S_S_Demo_3.sid)
+		memcpy(&_kernal_rom[0x0eb3], _delay_handler_EEB3, 8);	// delay 1 milli
+
+		memcpy(&_kernal_rom[0x1e43], _nmi_handler_FE43, 5);	// $fe43 nmi handler
+		memcpy(&_kernal_rom[0x1ebc], _irq_end_handler_FEBC, 6);	// $febc irq return sequence (e.g. used by Contact_Us_tune_2)
+		
+		_kernal_rom[0x1ffe]= 0x48;
+		_kernal_rom[0x1fff]= 0xff;
+		
+		_kernal_rom[0x1ffa]= 0x43;	// standard NMI vectors (this will point into the void at: 0318/19)
+		_kernal_rom[0x1ffb]= 0xfe;
+	}
 }
 
 uint16_t memPsidMain(uint8_t bank, uint16_t play_addr) {

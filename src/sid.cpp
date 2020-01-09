@@ -593,6 +593,10 @@ uint8_t SID::isModel6581() {
 	return _sid->is_6581;
 }
 
+uint8_t SID::peekMem(uint16_t addr) {
+	return memReadIO(addr);		// used for digi-detection
+}
+
 uint8_t SID::readMem(uint16_t addr) {
 	uint16_t offset= addr-_addr;
 	switch (offset) {
@@ -721,38 +725,51 @@ void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offs
 	
 	// sim duration of 1 sample (might try higher sampling for better quality - see filter adjustments)
 	
-	// create output sample based on current SID state
-	for (uint8_t voice=0; voice<3; voice++) {
-		int32_t voiceOut;
-		
-		if ((!_sid->voices[voice].not_muted) || _filter->isSilenced(voice)) {
-			// mute voice while still using SID model specific "base voltage"
+	
+	if (!_digi->isMahoneyDigi()) {	// use here once rather than create nicer but slower scope output below
 
-			// todo: find out what exactely a real SID does in this scenario
-//			voiceOut= (*scale) * ( _env[voice]->getOutput() * (0 + _sid->wf_zero) + _sid->dac_offset);
-			voiceOut= (*scale) * ( 0xff * (0 + _sid->wf_zero) + _sid->dac_offset);
-		} else {
-			int32_t outv = createWaveOutput(voice);	// at this point an unsigned 16-bit value (see Hermit's impl)
-													// envelopeOutput has 8-bit
-
-			// the ideal voiceOut would be signed 16-bit - but more bits are actually needed - particularily
-			// for the massively shifted 6581 signal (needed for D418 digis to work correctly)
-			voiceOut= (*scale) * ( _env[voice]->getOutput() * (outv + _sid->wf_zero) + _sid->dac_offset);
-		}
-		
-		// now route the voice output to either the non-filtered or the
-		// filtered channel (with disabled filter outo is used)
-		
-		_filter->routeSignal(&voiceOut, &outf, &outo, voice);
-
-		// trace output (always make it 16-bit)
-		if (synth_trace_bufs) {
-			int16_t *voice_trace_buffer= synth_trace_bufs[voice];
-
-			int32_t o= 0, f= 0;	// isolated from other voices
-			uint8_t is_filtered= _filter->routeSignal(&voiceOut, &f, &o, voice);	// redundant.. see above
+		// create output sample based on current SID state
+		for (uint8_t voice=0; voice<3; voice++) {
+			int32_t voiceOut;
 			
-			*(voice_trace_buffer+offset)= (int16_t)_filter->simOutput(voice, is_filtered, &f, &o);
+			if ((!_sid->voices[voice].not_muted) || _filter->isSilenced(voice)) {
+				// mute voice while still using SID model specific "base voltage"
+
+				// todo: find out what exactely a real SID does in this scenario
+	//			voiceOut= (*scale) * ( _env[voice]->getOutput() * (0 + _sid->wf_zero) + _sid->dac_offset);
+				voiceOut= (*scale) * ( 0xff * (0 + _sid->wf_zero) + _sid->dac_offset);
+			} else {
+				int32_t outv = createWaveOutput(voice);	// at this point an unsigned 16-bit value (see Hermit's impl)
+														// envelopeOutput has 8-bit
+
+				// the ideal voiceOut would be signed 16-bit - but more bits are actually needed - particularily
+				// for the massively shifted 6581 signal (needed for D418 digis to work correctly)
+				voiceOut= (*scale) * ( _env[voice]->getOutput() * (outv + _sid->wf_zero) + _sid->dac_offset);
+			}
+			
+			// now route the voice output to either the non-filtered or the
+			// filtered channel (with disabled filter outo is used)
+			
+			_filter->routeSignal(&voiceOut, &outf, &outo, voice);
+
+			// trace output (always make it 16-bit)
+			if (synth_trace_bufs) {
+				int16_t *voice_trace_buffer= synth_trace_bufs[voice];
+
+				int32_t o= 0, f= 0;	// isolated from other voices
+				uint8_t is_filtered= _filter->routeSignal(&voiceOut, &f, &o, voice);	// redundant.. see above
+				
+				*(voice_trace_buffer+offset)= (int16_t)_filter->simOutput(voice, is_filtered, &f, &o);
+			}
+		}
+	} else {
+		int32_t voiceOut= (*scale) * ( 0xff * (0 + _sid->wf_zero) + _sid->dac_offset);
+		for (uint8_t voice=0; voice<3; voice++) {
+			// clear buffer
+			if (synth_trace_bufs) {
+				int16_t *voice_trace_buffer= synth_trace_bufs[voice];				
+				*(voice_trace_buffer+offset)= (int16_t)voiceOut;
+			}
 		}
 	}
 	
@@ -965,6 +982,12 @@ void SID::resetAll(uint32_t sample_rate, uint16_t *addrs, uint8_t *is_6581, uint
 extern "C" uint8_t sidReadMem(uint16_t addr) {
 	uint8_t sid_idx= _mem2sid[addr-0xd400];
 	return _sids[sid_idx].readMem(addr);
+}
+
+// gets what has actually been last written (even for write-only regs)
+extern "C" uint8_t sidPeekMem(uint16_t addr) {
+	uint8_t sid_idx= _mem2sid[addr-0xd400];
+	return _sids[sid_idx].peekMem(addr);
 }
 extern "C" void sidWriteMem(uint16_t addr, uint8_t value) {
 	uint8_t sid_idx= _mem2sid[addr-0xd400];

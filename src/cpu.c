@@ -636,7 +636,7 @@ static void prefetchOP( int16_t *opcode, int8_t *cycles) {
 
     uint8_t opc=memGet(_pc++);
 	*opcode= opc;
-		
+	
     int32_t mode=_modes[opc];
 	
 	// get base cycles
@@ -947,16 +947,14 @@ static void runNextOp(void)
 	interrupts - since the 1st write will clear all the originally set bits.
 	*/
 	
-	
+//	if (_pc == 0xE37b) fprintf(stderr, "%6lu at 0xE37b\n", _cycles);	// warmstart
 	
 	// The operation MUST BE fetched in the 1st cycle (i.e. when prefetching is none - or the wrong command
 	// could be used later .. see "cia1tb123" test - where the command byte is updated by the timer - changing
 	// the OP while the instruction is already executed)
     uint8_t opc=memGet(_pc++);	// might be invalid by now
+	
 	opc= _exe_instr_opcode;
-
-//	if (_pc == 0x0B43) fprintf(stderr, "%6lu ***** START TEST 8 ********\n", _cycles);
-
 	
     int32_t cmd=_opcodes[opc];
     int32_t mode=_modes[opc];
@@ -1682,7 +1680,7 @@ void cpuClock(void) {
 			
 			_exe_instr_opcode= start_nmi_op;
 			_exe_instr_cycles= _opbase_frame_cycles[_exe_instr_opcode];
-				
+			
 		} else if (pendingIRQ()) {	// interrupts are like a BRK command
 			_irq_committed= 0;
 			_exe_instr_opcode= start_irq_op;
@@ -1717,7 +1715,6 @@ void cpuClock(void) {
 #ifdef TRACE_IRQ_TIMING
 				_irq_start= _cycles;
 #endif
-				
 			} else if (_exe_instr_opcode == start_nmi_op) {			
 				push(_pc>>8);	// where to resume after the interrupt
 				push(_pc&0xff);

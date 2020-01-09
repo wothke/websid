@@ -205,14 +205,59 @@ void Core::loadSongBinary(uint8_t *src, uint16_t dest_addr, uint16_t len) {
 	memCopyFromRAM(_memory_snapshot, 0, MEMORY_SIZE);	
 }
 
-void Core::startupSong(uint32_t sample_rate, uint8_t ntsc_mode, uint8_t compatibility, uint16_t *init_addr, 
-							uint16_t load_end_addr, uint16_t play_addr, uint8_t actual_subsong) {
+// precondition: standard kernal & basic ROMs must be available
+void Core::resetC64() {
+	// ROM based RESET provides most of the environment needed for BASIC
+	
+	memWriteRAM(0x1, 0x37);
+	reset(44100, 0, 1);				// dummy settings good enough for RESET
+
+	uint16_t rom_routine= 0xFCE2;	// note: it might be a good idea to strip down the standard ROM impl 
+									// which unnecessarily wastes many cycles for useless RAM tests, etc
+	cpuReset(rom_routine, 0);
+	
+	while (cpuIsValidPcPSID()) {
+		cpuClock();
+		
+		if (cpuCycles() >= CYCLELIMIT ) { return; }
+		
+		vicClock(); 		// these are probably overkill for RESET
+		ciaClock();
+		SID::clockAll();
+		cpuClockSystem();
+	}
+	
+	// additional BASIC prog setup
+	memWriteRAM(0x007a, 0x00);	// Pointer to current byte in BASIC program or direct command.
+	memWriteRAM(0x007b, 0x08);
+
+	memWriteRAM(0x002d, 0x00);	// Pointer to beginning of variable area
+	memWriteRAM(0x002e, 0x86);
+	memWriteRAM(0x002f, 0x00);	// Pointer to beginning of array variable area
+	memWriteRAM(0x0030, 0x86);
+	memWriteRAM(0x0031, 0x00);	// Pointer to end of array variable area
+	memWriteRAM(0x0032, 0x86);
+
+	memWriteRAM(0x0039, 0x00);	// line number / Direct mode, no BASIC program is being executed.
+	memWriteRAM(0x003a, 0xff);
+	
+	memWriteRAM(0x0041, 0x00);	// next data item.
+	memWriteRAM(0x0042, 0x08);
+
+//	EM_ASM_({ console.log('C64 RESET completed');});
+	
+	// note: the used ROM might not match the song's settings (e.g. PAL/NTSC) and the respective
+	// memory snapshot that is taken on the above base may be flawed. But that doesn't matter 
+	// since timing specific settings are always reset before playing a sub-tune.
+}
+
+void Core::startupSong(uint32_t sample_rate, uint8_t ntsc_mode, uint8_t compatibility, uint8_t basic_prog, 
+							uint16_t *init_addr, uint16_t load_end_addr, uint16_t play_addr, uint8_t actual_subsong) {
 	
 	reset(sample_rate, ntsc_mode, compatibility);
 	
 	// restore original mem image.. previous "init_addr" run may have corrupted the state
 	memCopyToRAM(_memory_snapshot, 0, MEMORY_SIZE);
-
 	hackIfNeeded(init_addr);
 	
 	memSetDefaultBanksPSID(envIsRSID(), (*init_addr), load_end_addr);	// PSID crap
@@ -267,7 +312,12 @@ void Core::startupSong(uint32_t sample_rate, uint8_t ntsc_mode, uint8_t compatib
 		}
 		
 	} else {
-		memRsidMain(init_addr);
+		if (basic_prog) {
+			memWriteRAM(0x030c, actual_subsong);
+		} else {
+			memRsidMain(init_addr);
+		}
+		
 		cpuReset((*init_addr), actual_subsong);	// set starting point for emulation
 	}
 }

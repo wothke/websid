@@ -4,7 +4,7 @@ KNOWN LIMITATIONS
 SID related: 
 
 - Filter implementation based on Hermit's jssid.js may not be 100% acurate (this is probably
-  the prio 1 limitation)
+  the prio 1 limitation with regard to sound output quality)
 - The combined-waveforms generated based on Hermit's approach may deviate from respective 
   tables recorded on the real hardware
 - Output is calculated only once per sample (which typically covers a 22 system clock
@@ -29,14 +29,22 @@ ROM related:
   completely do without them:
 
   - The emulator does NOT contain any BASIC ROM nor CHAR ROM. This means that BASIC programs
-    will not work at all. And songs that actually try us use the character ROM will not work correctly 
-    either (I am aware of exactely one such song: Acid_Flashback.sid).
+    will not work by default. Songs that actually try us use the character ROM by default 
+	will not work correctly either (I am aware of exactely one such song.).
   
-  - There is a minimal set of KERNAL ROM function replacements but not a complete ROM image. Problems 
-    may occur if a song tries to use unusual functionalities that are not yet covered or if it has 
+  - By default the emulator uses a minimal set of KERNAL ROM function replacements but not a complete ROM image. 
+    Problems may occur if a song tries to use unusual functionalities that are not yet covered or if it has 
     specific timing requirements that would only be met by the original ROM implementation.
 
-
+  However the emulator allows to use respective externally supplied ROM images! If you have the ROMs
+  then they can be input into the SIDBackendAdapter, e.g.:
+  
+    var BASIC_ROM=	"base64 encoded ROM data..";
+	var KERNAL_ROM=	"...";
+	var CHAR_ROM=	"...";
+    new SIDBackendAdapter(BASIC_ROM, CHAR_ROM, KERNAL_ROM)
+	
+	
 Compute! related:
 
 - The emulator only supports single-SID configurations for Compute! Sidplayer, i.e. when playing a .mus

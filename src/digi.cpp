@@ -64,6 +64,8 @@ extern "C" {
 #include "memory.h"
 #include "env.h"		// envClockRate()
 #include "vic.h"		// vicFPS()
+
+extern uint8_t	sidPeekMem(uint16_t addr);
 }
 #include "sid.h"
 #include "filter.h"
@@ -428,17 +430,17 @@ uint8_t DigiDetector::isMahoneyDigi() {
 	
 	// song using this from main-loop - test-case: Acid_Flashback.sid
 
-	if ((memGet(_baseAddr+0x17) == 0x3) && 														// voice 1&2 through filter
-		(memGet(_baseAddr+0x15) == 0xff) && (memGet(_baseAddr+0x16) == 0xff) &&							// correct filter cutoff
-		(memGet(_baseAddr+0x06) == memGet(_baseAddr+0x0d)) && (memGet(_baseAddr+0x06) == memGet(_baseAddr+0x14)) &&		// all same SR
-		(memGet(_baseAddr+0x04) == 0x49) && (memGet(_baseAddr+0x0b) == 0x49) && (memGet(_baseAddr+0x12) == 0x49)  // correct waveform: pulse + test + gate
+	if ( (sidPeekMem(_baseAddr+0x17) == 0x3) && 														// voice 1&2 through filter
+		 (sidPeekMem(_baseAddr+0x15) == 0xff) && (sidPeekMem(_baseAddr+0x16) == 0xff) &&							// correct filter cutoff
+		 (sidPeekMem(_baseAddr+0x06) == sidPeekMem(_baseAddr+0x0d)) && (sidPeekMem(_baseAddr+0x06) == sidPeekMem(_baseAddr+0x14)) &&		// all same SR
+		 (sidPeekMem(_baseAddr+0x04) == 0x49) && (sidPeekMem(_baseAddr+0x0b) == 0x49) && (sidPeekMem(_baseAddr+0x12) == 0x49)  // correct waveform: pulse + test + gate
 		) {	
 
-		if (memGet(_baseAddr+0x06) >= 0xfb) {	// correct SR .. might shorten the tests some..
-			_sid->setMute(0, 1);
+		if (sidPeekMem(_baseAddr+0x06) >= 0xfb) {	// correct SR .. might shorten the tests some..
+		/*	_sid->setMute(0, 1);
 			_sid->setMute(1, 1);
 			_sid->setMute(2, 1);
-			
+		*/
 			_usedDigiType = DigiMahoneyD418;
 		}			
 		

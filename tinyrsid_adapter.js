@@ -1,20 +1,28 @@
 /*
  tinyrsid_adapter.js: Adapts Tiny'R'Sid backend to generic WebAudio/ScriptProcessor player.
  
- version 1.01
+ version 1.02
  
- 	Copyright (C) 2018 Juergen Wothke
+ 	Copyright (C) 2020 Juergen Wothke
 
  LICENSE
  
  This software is licensed under a CC BY-NC-SA 
  (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
-SIDBackendAdapter = (function(){ var $this = function () { 
+SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernalROM) { 
 		$this.base.call(this, backend_SID.Module, 2);	// use stereo (for the benefit of multi-SID songs)
 		this.playerSampleRate;
 		
 		this._scopeEnabled= false;
+
+		this._chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+		this._ROM_SIZE= 0x2000;
+		this._CHAR_ROM_SIZE= 0x1000;
+		
+		this._basicROM= this.base64DecodeROM(basicROM, this._ROM_SIZE);
+		this._charROM= this.base64DecodeROM(charROM, this._CHAR_ROM_SIZE);
+		this._kernalROM= this.base64DecodeROM(kernalROM, this._ROM_SIZE);
 	}; 
 	// TinyRSid's sample buffer contains 2-byte (signed short) sample data 
 	// for 1 channel
@@ -65,11 +73,26 @@ SIDBackendAdapter = (function(){ var $this = function () {
 			var buf = this.Module._malloc(data.length);
 			this.Module.HEAPU8.set(data, buf);
 			
+			var basicBuf= 0;
+			if (this._basicROM) { basicBuf = this.Module._malloc(this._ROM_SIZE); this.Module.HEAPU8.set(this._basicROM, basicBuf);}
+			
+			var charBuf= 0;
+			if (this._charROM) { charBuf = this.Module._malloc(this._CHAR_ROM_SIZE); this.Module.HEAPU8.set(this._charROM, charBuf);}
+			
+			var kernalBuf= 0;
+			if (this._kernalROM) { kernalBuf = this.Module._malloc(this._ROM_SIZE); this.Module.HEAPU8.set(this._kernalROM, kernalBuf);}
+			
 			// try to use native sample rate to avoid resampling
 			this.playerSampleRate= (typeof window._gPlayerAudioCtx == 'undefined') ? 0 : window._gPlayerAudioCtx.sampleRate;	
 			
 			var isMus= filename.endsWith(".mus") || filename.endsWith(".str");	// Compute! Sidplayer file (stereo files not supported)
-			var ret = this.Module.ccall('loadSidFile', 'number', ['number', 'number', 'number', 'number', 'string'], [isMus, buf, data.length, this.playerSampleRate, filename]);
+			var ret = this.Module.ccall('loadSidFile', 'number', ['number', 'number', 'number', 'number', 'string', 'number', 'number', 'number'], 
+										[isMus, buf, data.length, this.playerSampleRate, filename, basicBuf, charBuf, kernalBuf]);
+
+			if (kernalBuf) this.Module._free(kernalBuf);
+			if (charBuf) this.Module._free(charBuf);
+			if (basicBuf) this.Module._free(basicBuf);
+			
 			this.Module._free(buf);
 
 			if (ret == 0) {
@@ -234,6 +257,67 @@ SIDBackendAdapter = (function(){ var $this = function () {
 		getBufferVoice4: function() {
 			var ptr=  this.Module.ccall('getBufferVoice4', 'number');			
 			return ptr>>1;	// 16 bit samples			
-		},				
+		},
+		// base64 decoding util
+		findChar: function(str, c) {
+			for (var i= 0; i<str.length; i++) {
+				if (str.charAt(i) == c) {
+					return i;
+				}
+			}
+			return -1;
+		},
+		alphanumeric: function(inputtxt) {
+			var letterNumber = /^[0-9a-zA-Z]+$/;
+			return inputtxt.match(letterNumber);
+		},
+		is_base64: function(c) {
+		  return (this.alphanumeric(""+c) || (c == '+') || (c == '/'));
+		},
+		base64DecodeROM: function(encoded, romSize) {
+			if (typeof encoded == 'undefined') return 0;
+			
+			var in_len= encoded.length;
+			var i= j= in_= 0;
+			var arr4= new Array(4);
+			var arr3= new Array(3);
+			
+			var ret= new Uint8Array(romSize);
+			var ri= 0;
+
+			while (in_len-- && ( encoded.charAt(in_) != '=') && this.is_base64(encoded.charAt(in_))) {
+				arr4[i++]= encoded.charAt(in_); in_++;
+				if (i ==4) {
+					for (i = 0; i <4; i++) {
+						arr4[i] = this.findChar(this._chars, arr4[i]);
+					}
+					arr3[0] = ( arr4[0] << 2       ) + ((arr4[1] & 0x30) >> 4);
+					arr3[1] = ((arr4[1] & 0xf) << 4) + ((arr4[2] & 0x3c) >> 2);
+					arr3[2] = ((arr4[2] & 0x3) << 6) +   arr4[3];
+
+					for (i = 0; (i < 3); i++) {
+						var val= arr3[i];
+						ret[ri++]= val;
+					}
+					i = 0;
+				}
+			}
+			if (i) {
+				for (j = 0; j < i; j++) {
+					arr4[j] = this.findChar(this._chars, arr4[j]);
+				}
+				arr3[0] = (arr4[0] << 2) + ((arr4[1] & 0x30) >> 4);
+				arr3[1] = ((arr4[1] & 0xf) << 4) + ((arr4[2] & 0x3c) >> 2);
+
+				for (j = 0; (j < i - 1); j++) {
+					var val= arr3[j];
+					ret[ri++]= val;
+				}
+			}
+			if (ri == romSize) {
+				return ret;
+			}
+			return 0;
+		},
 	});	return $this; })();
 	

@@ -47,6 +47,11 @@ public:
 	* Handles read access to the IO area that this SID is mapped into.
 	*/
 	uint8_t readMem(uint16_t addr);
+	
+	/**
+	* Gets the last value actually written to this address (even for write-only regs).
+	*/
+	uint8_t peekMem(uint16_t addr);
 
 	/**
 	* Handles write access to the IO area that this SID is mapped into.

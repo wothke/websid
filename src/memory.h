@@ -16,7 +16,9 @@
 #define MEMORY_SIZE 65536
 
 // setup/initialization
-void	memResetKernelROM();
+void	memResetBasicROM(uint8_t *rom);
+void	memResetCharROM(uint8_t *rom);
+void	memResetKernelROM(uint8_t *rom);
 void	memResetRAM(uint8_t isPsid);
 void	memResetIO();
 
