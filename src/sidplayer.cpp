@@ -624,7 +624,7 @@ static uint16_t loadTestFromMemory(void *buf, uint32_t buflen)
 	if (size < 0 || size >0xffff) {
 		return 0;		// illegal sid file
 	}	
-	Core::loadSongBinary(&pdata[2], load_addr, size);
+	Core::loadSongBinary(&pdata[2], load_addr, size, 0);
     return load_addr;	
 }
 #endif
@@ -632,7 +632,7 @@ static uint16_t loadTestFromMemory(void *buf, uint32_t buflen)
 static uint16_t loadSIDFromMemory(void *sid_data, 
 					uint16_t *load_addr, uint16_t *load_end_addr, 
 					uint16_t *init_addr, uint16_t *play_addr, uint8_t *subsongs, 
-					uint8_t *startsong, uint32_t *speed, uint32_t file_size)
+					uint8_t *startsong, uint32_t *speed, uint32_t file_size, int32_t *load_size, uint8_t basic_mode)
 {
     uint8_t *pdata;
     uint8_t data_file_offset;	
@@ -703,7 +703,8 @@ static uint16_t loadSIDFromMemory(void *sid_data,
 		_free_space= ((uint16_t)start_page) << 8;
 	}
 	
-	Core::loadSongBinary(&pdata[data_file_offset], *load_addr, size);
+	Core::loadSongBinary(&pdata[data_file_offset], *load_addr, size, basic_mode);
+	*load_size= size;
 	
     return *load_addr;
 }
@@ -726,10 +727,10 @@ static uint16_t parseSYS(uint16_t start, uint16_t end) {
 	return result;
 }	
 
-void startFromBasic(uint16_t *init_addr, uint8_t has_ROMs) {
+void startFromBasic(uint16_t *init_addr, uint8_t has_ROMs, int32_t load_size) {
 	if (has_ROMs) {
 		// suppose all the necessarry ROMs are available
-		(*init_addr)= 0xa7ae;	// BASIC "next statement"
+		(*init_addr)= 0xa7ae;	// BASIC "next statement"		
 	} else {
 		// don't have C64 BASIC ROM. if BASIC program is just used to 
 		// jump to some address (SYS $....) then try to do that for 
@@ -804,13 +805,15 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void *in_b
 
 	memResetRAM(envIsPSID());	// dummy env that still may be overridden by hard RESET used for BASIC progs
 	
+	int32_t load_size=0;
+	
 	if ((_mus_mode= is_mus)) {
 		// todo: the same kind of impl could be used for .sid files that contain .mus data.. (see respective flag)
 		if (!loadComputeSidplayerData(input_file_buffer, in_buf_size)) {
 			return 1;
 		}
 		
-		Core::loadSongBinary(_musMemBuffer, _load_addr, _mus_mem_buffer_size);
+		Core::loadSongBinary(_musMemBuffer, _load_addr, _mus_mem_buffer_size, 0);
 				
 	} else {
 		_sid_version= input_file_buffer[0x05];
@@ -842,12 +845,12 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void *in_b
 
 		// loading of song binary is the last step in the general memory initialization
 		if (!loadSIDFromMemory(input_file_buffer, &_load_addr, &_load_end_addr, &_init_addr, 
-				&_play_addr, &_max_subsong, &_actual_subsong, &_play_speed, in_buf_size)) {
+				&_play_addr, &_max_subsong, &_actual_subsong, &_play_speed, in_buf_size, &load_size, _basic_prog && basic_ROM && kernal_ROM)) {
 			return 1;	// could not load file
 		}	
 	}
 	
-	if (_basic_prog) startFromBasic(&_init_addr, basic_ROM && kernal_ROM);
+	if (_basic_prog) startFromBasic(&_init_addr, basic_ROM && kernal_ROM, load_size);
 	
 	// global settings that depend on the loaded music file
 	envSetNTSC(ntscMode);

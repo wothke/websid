@@ -18,7 +18,7 @@
 class Core {
 public:
 	// load the C64 program data into the emulator (just the binary without the .sid file header)
-	static void loadSongBinary(uint8_t *src, uint16_t destAddr, uint16_t len);
+	static void loadSongBinary(uint8_t *src, uint16_t destAddr, uint16_t len, uint8_t basic_mode);
 
 	// then the emulation can be initiated
 	static void startupSong(uint32_t sampleRate, uint8_t ntscMode, uint8_t compatibility, uint8_t basic_prog, 

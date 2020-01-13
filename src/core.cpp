@@ -198,9 +198,36 @@ uint8_t Core::runOneFrame(int16_t *synth_buffer, int16_t **synth_trace_bufs, uin
 	return 0;
 }
 
-void Core::loadSongBinary(uint8_t *src, uint16_t dest_addr, uint16_t len) {
+void Core::loadSongBinary(uint8_t *src, uint16_t dest_addr, uint16_t len, uint8_t basic_mode) {
 	memCopyToRAM(src, dest_addr, len);
 
+	if (basic_mode) {
+		uint16_t basic_end= 0x801+ len;
+		
+		// after loading the program this actually points to whatever "LOAD" has loaded
+		memWriteRAM(0x002d, basic_end & 0xff);	// bullshit doc: "Pointer to beginning of variable area. (End of program plus 1.)"
+		memWriteRAM(0x002e, basic_end >> 8);
+		memWriteRAM(0x002f, basic_end & 0xff);
+		memWriteRAM(0x0030, basic_end >> 8);
+		memWriteRAM(0x0031, basic_end & 0xff);
+		memWriteRAM(0x0032, basic_end >> 8);
+					
+		memWriteRAM(0x0039, 0x00);				// line number / Direct mode, no BASIC program is being executed.
+		memWriteRAM(0x003a, 0xff);
+		
+		memWriteRAM(0x0041, 0x00);				// next data item.
+		memWriteRAM(0x0042, 0x08);
+
+		memWriteRAM(0x007a, 0x00);				// Pointer to current byte in BASIC program or direct command.
+		memWriteRAM(0x007b, 0x08);
+		
+		memWriteRAM(0x002b, memReadRAM(0x007a)+1);	// Pointer to beginning of BASIC area - Default: $0801
+		memWriteRAM(0x002c, memReadRAM(0x007b));
+		
+		// note: some BASIC songs use the TI variable.. which is automatically updated via the RASTER IRQ
+		// but some songs are REALLY slow before they play anything...
+	}
+	
 	// backup initial state for use in 'track change'	
 	memCopyFromRAM(_memory_snapshot, 0, MEMORY_SIZE);	
 }
@@ -227,23 +254,6 @@ void Core::resetC64() {
 		cpuClockSystem();
 	}
 	
-	// additional BASIC prog setup
-	memWriteRAM(0x007a, 0x00);	// Pointer to current byte in BASIC program or direct command.
-	memWriteRAM(0x007b, 0x08);
-
-	memWriteRAM(0x002d, 0x00);	// Pointer to beginning of variable area
-	memWriteRAM(0x002e, 0x86);
-	memWriteRAM(0x002f, 0x00);	// Pointer to beginning of array variable area
-	memWriteRAM(0x0030, 0x86);
-	memWriteRAM(0x0031, 0x00);	// Pointer to end of array variable area
-	memWriteRAM(0x0032, 0x86);
-
-	memWriteRAM(0x0039, 0x00);	// line number / Direct mode, no BASIC program is being executed.
-	memWriteRAM(0x003a, 0xff);
-	
-	memWriteRAM(0x0041, 0x00);	// next data item.
-	memWriteRAM(0x0042, 0x08);
-
 //	EM_ASM_({ console.log('C64 RESET completed');});
 	
 	// note: the used ROM might not match the song's settings (e.g. PAL/NTSC) and the respective
