@@ -135,7 +135,7 @@ const char * DigiDetector::getTypeDesc() {
 
 uint16_t DigiDetector::getRate() {
 	uint16_t r= round(vicFPS() *_digiCount);
-	return r > 800 ? r : 0;
+	return r > 800 ? r : 0;	// get rid of false positives
 }
 
 // detection of test-bit based samples

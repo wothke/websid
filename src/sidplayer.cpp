@@ -45,7 +45,6 @@ extern "C" {
 // ----------------- audio output buffer management ------------------------------------------
 
 
-//#define BUFLEN 8*882	// make it large enough for data of 8 screens (for NTSC 8*735 would be sufficient)
 #define BUFLEN 96000/50	// keep it down to one screen to allow for more direct feedback to WebAudio side..
 
 static uint32_t 		_soundBufferLen= BUFLEN;
@@ -68,7 +67,8 @@ static uint16_t 		_number_of_samples_per_call;
 static uint32_t 		_number_of_samples_rendered = 0;
 static uint32_t 		_number_of_samples_to_render = 0;
 
-static uint8_t 			_sound_started, _skip_silence_loop;
+static uint8_t	 		_sound_started;
+static uint8_t	 		_skip_silence_loop;
 
 static int8_t 			_digi_diagnostic;
 static int16_t 			_digiPreviousRate;
@@ -102,6 +102,7 @@ static uint8_t 	_actual_subsong, _max_subsong;
 static uint32_t	_play_speed;
 
 static uint32_t	_trace_sid= 0;
+static uint8_t	_ready_to_play= 0;
 
 extern "C" uint16_t envGetFreeSpace() {
 	return _free_space;
@@ -479,6 +480,9 @@ static uint16_t loadComputeSidplayerData(uint8_t *mus_song_file, uint32_t mus_so
 
 extern "C" int32_t computeAudioSamples()  __attribute__((noinline));
 extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
+	if(!_ready_to_play) return 0;
+
+	
 	int sid_voices= SID::getNumberUsedChips()*4;
 
 #ifdef TEST
@@ -487,7 +491,6 @@ extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 	_number_of_samples_rendered = 0;
 			
 	uint32_t sample_buffer_idx=0;
-	uint8_t has_digi= 0;
 	
 	while (_number_of_samples_rendered < _chunk_size)
 	{
@@ -495,16 +498,13 @@ extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 			_number_of_samples_to_render = _number_of_samples_per_call;
 			sample_buffer_idx=0;
 						
-			for (uint8_t i= 0; i<_skip_silence_loop; i++) {	// too much seeking might block too long?
+			for (uint16_t i= 0; i<_skip_silence_loop; i++) {	// too much seeking will make the browser unresponsive
 				Core::runOneFrame(_synth_buffer, _synth_trace_buffers, _number_of_samples_per_call);
-				
 				DigiType t= SID::getGlobalDigiType();
 				if (t) {
 					uint16_t rate= SID::getGlobalDigiRate();
 					
 					if (rate > 10) {
-						has_digi= 1;
-						
 						_digi_diagnostic= t;
 						_digi_average_rate = (_digiPreviousRate + rate) >> 1;	// average out frame overflow issues
 						_digiPreviousRate= rate;
@@ -512,27 +512,19 @@ extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 						_digi_diagnostic= DigiNone;
 						_digiPreviousRate= _digi_average_rate = 0;
 					}
+				} else {
+					_digi_diagnostic= DigiNone;
+					_digiPreviousRate= _digi_average_rate = 0;
 				}
-				
-				_sound_started |= has_digi;
-
+								
 				if (!_sound_started) {
-					// check if there is some output this time..
-					for (uint16_t j= 0; j<_number_of_samples_per_call; j++) {
-						if (_synth_buffer[j] > 30) {		// empty signal still returns some small values...
-							// FIXME: 8SID song is above this threshold (~85) even before anything is playing... 
-							// but even with higher value there is hardly any speedup.. 
-							_sound_started= 1;
-							break;
-						}
+					if (SID::isAudible()) {
+						_sound_started= 1;
+						break;
 					}
 				} else {
 					break;
 				}			
-			}
-			if (!_sound_started) {
-				// broken sounds might become irresponsive without this brake
-				_skip_silence_loop = (_skip_silence_loop>10) ? (_skip_silence_loop - 10) : 1; 
 			}			
 		}
 		
@@ -591,17 +583,30 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE enableVoice(uint8_t sid_idx, uint8_t vo
 
 extern "C" uint32_t playTune(uint32_t selected_track, uint32_t trace_sid)  __attribute__((noinline));
 extern "C" uint32_t EMSCRIPTEN_KEEPALIVE playTune(uint32_t selected_track, uint32_t trace_sid) {
+	_ready_to_play= 0;
 	_trace_sid= trace_sid; 
 	
 	_actual_subsong= (selected_track >= _max_subsong) ? _actual_subsong : selected_track;
 	_digi_diagnostic= _digi_average_rate= _digiPreviousRate= 0;
 	
 	_sound_started= 0;
-	_skip_silence_loop= 100;
+		
+	// note: crappy BASIC songs like Baroque_Music_64_BASIC take 100sec before they even 
+	// start playing.. unfortunately the emulation is NOT fast enough (at least on my 
+	// old PC) to just skip that phase in "no time" and if the calculations take too
+	// long then they will block the browser complitely
+	
+	// performing respective skipping-logic directly within INIT is a bad idea since it will 
+	// completely block the browser until it is completed. From "UI responsiveness" perspective
+	// it is preferable to attempt a "speedup" on limited slices from within the audio-rendering loop.
+	
+	_skip_silence_loop= 10;	// should keep the UI responsive; means that on a fast machine the above garbage song will still take 10 secs before it plays
 
 	Core::startupSong(_sample_rate, _ntsc_mode, _compatibility, _basic_prog, &_init_addr, _load_end_addr, _play_addr, _actual_subsong);
 
 	resetAudioBuffers();
+
+	_ready_to_play= 1;
 
 	return 0;
 }
@@ -757,6 +762,8 @@ void setRsidMode(uint8_t is_rsid) {
 
 extern "C" uint32_t loadSidFile(uint32_t is_mus, void *in_buffer, uint32_t in_buf_size, uint32_t sample_rate, char *filename, void *basic_ROM, void *char_ROM, void *kernal_ROM)  __attribute__((noinline));
 extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void *in_buffer, uint32_t in_buf_size, uint32_t sample_rate, char *filename, void *basic_ROM, void *char_ROM, void *kernal_ROM) {
+	_ready_to_play= 0;
+
 #ifdef TEST
 	fprintf(stderr, "starting test %s\n", filename);
 	

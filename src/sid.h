@@ -131,7 +131,8 @@ public:
 	*/
 	static void	setModels(uint8_t *is_6581);
 
-	
+	static uint8_t isAudible();
+
 	/**
 	* Renders the combined output of all currently used SIDs.
 	*/

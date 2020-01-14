@@ -75,6 +75,8 @@ static uint8_t getBit(uint32_t val, uint8_t b) { return (uint8_t) ((val >> b) & 
 
 const uint8_t MAX_SID_CHIPS= MAX_SIDS;
 static uint8_t _used_sids= 0;
+static uint8_t _is_audible= 0;
+
 static SID _sids[MAX_SID_CHIPS];	// allocate the maximum
 
 // globally shared by all SIDs
@@ -621,13 +623,9 @@ void SID::updateFreqCache(uint8_t voice) {
 	// optimization for Hermit's waveform generation:
 	_osc[voice]->freq_saw_step = _osc[voice]->freq_inc_sample / 0x1200000;			// for SAW
 	_osc[voice]->freq_pulse_base= ((uint32_t)_osc[voice]->freq_inc_sample) >> 9;	// for PULSE: 15 MSB needed
-		
-	if (_osc[voice]->freq_inc_sample) {	// no point to divide by 0
-		// input freq_inc_sample is a double with around (5+16)-bit and a freq=1 would translate to something like ~22
-		_osc[voice]->freq_pulse_step= 0x100 * 0x10000 / _osc[voice]->freq_inc_sample;
-	} else {
-		_osc[voice]->freq_pulse_step= 0;	// testcase: Ice_Guys digis
-	}
+	
+	// testcase: Dirty_64, Ice_Guys
+	_osc[voice]->freq_pulse_step= 256 / (((uint32_t)_osc[voice]->freq_inc_sample) >> 16);
 }
 
 void SID::poke(uint8_t reg, uint8_t val) {
@@ -951,10 +949,16 @@ uint8_t SID::getNumberUsedChips() {
 	return _used_sids;
 }
 
+uint8_t SID::isAudible() {
+	return _is_audible;
+}
+
 void SID::resetAll(uint32_t sample_rate, uint16_t *addrs, uint8_t *is_6581, uint8_t *output_chan, uint8_t compatibility, uint8_t resetVol) {
 	_used_sids= 0;
 	memset(_mem2sid, 0, MEM_MAP_SIZE); // default is SID #0
 
+	_is_audible= 0;
+	
 	// determine the number of used SIDs
 	for (uint8_t i= 0; i<MAX_SID_CHIPS; i++) {
 		if (addrs[i]) {
@@ -990,6 +994,8 @@ extern "C" uint8_t sidPeekMem(uint16_t addr) {
 	return _sids[sid_idx].peekMem(addr);
 }
 extern "C" void sidWriteMem(uint16_t addr, uint8_t value) {
+	_is_audible |= value;	// detect use by the song
+	
 	uint8_t sid_idx= _mem2sid[addr-0xd400];
 	_sids[sid_idx].writeMem(addr, value);
 }

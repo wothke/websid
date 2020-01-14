@@ -110,7 +110,6 @@ void Core::rsidRunTest() {
 
 static double _vol_map[]= { 1.0f, 0.6f, 0.4f, 0.3f, 0.3f, 0.3f, 0.3f, 0.3f };	
 
-
 void runEmulation(int16_t *synth_buffer, int16_t **synth_trace_bufs, uint16_t samples_per_call) {
 	double n= SID::getCyclesPerSample();
 
@@ -131,7 +130,11 @@ void runEmulation(int16_t *synth_buffer, int16_t **synth_trace_bufs, uint16_t sa
 				// VIC always uses the 1st phase of each ϕ2 clock cycle (for bus access) so it should be clocked first
 				vicClock();
 				ciaClock();
-				SID::clockAll();
+				if (SID::isAudible()) {
+					// note: for a slow garbage song like Baroque_Music_64_BASIC this brings down 
+					// the "silence detection" from 33 sec to 19 secs
+					SID::clockAll();
+				}
 				
 				cpuClock();	// invalid "main" should just keep burning cycles one-by-one
 				
@@ -141,7 +144,11 @@ void runEmulation(int16_t *synth_buffer, int16_t **synth_trace_bufs, uint16_t sa
 
 			_sample_cycles-= n;	// keep overflow
 			
-			SID::synthSample(synth_buffer, synth_trace_bufs, &scale, i);
+			if (SID::isAudible()) {
+				SID::synthSample(synth_buffer, synth_trace_bufs, &scale, i);
+			} else {
+				synth_buffer[(i<<1)]= 0;	// speedup "silence detection" (only needed for crappy BASIC tunes)
+			}
 		}
 
 		// stereo is currently only generated for LMan's 8SID configuration
@@ -211,7 +218,11 @@ void Core::loadSongBinary(uint8_t *src, uint16_t dest_addr, uint16_t len, uint8_
 		memWriteRAM(0x0030, basic_end >> 8);
 		memWriteRAM(0x0031, basic_end & 0xff);
 		memWriteRAM(0x0032, basic_end >> 8);
+		memWriteRAM(0x00ae, basic_end & 0xff);	// also needed according to Wilfred
+		memWriteRAM(0x00af, basic_end >> 8);
+		
 					
+		// todo: according to Wilfred 0803/0804 should be copied to these - but I havn't found a valid testcase yet
 		memWriteRAM(0x0039, 0x00);				// line number / Direct mode, no BASIC program is being executed.
 		memWriteRAM(0x003a, 0xff);
 		
@@ -327,7 +338,6 @@ void Core::startupSong(uint32_t sample_rate, uint8_t ntsc_mode, uint8_t compatib
 		} else {
 			memRsidMain(init_addr);
 		}
-		
 		cpuReset((*init_addr), actual_subsong);	// set starting point for emulation
 	}
 }
