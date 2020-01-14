@@ -734,7 +734,6 @@ void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offs
 				// mute voice while still using SID model specific "base voltage"
 
 				// todo: find out what exactely a real SID does in this scenario
-	//			voiceOut= (*scale) * ( _env[voice]->getOutput() * (0 + _sid->wf_zero) + _sid->dac_offset);
 				voiceOut= (*scale) * ( 0xff * (0 + _sid->wf_zero) + _sid->dac_offset);
 			} else {
 				int32_t outv = createWaveOutput(voice);	// at this point an unsigned 16-bit value (see Hermit's impl)
