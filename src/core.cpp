@@ -317,7 +317,7 @@ void Core::startupSong(uint32_t sample_rate, uint8_t ntsc_mode, uint8_t compatib
 		// features - that "need not to be documented")
 			
 		if (envIsTimerDrivenPSID()) {
-			ciaReset60HzPSID();
+			//ciaReset60HzPSID();
 
 			memWriteIO(0xdc0d, 0x81);
 			memWriteIO(0xdc0e, 0x01);

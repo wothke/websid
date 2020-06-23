@@ -192,8 +192,8 @@ static void initTimer(struct Timer *t, uint8_t timer_idx) {
 	// bootstrap using current memory settings..
 	uint16_t addr= t->memory_address + _offset_lo_byte[timer_idx];	
 	uint16_t timer=  (memReadIO(addr)|(memReadIO(addr+1)<<8));
-	
-//	uint16_t timer= readCounter(t, timer_idx);		// bootstrap using current memory settings..
+
+	//	uint16_t timer= readCounter(t, timer_idx);		// bootstrap using current memory settings..
 	t->ts[timer_idx].timer_latch= timer;
 	t->ts[timer_idx].counter= 0;
 	
@@ -729,20 +729,19 @@ static void initMem(uint16_t addr, uint8_t value) {
 	
 	memWriteIO(addr, value);
 }
-
-
+/*
 void ciaReset60HzPSID() {
 	// note: the PSID "speed flag" always means 60Hz
 	if (envIsTimerDrivenPSID()) {
 		// if an idiotic PSID does not setup any timer it then expects 60Hz..
 		if (!memReadIO(0xdc04) && !memReadIO(0xdc05)) {
-			const uint32_t c= envClockRate()/60;
+			const uint32_t c= 1022727/60;// NTSC system clock (14.31818MHz/14)
 			initMem(0xdc04, c&0xff);
 			initMem(0xdc05, c>>8);
 		}
 	}
 }
-
+*/
 void ciaReset(uint32_t cycles_per_screen, uint8_t is_rsid) {
 
 //	initMem(0xdc00, 0x10);	 	// fire botton NOT pressed (see Alter_Digi_Piece.sid)
@@ -753,16 +752,16 @@ void ciaReset(uint32_t cycles_per_screen, uint8_t is_rsid) {
 	initMem(0xdc0d, 0x81);	// interrupt control	(interrupt through timer A)
 	initMem(0xdc0e, 0x01); 	// control timer A: start - must already be started (e.g. Phobia, GianaSisters, etc expect it)
 	initMem(0xdc0f, 0x08); 	// control timer B (start/stop) means auto-restart
-	
-/*	
+
 	if (envIsTimerDrivenPSID()) {
-		// if idiotic PSID does not setup any timer it then expects 50/60Hz..
-		// (which must be set later if needed)		
+		// if idiotic PSID does not setup any timer it then expects 60Hz..
+		const uint32_t c= 1022727/60;// NTSC system clock (14.31818MHz/14)
+		initMem(0xdc04, c&0xff);
+		initMem(0xdc05, c>>8);
 	} else {
-	*/
 		initMem(0xdc04, cycles_per_screen&0xff); 	// timer A (1x pro screen refresh)
 		initMem(0xdc05, cycles_per_screen>>8);
-//	}
+	}
 
 	if (is_rsid) {	
 		initMem(0xdc06, 0xff);
@@ -783,6 +782,4 @@ void ciaReset(uint32_t cycles_per_screen, uint8_t is_rsid) {
 	initTimerData(ADDR_CIA2, &(_cia[1]));
 
 	_tod_in_millies= 0;
-	
-
 }
