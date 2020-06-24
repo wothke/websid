@@ -752,16 +752,11 @@ void ciaReset(uint32_t cycles_per_screen, uint8_t is_rsid) {
 	initMem(0xdc0d, 0x81);	// interrupt control	(interrupt through timer A)
 	initMem(0xdc0e, 0x01); 	// control timer A: start - must already be started (e.g. Phobia, GianaSisters, etc expect it)
 	initMem(0xdc0f, 0x08); 	// control timer B (start/stop) means auto-restart
-
-	if (envIsTimerDrivenPSID()) {
-		// if idiotic PSID does not setup any timer it then expects 60Hz..
-		const uint32_t c= 1022727/60;// NTSC system clock (14.31818MHz/14)
-		initMem(0xdc04, c&0xff);
-		initMem(0xdc05, c>>8);
-	} else {
-		initMem(0xdc04, cycles_per_screen&0xff); 	// timer A (1x pro screen refresh)
-		initMem(0xdc05, cycles_per_screen>>8);
-	}
+	
+	// see ROM $FDDD: initalise TAL1/TAH1 for 1/60 of a second (always!)
+	const uint32_t c= envIsNTSC()? 0x4295 : 0x4025;
+	initMem(0xdc04, c&0xff);
+	initMem(0xdc05, c>>8);
 
 	if (is_rsid) {	
 		initMem(0xdc06, 0xff);
