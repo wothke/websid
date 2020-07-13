@@ -1,18 +1,18 @@
 /*
-* The main loop driving the emulation.
+* This is the interface for using the actual emulator.
 * 
-* This updated version uses a cycle-by-cycle emulation of the different
-* C64 components (VIC, SID, CIA, CPU). 
+* This updated implementation uses a cycle-by-cycle emulation of the different
+* C64 components (VIC, SID, CIA, CPU).
 *
 * PSID files are wrapped with respective driver code so that the regular
 * RSID emulation can be used.
 *
 * Note: It is still a somewhat high level emulation, i.e. unlike very precise
-* emulators it does NOT emulate different phases of a system clock cycle, nor respective
-* detailed internal workings of all the various components (e.g. CPU).
+* emulators it does NOT emulate different phases of a system clock cycle, nor
+* respective detailed internal workings of all the various components (e.g. CPU).
 * 
 * WebSid (c) 2019 Jürgen Wothke
-* version 0.93
+* version 0.94
 *
 * Terms of Use: This software is licensed under a CC BY-NC-SA
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
@@ -25,7 +25,6 @@
 #include "core.h"
 
 extern "C" {
-#include "env.h"
 #include "memory.h"
 #include "cpu.h"
 #include "vic.h"
@@ -36,45 +35,40 @@ extern "C" {
 
 #include <emscripten.h>
 
-// if 'init' takes longer than 4 secs then something is wrong (mb in endless loop)
-// test case: PSID "ALiH" type players (e.g. Simulcra.sid) use more than 2M cycles in their INIT
+// if PSID 'init' subroutine takes longer than 4 secs then something
+// is wrong (mb in endless loop) test case: PSID "ALiH" type players
+// (e.g. Simulcra.sid) use more than 2M cycles in their INIT
+
 #define CYCLELIMIT 4000000
 
 
-/*
-* snapshot of c64 memory right after loading.. 
-* it is restored before playing a new track..
-*/
-static uint8_t _memory_snapshot[MEMORY_SIZE];
+// the clocks used in the emulation do not usually match the used audio
+// output sample rate and fractional overflows are handled here:
+static double _sample_cycles;
 
-static double _sample_cycles;	// to handle cross frame overflow
-
-
-static void reset(uint32_t sample_rate, uint8_t ntsc_mode, uint8_t compatibility) {		
-	cpuInit();	
+static void resetDefaults(uint32_t sample_rate, uint8_t is_rsid, 
+							uint8_t ntsc_mode, uint8_t compatibility) {
+	cpuInit();
 	
     memResetIO();
 
-	ciaReset(vicCyclesPerScreen(), envIsRSID());
-		
-	vicReset(envIsRSID(), ntsc_mode);
+	ciaReset(is_rsid);
+	vicReset(is_rsid, ntsc_mode);
 	
-	SID::resetAll(sample_rate, envSIDAddresses(), envSID6581s(), envSIDOutputChannels(), compatibility, 1);
+	SID::resetAll(sample_rate, compatibility, 1);
 	
 	_sample_cycles= 0;
 }
 
-
-
+#ifdef TEST
 // ------------------ to run Wolfgang Lorenz's test-suite ---------------------
 
-#ifdef TEST
 extern uint8_t test_running;
 
 void testInit(void)
 {
-	memCopyToRAM(_memory_snapshot, 0, MEMORY_SIZE);
-	reset(44100, 0, 1);		
+	memRestoreSnapshot();
+	resetDefaults(44100, 1, 0, 1);
 }
 
 void Core::rsidRunTest() {
@@ -82,8 +76,8 @@ void Core::rsidRunTest() {
 	
 	// use same sequence as in runEmulation (just without generating sample output)
 	while(test_running) {
-		// VIC always uses the 1st phase of each ϕ2 clock cycle (for bus access) so it should be clocked first
-		// (after all it is where the system clock comes from..)
+		// VIC always uses the 1st phase of each ϕ2 clock cycle (for bus access) so it
+		// should be clocked first (after all it is where the system clock comes from..)
 		vicClock();		
 		ciaClock();
 		SID::clockAll();
@@ -99,83 +93,85 @@ void Core::rsidRunTest() {
 }
 #endif
 
-// who knows what people might use to wire up the output signals of their
-// multi-SID configurations... it probably depends on the song what might be "good" 
-// settings here.. alternatively I could just let the clipping do its work (without any 
-// rescaling). but for now I'll use Hermit's settings - this will make for a better user 
-// experience in DeepSID when switching players..
 
-// FIXME: only designed for even number of SIDs.. if there actually are 3SID (etc) stereo
-// songs then something more sophisticated would be needed...
+void copyMonoSignal(int16_t *synth_buffer, uint16_t samples_per_call) {
+	for (int i = 0; i<samples_per_call; i++) {
+		synth_buffer[(i<<1) + 1]= synth_buffer[i<<1]; // single-SID songs are mono
+	}
+}
 
-static double _vol_map[]= { 1.0f, 0.6f, 0.4f, 0.3f, 0.3f, 0.3f, 0.3f, 0.3f };	
+// For some reason "inline" does not seem to reliably work in the 
+// EMSCRIPTEN context and the below "defines" serve the same purpose 
+// (avoid additional subroutine nesting just in case).
 
-void runEmulation(int16_t *synth_buffer, int16_t **synth_trace_bufs, uint16_t samples_per_call) {
+// clocking used for "normal" songs". note: for a slow garbage song 
+// like Baroque_Music_64_BASIC the isAudible() check brings down 
+// the "silence detection" from 33 sec to 19 secs
+
+#define CLOCK_OPTIMIZED() \
+	vicClock(); \
+	ciaClock(); \
+	if (SID::isAudible()) { SID::clockAll(); }; \
+	cpuClock(); \
+	cpuClockSystem()
+
+#define SYNTH_NORMAL(synth_buffer, synth_trace_bufs, scale, i) \
+	if (SID::isAudible()) { \
+		SID::synthSample(synth_buffer, synth_trace_bufs, &scale, i); \
+	} else { \
+		synth_buffer[(i<<1)]= 0; \
+	}
+
+#define CLOCK_NORMAL() \
+	vicClock(); \
+	ciaClock(); \
+	SID::clockAll(); \
+	cpuClock();	 \
+	cpuClockSystem()
+
+	
+void runEmulation(uint8_t is_single_sid, int16_t *synth_buffer, 
+					int16_t **synth_trace_bufs, uint16_t samples_per_call) {
+						
 	double n= SID::getCyclesPerSample();
 
-	// trivia: The system clock rate (and others) is generated by the VIC and feed to the CPU's
-	// ϕ1 pin. The CPU pin that then outputs the system clock rate for use by other components is 
-	// called Phase 2 or Phi2 (ϕ2).
-
-	// performance info: JavaScript performance.now() measurements with a 8SID song suggest that
-	// only a small fraction of the overall runtime is spent in the below synthSample() and most of the time 
-	// is spent in the earlier clock-by-clock emulation of the system components; 2 (5) vs 12 (21)
+	// trivia: The system clock rate (and others) is generated by the VIC 
+	// and feed to the CPU's ϕ1 pin. The CPU pin that then outputs the system 
+	// clock rate for use by other components is called Phase 2 or Phi2 (ϕ2).
 	
-	if (envSidVersion() != MULTI_SID_TYPE ) {
-		double scale= _vol_map[SID::getNumberUsedChips()-1] / 0xff;	// 0xff serves to normalize the 8-bit envelope
+	// VIC always uses the 1st phase of each ϕ2 clock cycle (for bus access) 
+	// so it should be clocked first.
 
+	// performance info: JavaScript performance.now() measurements with a 8SID 
+	// song suggest that only a small fraction of the overall runtime is spent
+	// in the SID::synthSample() and most of the time is spent in the earlier
+	// clock-by-clock emulation of the system components; 2 (5) vs 12 (21)
+	
+	double scale= SID::getScale();	// avoid recalc within loop
+	
+	if (is_single_sid) {
 		for (int i = 0; i<samples_per_call; i++) {
 			while(_sample_cycles < n) {
-
-				// VIC always uses the 1st phase of each ϕ2 clock cycle (for bus access) so it should be clocked first
-				vicClock();
-				ciaClock();
-				if (SID::isAudible()) {
-					// note: for a slow garbage song like Baroque_Music_64_BASIC this brings down 
-					// the "silence detection" from 33 sec to 19 secs
-					SID::clockAll();
-				}
-				
-				cpuClock();	// invalid "main" should just keep burning cycles one-by-one
-				
-				cpuClockSystem();
+				CLOCK_OPTIMIZED();
 				_sample_cycles++;
 			}
-
 			_sample_cycles-= n;	// keep overflow
 			
-			if (SID::isAudible()) {
-				SID::synthSample(synth_buffer, synth_trace_bufs, &scale, i);
-			} else {
-				synth_buffer[(i<<1)]= 0;	// speedup "silence detection" (only needed for crappy BASIC tunes)
-			}
+			SYNTH_NORMAL(synth_buffer, synth_trace_bufs, scale, i);
 		}
+		copyMonoSignal(synth_buffer, samples_per_call);
 
-		// stereo is currently only generated for LMan's 8SID configuration
-		for (int i = 0; i<samples_per_call; i++) {
-			synth_buffer[(i<<1) + 1]= synth_buffer[i<<1]; 	// just copy the mono signal
-		}
 	} else {
-//		EM_ASM_({ window['start']= performance.now();});
-		double scale= _vol_map[env2ndOutputChanIdx() ? SID::getNumberUsedChips()>>1 : SID::getNumberUsedChips()-1]	/ 0xff;
-		
-		// optimization: no filter for trace buffers & no digis
+//		EM_ASM_({ window['start']= performance.now();});		
 		for (int i = 0; i<samples_per_call; i++) {
 			while(_sample_cycles < n) {
-
-				// VIC always uses the 1st phase of each ϕ2 clock cycle (for bus access) so it should be clocked first
-				vicClock();
-				ciaClock();
-				SID::clockAll();
-				
-				cpuClock();	// invalid "main" should just keep burning cycles one-by-one
-				
-				cpuClockSystem();
+				CLOCK_NORMAL();
 				_sample_cycles++;
 			}
-
 			_sample_cycles-= n;	// keep overflow
 			
+			// optimization: use no filter for trace buffers & no digis 
+			// (my slow PC is really at the limit here as it is)
 			SID::synthSampleStripped(synth_buffer, synth_trace_bufs, &scale, i);
 		}
 /*
@@ -196,11 +192,14 @@ void runEmulation(int16_t *synth_buffer, int16_t **synth_trace_bufs, uint16_t sa
 	}
 }
 
-uint8_t Core::runOneFrame(int16_t *synth_buffer, int16_t **synth_trace_bufs, uint16_t samples_per_call) {
+uint8_t Core::runOneFrame(uint8_t is_single_sid, uint8_t speed, int16_t *synth_buffer, 
+							int16_t **synth_trace_bufs, uint16_t samples_per_call) {
+								
 	SID::resetGlobalStatistics();
 
-	ciaUpdateTOD(envCurrentSongSpeed());
-	runEmulation(synth_buffer, synth_trace_bufs, samples_per_call);
+	ciaUpdateTOD(speed); // hack: TOD is rarely used so there is no point to do it more precisely
+	
+	runEmulation(is_single_sid, synth_buffer, synth_trace_bufs, samples_per_call);
 	
 	return 0;
 }
@@ -209,136 +208,92 @@ void Core::loadSongBinary(uint8_t *src, uint16_t dest_addr, uint16_t len, uint8_
 	memCopyToRAM(src, dest_addr, len);
 
 	if (basic_mode) {
-		uint16_t basic_end= 0x801+ len;
-		
-		// after loading the program this actually points to whatever "LOAD" has loaded
-		memWriteRAM(0x002d, basic_end & 0xff);	// bullshit doc: "Pointer to beginning of variable area. (End of program plus 1.)"
-		memWriteRAM(0x002e, basic_end >> 8);
-		memWriteRAM(0x002f, basic_end & 0xff);
-		memWriteRAM(0x0030, basic_end >> 8);
-		memWriteRAM(0x0031, basic_end & 0xff);
-		memWriteRAM(0x0032, basic_end >> 8);
-		memWriteRAM(0x00ae, basic_end & 0xff);	// also needed according to Wilfred
-		memWriteRAM(0x00af, basic_end >> 8);
-		
-					
-		// todo: according to Wilfred 0803/0804 should be copied to these - but I havn't found a valid testcase yet
-		memWriteRAM(0x0039, 0x00);				// line number / Direct mode, no BASIC program is being executed.
-		memWriteRAM(0x003a, 0xff);
-		
-		memWriteRAM(0x0041, 0x00);				// next data item.
-		memWriteRAM(0x0042, 0x08);
-
-		memWriteRAM(0x007a, 0x00);				// Pointer to current byte in BASIC program or direct command.
-		memWriteRAM(0x007b, 0x08);
-		
-		memWriteRAM(0x002b, memReadRAM(0x007a)+1);	// Pointer to beginning of BASIC area - Default: $0801
-		memWriteRAM(0x002c, memReadRAM(0x007b));
-		
-		// note: some BASIC songs use the TI variable.. which is automatically updated via the RASTER IRQ
-		// but some songs are REALLY slow before they play anything...
+		memSetupBASIC(len);
 	}
 	
-	// backup initial state for use in 'track change'	
-	memCopyFromRAM(_memory_snapshot, 0, MEMORY_SIZE);	
+	memSaveSnapshot();
 }
 
-// precondition: standard kernal & basic ROMs must be available
-void Core::resetC64() {
-	// ROM based RESET provides most of the environment needed for BASIC
-	
-	memWriteRAM(0x1, 0x37);
-	reset(44100, 0, 1);				// dummy settings good enough for RESET
-
-	uint16_t rom_routine= 0xFCE2;	// note: it might be a good idea to strip down the standard ROM impl 
-									// which unnecessarily wastes many cycles for useless RAM tests, etc
-	cpuReset(rom_routine, 0);
-	
+uint8_t runSubroutineTilEnd() {
 	while (cpuIsValidPcPSID()) {
 		cpuClock();
 		
-		if (cpuCycles() >= CYCLELIMIT ) { return; }
-		
-		vicClock(); 		// these are probably overkill for RESET
-		ciaClock();
+		if (cpuCycles() >= CYCLELIMIT ) {
+			EM_ASM_({ console.log('ERROR: PSID INIT hangs');});	// less mem than inclusion of fprintf
+			return 0;
+		}
+		// this is probably overkill for PSID crap..
+		vicClock(); 
+		ciaClock(); 
 		SID::clockAll();
 		cpuClockSystem();
 	}
+	return 1;
+}
+
+void Core::callKernalROMReset() {
+	// regular "kernal ROM" based RESET provides most of the environment
+	// needed for BASIC programs. precondition: RSID mode; standard 
+	// kernal & basic ROMs must be available
+		
+	resetDefaults(44100, 1, 0, 1);	// dummy settings good enough for RESET
+
+	// note: it might be a good idea to strip down the standard ROM impl 
+	// which unnecessarily wastes many cycles for useless RAM tests, etc
+	uint16_t rom_routine= 0xFCE2;	
+	cpuReset(rom_routine, 0);
+	
+	runSubroutineTilEnd();
 	
 //	EM_ASM_({ console.log('C64 RESET completed');});
 	
-	// note: the used ROM might not match the song's settings (e.g. PAL/NTSC) and the respective
-	// memory snapshot that is taken on the above base may be flawed. But that doesn't matter 
-	// since timing specific settings are always reset before playing a sub-tune.
+	// note: the used ROM might not match the song's settings (e.g. PAL/NTSC)
+	// and the respective memory snapshot that is taken on the above base may 
+	// be flawed. But that doesn't matter since timing specific settings are 
+	// always reset before playing a sub-tune.
 }
 
-void Core::startupSong(uint32_t sample_rate, uint8_t ntsc_mode, uint8_t compatibility, uint8_t basic_prog, 
-							uint16_t *init_addr, uint16_t load_end_addr, uint16_t play_addr, uint8_t actual_subsong) {
+uint8_t runInitPSID(uint16_t *init_addr, uint8_t actual_subsong) {
+	// run the the PSID's "INIT" subroutine separately so that the "bank"
+	// setting can be handled here on the C/C++ side
 	
-	reset(sample_rate, ntsc_mode, compatibility);
+	cpuReset((*init_addr), actual_subsong);	// set starting point for emulation	
 	
-	// restore original mem image.. previous "init_addr" run may have corrupted the state
-	memCopyToRAM(_memory_snapshot, 0, MEMORY_SIZE);
+	cpuIrqFlagPSID(1);	// block IRQ during INIT
+	
+	if (!runSubroutineTilEnd()) return 0;
+	
+	cpuIrqFlagPSID(0);
+
+	return 1;
+}
+
+void Core::startupSong(uint32_t sample_rate, uint8_t is_rsid, uint8_t is_timer_driven_psid, 
+						uint8_t ntsc_mode, uint8_t compatibility, uint8_t basic_mode, 
+						uint16_t *init_addr, uint16_t load_end_addr, 
+						uint16_t play_addr, uint8_t actual_subsong) {
+	
+	resetDefaults(sample_rate, is_rsid, ntsc_mode, compatibility);
+	
+	memRestoreSnapshot();	// previous sub-tune run may have corrupted the RAM
+
 	hackIfNeeded(init_addr);
 	
-	memSetDefaultBanksPSID(envIsRSID(), (*init_addr), load_end_addr);	// PSID crap
+	memSetDefaultBanksPSID(is_rsid, (*init_addr), load_end_addr);	// PSID crap
 		
-	if (envIsPSID()) {
-		// run the "INIT" separately so that the "bank" setting can be handled 
-		// here on the C/C++ side
-		cpuReset((*init_addr), actual_subsong);	// set starting point for emulation	
+	if (!is_rsid) {
 		
-		cpuIrqFlagPSID(1);	// block IRQ during INIT
+		if (!runInitPSID(init_addr, actual_subsong)) return;
 		
-		// run the PSID "init" routine
-		while (cpuIsValidPcPSID()) {
-			cpuClock();
+		uint16_t main= memPsidMain(play_addr);		
+		cpuResetToPSID(main);	// just install an endless loop for main
 			
-			if (cpuCycles() >= CYCLELIMIT ) {
-				EM_ASM_({ console.log('ERROR: PSID INIT hangs');});	// less mem than inclusion of fprintf
-				return;
-			}
-			// this is probably overkill for PSID crap..
-			vicClock(); 
-			ciaClock(); 
-			SID::clockAll();
-			cpuClockSystem();
-		}
-		cpuIrqFlagPSID(0);
-
-		memResetBanksPSID(play_addr);
-		uint8_t bank= memReadRAM(0x1); // test-case: Madonna_Mix.sid
-
-		uint16_t main= memPsidMain(bank,  envSidPlayAddr());
-		cpuResetToPSID(main);	// just use an endless loop for main
-			
-		// NOTE: braindead SID File specs apparently allow PSID INIT to specifically DISABLE
-		// the IRQ trigger that their PLAY depends on (actually another one of those UNDEFINED 
-		// features - that "need not to be documented")
-			
-		if (envIsTimerDrivenPSID()) {
-			//ciaReset60HzPSID();
-
-			memWriteIO(0xdc0d, 0x81);
-			memWriteIO(0xdc0e, 0x01);
-
-//			memWriteIO(0xd019, 0x81);	// not needs since not active before
-			
-		} else {
-			memSet(0xdc0d, 0x7f);	// disable the TIMER IRQ
-			memReadIO(0xdc0d);		// ackn whatever is there already
-			// note: DO NOT stop the timer.. Delta_Mix-E-Load_loader.sid depends on it
-			
-			memWriteIO(0xd01a, 0x81);	// enable RASTER IRQ
-		}
+		ciaSetDefaultsPSID(is_timer_driven_psid);
+		vicSetDefaultsPSID(is_timer_driven_psid);
 		
 	} else {
-		if (basic_prog) {
-			memWriteRAM(0x030c, actual_subsong);
-		} else {
-			memRsidMain(init_addr);
-		}
-		cpuReset((*init_addr), actual_subsong);	// set starting point for emulation
+		memRsidInit(init_addr, actual_subsong, basic_mode);
+		cpuReset((*init_addr), actual_subsong);
 	}
 }
 

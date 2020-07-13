@@ -131,16 +131,8 @@ extern "C" uint32_t envClockRate() {
 	return _clockRate;
 }
 
-extern "C" int8_t envIsTimerDrivenPSID() {
-	return (envIsPSID() && (envCurrentSongSpeed() == 1));
-}
-
 extern "C" uint8_t env2ndOutputChanIdx() {
 	return FileLoader::get2ndOutputChanIdx();
-}
-
-extern "C" int8_t envIsRasterDrivenPSID() {
-	return (envIsPSID() && (envCurrentSongSpeed() == 0));
 }
 
 static void resetAudioBuffers() {
@@ -230,8 +222,12 @@ extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 			_number_of_samples_to_render = _number_of_samples_per_call;
 			sample_buffer_idx=0;
 						
+			uint8_t is_single_sid=	envSidVersion() != MULTI_SID_TYPE;
+			uint8_t speed=	envCurrentSongSpeed();
+			
 			for (uint16_t i= 0; i<_skip_silence_loop; i++) {	// too much seeking will make the browser unresponsive
-				Core::runOneFrame(_synth_buffer, _synth_trace_buffers, _number_of_samples_per_call);
+				Core::runOneFrame(is_single_sid, speed, _synth_buffer, _synth_trace_buffers, _number_of_samples_per_call);
+				
 				DigiType t= SID::getGlobalDigiType();
 				if (t) {
 					uint16_t rate= SID::getGlobalDigiRate();

@@ -15,6 +15,7 @@
 // setup
 void		vicReset(uint8_t is_rsid, uint8_t ntsc_mode);
 void		vicSetModel(uint8_t ntsc_mode);
+void 		vicSetDefaultsPSID(uint8_t timerDrivenPSID);
 
 // simulate next clock cycle
 void		vicClock();

@@ -21,14 +21,14 @@
 #define TIMER_A 0
 #define TIMER_B 1
 
-void 		ciaReset(uint32_t cycles_per_screen, uint8_t is_rsid);
+void 		ciaReset(uint8_t is_rsid);
+void 		ciaSetDefaultsPSID(uint8_t timerDrivenPSID);
 
 void 		ciaClock();
 uint8_t 	ciaNMI();
 uint8_t 	ciaIRQ();
 
 // PSID crap
-void		ciaReset60HzPSID();
 uint16_t	ciaGetTimerPSID();
 void		ciaFakeIrqPSID();
 

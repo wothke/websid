@@ -729,20 +729,24 @@ static void initMem(uint16_t addr, uint8_t value) {
 	
 	memWriteIO(addr, value);
 }
-/*
-void ciaReset60HzPSID() {
-	// note: the PSID "speed flag" always means 60Hz
-	if (envIsTimerDrivenPSID()) {
-		// if an idiotic PSID does not setup any timer it then expects 60Hz..
-		if (!memReadIO(0xdc04) && !memReadIO(0xdc05)) {
-			const uint32_t c= 1022727/60;// NTSC system clock (14.31818MHz/14)
-			initMem(0xdc04, c&0xff);
-			initMem(0xdc05, c>>8);
-		}
+
+void ciaSetDefaultsPSID(uint8_t timerDrivenPSID) {
+	// NOTE: braindead SID File specs apparently allow PSID INIT to specifically DISABLE
+	// the IRQ trigger that their PLAY depends on (actually another one of those UNDEFINED
+	// features - that "need not to be documented")
+		
+	if (timerDrivenPSID) {
+		memWriteIO(0xdc0d, 0x81);
+		memWriteIO(0xdc0e, 0x01);
+
+	} else {
+		memSet(0xdc0d, 0x7f);	// disable the TIMER IRQ
+		memReadIO(0xdc0d);		// ackn whatever is there already
+		// note: DO NOT stop the timer.. Delta_Mix-E-Load_loader.sid depends on it
 	}
 }
-*/
-void ciaReset(uint32_t cycles_per_screen, uint8_t is_rsid) {
+
+void ciaReset(uint8_t is_rsid) {
 
 //	initMem(0xdc00, 0x10);	 	// fire botton NOT pressed (see Alter_Digi_Piece.sid)
 	initMem(0xdc00, 0x7f);	 	// S_W_A_F_2_tune_1.sid

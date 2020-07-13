@@ -22,8 +22,9 @@ void	memResetKernelROM(uint8_t *rom);
 void	memResetRAM(uint8_t isPsid);
 void	memResetIO();
 
+void	memSetupBASIC(uint16_t len);
+void	memRsidInit(uint16_t *init_addr, uint8_t actual_subsong, uint8_t basic_mode);
 void	memRsidMain(uint16_t *init_addr);
-
 
 // regular memory access (uses current bank settings)
 uint8_t	memGet(uint16_t addr);
@@ -36,6 +37,8 @@ void	memWriteRAM(uint16_t addr, uint8_t value);
 uint8_t	memMatch(uint16_t addr, uint8_t *pattern, uint8_t len);
 void	memCopyToRAM(uint8_t *src, uint16_t destAddr, uint32_t len);
 void	memCopyFromRAM(uint8_t *dest, uint16_t srcAddr, uint32_t len);
+void	memSaveSnapshot();
+void	memRestoreSnapshot();
 
 
 // I/O area access 
@@ -45,7 +48,7 @@ void	memWriteIO(uint16_t addr, uint8_t value);
 // PSID crap
 void	memSetDefaultBanksPSID(uint8_t isRsid, uint16_t initAddr, uint16_t loadEndAddr);
 void	memResetBanksPSID(uint16_t playAddr);
-uint16_t memPsidMain(uint8_t bank, uint16_t play_addr);
+uint16_t memPsidMain(uint16_t play_addr);
 
 #ifdef TEST
 void	memInitTest();

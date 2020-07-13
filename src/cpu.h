@@ -27,7 +27,6 @@ void 		cpuReset(uint16_t npc, uint8_t na);	// move program counter into new star
 void		cpuClock(void);
 
 
-
 // hack used for digi handling only
 uint8_t 	cpuIsInNMI();
 

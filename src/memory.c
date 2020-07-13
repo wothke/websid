@@ -42,6 +42,21 @@ static uint8_t _char_rom[IO_AREA_SIZE];		// mapped to $d000-$dfff
 static uint8_t _io_area[IO_AREA_SIZE];		// mapped to $d000-$dfff
 
 
+/*
+* snapshot of c64 memory right after loading.. 
+* it is restored before playing a new track..
+*/
+static uint8_t _memory_snapshot[MEMORY_SIZE];
+
+void memSaveSnapshot() {
+	memCopyFromRAM(_memory_snapshot, 0, MEMORY_SIZE);	
+}
+
+void memRestoreSnapshot() {
+	memCopyToRAM(_memory_snapshot, 0, MEMORY_SIZE);
+}
+
+
 uint8_t memMatch(uint16_t addr, uint8_t *pattern, uint8_t len) {
 	return !memcmp(&(_memory[addr]), pattern, len);
 }
@@ -296,7 +311,9 @@ void memInitTest() {
 void memResetBasicROM(uint8_t *rom) {
 	if (rom) {
 		// optional: for those that bring their own ROM
-		memcpy(_basic_rom, rom, BASIC_SIZE);	
+		memcpy(_basic_rom, rom, BASIC_SIZE);
+		
+		memWriteRAM(0x1, 0x37);	// todo: better move to memRsidInit?
 	}
 }
 
@@ -344,7 +361,41 @@ void memResetKernelROM(uint8_t *rom) {
 	}
 }
 
-uint16_t memPsidMain(uint8_t bank, uint16_t play_addr) {
+void memSetupBASIC(uint16_t len) {
+	uint16_t basic_end= 0x801+ len;
+	
+	// after loading the program this actually points to whatever "LOAD" has loaded
+	memWriteRAM(0x002d, basic_end & 0xff);	// bullshit doc: "Pointer to beginning of variable area. (End of program plus 1.)"
+	memWriteRAM(0x002e, basic_end >> 8);
+	memWriteRAM(0x002f, basic_end & 0xff);
+	memWriteRAM(0x0030, basic_end >> 8);
+	memWriteRAM(0x0031, basic_end & 0xff);
+	memWriteRAM(0x0032, basic_end >> 8);
+	memWriteRAM(0x00ae, basic_end & 0xff);	// also needed according to Wilfred
+	memWriteRAM(0x00af, basic_end >> 8);
+	
+				
+	// todo: according to Wilfred 0803/0804 should be copied to these - but I havn't found a valid testcase yet
+	memWriteRAM(0x0039, 0x00);				// line number / Direct mode, no BASIC program is being executed.
+	memWriteRAM(0x003a, 0xff);
+	
+	memWriteRAM(0x0041, 0x00);				// next data item.
+	memWriteRAM(0x0042, 0x08);
+
+	memWriteRAM(0x007a, 0x00);				// Pointer to current byte in BASIC program or direct command.
+	memWriteRAM(0x007b, 0x08);
+	
+	memWriteRAM(0x002b, memReadRAM(0x007a)+1);	// Pointer to beginning of BASIC area - Default: $0801
+	memWriteRAM(0x002c, memReadRAM(0x007b));
+	
+	// note: some BASIC songs use the TI variable.. which is automatically updated via the RASTER IRQ
+	// but some songs are REALLY slow before they play anything...
+}
+
+uint16_t memPsidMain(uint16_t play_addr) {
+	memResetBanksPSID(play_addr);
+	uint8_t bank= memReadRAM(0x1); // test-case: Madonna_Mix.sid
+	
 	uint16_t free= envGetFreeSpace();
 	if (!free) {					
 		EM_ASM_({ console.log("FATAL ERROR: no free memory for driver");});
@@ -378,6 +429,14 @@ uint16_t memPsidMain(uint8_t bank, uint16_t play_addr) {
 		}
 		return free;
 	}		
+}
+
+void memRsidInit(uint16_t *init_addr, uint8_t actual_subsong, uint8_t basic_mode) {
+	if (basic_mode) {
+		memWriteRAM(0x030c, actual_subsong);
+	} else {
+		memRsidMain(init_addr);
+	}
 }
 
 void memRsidMain(uint16_t *init_addr) {

@@ -557,6 +557,26 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 }
 
 // ------------------------- public API ----------------------------
+
+// who knows what people might use to wire up the output signals of their
+// multi-SID configurations... it probably depends on the song what might be "good" 
+// settings here.. alternatively I could just let the clipping do its work (without any 
+// rescaling). but for now I'll use Hermit's settings - this will make for a better user 
+// experience in DeepSID when switching players..
+
+// FIXME: only designed for even number of SIDs.. if there actually are 3SID (etc) stereo
+// songs then something more sophisticated would be needed...
+
+static double _vol_map[]= { 1.0f, 0.6f, 0.4f, 0.3f, 0.3f, 0.3f, 0.3f, 0.3f };	
+
+double SID::getScale() {
+	if (envSidVersion() != MULTI_SID_TYPE ) {
+		return _vol_map[SID::getNumberUsedChips()-1] / 0xff;	// 0xff serves to normalize the 8-bit envelope
+	} else {
+		return _vol_map[env2ndOutputChanIdx() ? SID::getNumberUsedChips()>>1 : SID::getNumberUsedChips()-1]	/ 0xff;		
+	}
+}
+
 uint16_t SID::getBaseAddr() {
 	return _addr;
 }
@@ -952,7 +972,11 @@ uint8_t SID::isAudible() {
 	return _is_audible;
 }
 
-void SID::resetAll(uint32_t sample_rate, uint16_t *addrs, uint8_t *is_6581, uint8_t *output_chan, uint8_t compatibility, uint8_t resetVol) {
+void SID::resetAll(uint32_t sample_rate, uint8_t compatibility, uint8_t resetVol) {
+	uint16_t *addrs= envSIDAddresses(); 
+	uint8_t *is_6581= envSID6581s(); 
+	uint8_t *output_chan= envSIDOutputChannels();
+
 	_used_sids= 0;
 	memset(_mem2sid, 0, MEM_MAP_SIZE); // default is SID #0
 

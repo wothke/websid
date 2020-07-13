@@ -194,6 +194,19 @@ void vicReset(uint8_t is_rsid, uint8_t ntsc_mode) {
 	cacheRasterLatch();
 }
 
+void vicSetDefaultsPSID(uint8_t timerDrivenPSID) {
+	// NOTE: braindead SID File specs apparently allow PSID INIT to specifically DISABLE
+	// the IRQ trigger that their PLAY depends on (actually another one of those UNDEFINED 
+	// features - that "need not to be documented")
+		
+	if (timerDrivenPSID) {
+//			memWriteIO(0xd019, 0x81);	// not needs since not active before
+		
+	} else {		
+		memWriteIO(0xd01a, 0x81);	// enable RASTER IRQ
+	}
+}
+
 // -----------------------------  VIC I/O -------------------------------------------
 
 static void writeD019(uint8_t value) {

@@ -33,10 +33,6 @@ uint8_t envIsSID6581();
 uint8_t envIsNTSC();
 uint8_t envSetNTSC(uint8_t ntsc);
 
-// PSID stuff
-int8_t envIsRasterDrivenPSID();
-int8_t envIsTimerDrivenPSID();
-
 uint16_t envGetFreeSpace();
 
 // where it starts

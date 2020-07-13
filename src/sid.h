@@ -85,6 +85,11 @@ public:
 	// ------------- class level functions ----------------------
 	
 	/**
+	* Rescaling that should be used on the output signal (depending on the used number of SID chips).
+	*/
+	static double getScale();
+
+	/**
 	* Total number of SID chips used in the current song.
 	*/
 	static uint8_t getNumberUsedChips();
@@ -92,7 +97,7 @@ public:
 	/**
 	* Resets all used SID chips.
 	*/
-	static void resetAll(uint32_t sample_rate, uint16_t *addrs, uint8_t *is_6581, uint8_t *output_chan, uint8_t compatibility, uint8_t resetVol);
+	static void resetAll(uint32_t sample_rate, uint8_t compatibility, uint8_t resetVol);
 
 	/**
 	* Clock all used SID chips.

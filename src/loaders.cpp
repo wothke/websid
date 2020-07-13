@@ -226,7 +226,9 @@ uint8_t FileLoader::setSID6581(uint8_t is6581) {
 void FileLoader::initTune(uint32_t sample_rate, uint8_t selected_track) {
 	_actual_subsong= getValidatedTrack(selected_track);
 	
-	Core::startupSong(sample_rate, _ntsc_mode, _compatibility, _basic_prog, &_init_addr, _load_end_addr, _play_addr, _actual_subsong);
+	uint8_t timerDrivenPSID= (envIsPSID() && (envCurrentSongSpeed() == 1));
+	
+	Core::startupSong(sample_rate, envIsRSID(), timerDrivenPSID, _ntsc_mode, _compatibility, _basic_prog, &_init_addr, _load_end_addr, _play_addr, _actual_subsong);
 }
 
 void FileLoader::storeFileInfo() {
@@ -524,7 +526,7 @@ uint32_t MusFileLoader::load(uint8_t *input_file_buffer, uint32_t in_buf_size, c
 	init();
 	
 	setRsidMode(1);
-	memResetRAM(envIsPSID());
+	memResetRAM(FileLoader::isPSID());
 	
 	// todo: the same kind of impl could be used for .sid files that contain .mus data.. (see respective flag)
 	if (!loadComputeSidplayerData(input_file_buffer, in_buf_size)) {
@@ -668,24 +670,24 @@ uint32_t SidFileLoader::load(uint8_t *input_file_buffer, uint32_t in_buf_size, c
 	memResetKernelROM((uint8_t *)kernal_ROM);
 	
 	setRsidMode((input_file_buffer[0x00] != 0x50) ? 1 : 0);
-	memResetRAM(envIsPSID());	// dummy env that still may be overridden by hard RESET used for BASIC progs
+	memResetRAM(FileLoader::isPSID());	// dummy env that still may be overridden by hard RESET used for BASIC progs
 
 	_sid_version= input_file_buffer[0x05];
 			
 	uint16_t flags= (_sid_version > 1) ? (((uint16_t)input_file_buffer[0x77]) | (((uint16_t)input_file_buffer[0x77])<<8)) : 0x0;
 			
-	_basic_prog= (envIsRSID() && (flags & 0x2));	// a C64 BASIC program needs to be started..
+	_basic_prog= (FileLoader::isRSID() && (flags & 0x2));	// a C64 BASIC program needs to be started..
 
 	if (_basic_prog) {
 		// only  needed for BASIC progs
 		memResetBasicROM((uint8_t *)basic_ROM);
 		
 		if (basic_ROM && kernal_ROM) {
-			Core::resetC64();
+			Core::callKernalROMReset();
 		}
 	}
 	
-	if (envIsRSID()) memResetCharROM((uint8_t *)char_ROM);
+	if (FileLoader::isRSID()) memResetCharROM((uint8_t *)char_ROM);
 
 	_compatibility= ( (_sid_version & 0x2) &&  ((flags & 0x2) == 0));	
 	uint8_t ntsc_mode= (_sid_version >= 2) && (flags & 0x8); // NTSC bit

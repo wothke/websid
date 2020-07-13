@@ -2,11 +2,21 @@
 * This file contains everything to do with the emulation of the SID chip's filter.
 *
 * Credits:
-*  - The main filter implementation is based on Hermit's work (this impl still seems to be flawed.. e.g. see voice 1 in 
-*    Giana_Sisters.sid). This impl is certainly an improvement as compared to the original filter impl from TinySid
+*  - The main filter implementation is based on Hermit's work (this impl still
+*    seems to be flawed.. e.g. see voice 1 in Giana_Sisters.sid). This impl is
+*    certainly an improvement as compared to the original filter impl from TinySid
 *    but it is likely THE most important root cause of remaining output quality issues.
-*  - the "external filter" is based on the analysis of the resid team
+*  - the "external filter" is based on the analysis by the resid team
 * 
+* Known limitation: In the current implementation the filter is fed with the output 
+* sample rate (which may be 22x slower than the clock speed actually used by the SID), 
+* i.e. higher frequency changes are totally ignored - which may lead to Moiré-effects 
+* and it may distort what the filter would correctly be doing (see fast changing 
+* waveforms like "noise" or certain combined-waveforms). However given the fact that 
+* certain users already complain that the existing implementation is "too slow" (on
+* their old smartphone or iPad) the quality-tradeoff seems to be preferable at this
+* point.
+*
 * WebSid (c) 2019 Jürgen Wothke
 * version 0.93
 *
@@ -14,11 +24,14 @@
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
 
-// note: playback of D418 digi samples may radically change the "volume" that the filter uses to calculate one
-// complete sample (e.g. for a 22-CPU-cycle interval). Especially when this volume-change occurs towards the very end of the
-// interval the used volume may be very incorrect - as compared to the average volume that corresponds to the complete interval.
-// However for practical purposes the use of a "more realistic" average does not seem to have any noticable effect.. so
-// there is no point in making the emulation more expensive and I again removed the respective experimental impl.
+// note: playback of D418 digi samples may radically change the "volume" that the
+// filter uses to calculate one complete sample (e.g. for a 22-CPU-cycle interval).
+// Especially when this volume-change occurs towards the very end of the interval
+// the used volume may be very incorrect - as compared to the average volume that
+// corresponds to the complete interval.
+// However for practical purposes the use of a "more realistic" average does not
+// seem to have any noticable effect.. so there is no point in making the emulation
+// more expensive and I again removed the respective experimental impl.
 
 #include "filter.h"
 
@@ -27,17 +40,14 @@
 #include <math.h>
 #include <stdlib.h>
 
-#define OUTPUT_SCALEDOWN (0x6*0xf)	// hand tuned with "424", etc (6581 specific songs are
-									// critical here since their signal is not symetrically distributed around 0)
+// hand tuned with "424", etc (6581 specific songs are
+// critical here since their signal is not symetrically distributed around 0)
+#define OUTPUT_SCALEDOWN (0x6*0xf)	
 #define SCOPE_SCALE (0xb*0xf)	// trial & error: to avoid (most) overflows
 
 const double SCOPE_SCALEDOWN=  ((double)0xf)/SCOPE_SCALE;
 const double FILTERED_SCOPE_SCALEDOWN=  ((double)0xf*4.0)/SCOPE_SCALE;
 
-extern "C" {
-#include "env.h"
-#include "cpu.h"
-}
 #include "sid.h"
 
 // switch to completely disable use of the filter
