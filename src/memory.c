@@ -1,10 +1,12 @@
 /*
 * This contains everything to do with the emulation of memory access.
 * 
+* Note: Optionally, original ROM images (kernal, basic, char) can be 
+* externally supplied to support those few songs that actually depend
+* on them.
+*
 * WebSid (c) 2019 Jürgen Wothke
 * version 0.93
-* 
-* known limitation: BASIC-ROM specific handling not implemented...
 */
 
 #include <string.h>
@@ -12,7 +14,6 @@
 #include <emscripten.h>
 
 #include "memory.h"
-#include "env.h"
 
 
 // memory access interfaces provided by other components
@@ -66,34 +67,47 @@ static void setMemBank(uint8_t b) {
 	_memory[0x0001]= b;
 }
 
-void memSetDefaultBanksPSID(uint8_t is_rsid, uint16_t init_addr, uint16_t load_end_addr) {
-	uint8_t mem_bank_setting= 0x37;	// default memory config: basic ROM, IO area & kernal ROM visible
+void memSetDefaultBanksPSID(uint8_t is_rsid, uint16_t init_addr, 
+							uint16_t load_end_addr) {
+								
+	// default memory config: basic ROM, IO area & kernal ROM visible
+	uint8_t mem_bank_setting= 0x37;
+	
 	if (!is_rsid) {
-		// problem: some PSID init routines want to initialize registers in the IO area while others
-		// actually expect to use the RAM in that area.. none of them setup the memory banks accordingly :(
+		// problem: some PSID init routines want to initialize
+		// registers in the IO area while others actually expect
+		// to use the RAM in that area.. none of them setup the
+		// memory banks accordingly :(
 
 		if ((init_addr >= 0xd000) && (init_addr < 0xe000)) {
 			mem_bank_setting= 0x34;	// default memory config: all RAM
 			
 		} else if ((init_addr >= 0xe000)) {
-			// PSIDv2 songs like IK_plus.sid, Pandora.sid use the ROM below the kernal *without* setting 0x0001
+			// PSIDv2 songs like IK_plus.sid, Pandora.sid use
+			// the ROM below the kernal *without* setting 0x0001
 			// so obviously here we must use a default like this:
-			mem_bank_setting= 0x35;	// default memory config: IO area visible, RAM $a000-b000 + $e000-$ffff
-
+			
+			// default memory config: IO area visible, RAM $a000-b000 + $e000-$ffff
+			mem_bank_setting= 0x35;
+			
 		} else if (load_end_addr >= 0xa000) {
 			mem_bank_setting= 0x36;
 		} else {
-			// normally the kernal ROM should be visible: e.g. A-Maz-Ing.sid uses kernal ROM routines & vectors 
+			// normally the kernal ROM should be visible: e.g. 
+			// A-Maz-Ing.sid uses kernal ROM routines & vectors 
 			// without setting $01!
-			mem_bank_setting= 0x37;	// default memory config: basic ROM, IO area & kernal ROM visible			
+			
+			// default memory config: basic ROM, IO area & kernal ROM visible			
+			mem_bank_setting= 0x37;
 		}
 	}
 	setMemBank(mem_bank_setting);
 }
 
 void memResetBanksPSID(uint16_t play_addr) {
-	// some PSID actually switch the ROM back on eventhough their code is located there! (e.g. 
-	// Ramparts.sid - the respective .sid even claims to be "C64 compatible" - what a joke) 
+	// some PSID actually switch the ROM back on eventhough their
+	// code is located there! (e.g. Ramparts.sid - the respective 
+	// .sid even claims to be "C64 compatible" - what a joke) 
 	
 	if ((play_addr >= 0xd000) && (play_addr < 0xe000)) {
 		setMemBank(0x34);
@@ -138,7 +152,8 @@ static uint8_t isIoAreaVisible() {
 }
 
 uint8_t memReadIO(uint16_t addr) {
-	// mirrored regions not implemented for reads.. nobody seems to use this (unlike write access to SID)
+	// mirrored regions not implemented for reads.. nobody
+	// seems to use this (unlike write access to SID)
 	return _io_area[addr-0xd000];
 }
 
@@ -153,11 +168,11 @@ void memWriteRAM(uint16_t addr, uint8_t value) {
 	 _memory[addr]= value;
 }
 
-void memCopyToRAM(uint8_t *src, uint16_t destAddr, uint32_t len) {
-	memcpy(&_memory[destAddr], src, len);		
+void memCopyToRAM(uint8_t *src, uint16_t dest_addr, uint32_t len) {
+	memcpy(&_memory[dest_addr], src, len);		
 }
-void memCopyFromRAM(uint8_t *dest, uint16_t srcAddr, uint32_t len) {
-	memcpy(dest, &_memory[srcAddr], len);
+void memCopyFromRAM(uint8_t *dest, uint16_t src_addr, uint32_t len) {
+	memcpy(dest, &_memory[src_addr], len);
 }
 
 uint8_t memGet(uint16_t addr)
@@ -169,14 +184,19 @@ uint8_t memGet(uint16_t addr)
 		if (isIoAreaVisible()) {		
 			if ((addr >= 0xd000) && (addr < 0xd400)) {
 				return vicReadMem(addr);
-			} else if (((addr >= 0xd400) && (addr < 0xd800)) || ((addr >= 0xde00) && (addr < 0xdf00))) {
+				
+			} else if (((addr >= 0xd400) && (addr < 0xd800)) || 
+						((addr >= 0xde00) && (addr < 0xdf00))) {
 				return sidReadMem(addr);
+				
 			} else if ((addr >= 0xdc00) && (addr < 0xde00)) {
 				return ciaReadMem(addr);
 			}
 			return memReadIO(addr);
+			
 		} else if(isCharRomVisible()) {
 			return _char_rom[addr - 0xd000];
+			
 		} else {
 			// normal RAM access
 			return  _memory[addr];
@@ -184,6 +204,7 @@ uint8_t memGet(uint16_t addr)
 	} else if ((addr >= 0xa000) && (addr < 0xc000)) {	// handle basic ROM
 		if (isBasicRomVisible()) {
 			return _basic_rom[addr - 0xa000];
+			
 		} else {
 			// normal RAM access
 			return  _memory[addr];
@@ -191,6 +212,7 @@ uint8_t memGet(uint16_t addr)
 	} else {											// handle kernal ROM
 		if (isKernalRomVisible()) {
 			return _kernal_rom[addr - 0xe000];
+			
 		} else {
 			// normal RAM access
 			return  _memory[addr];
@@ -199,20 +221,26 @@ uint8_t memGet(uint16_t addr)
 }
 
 void memSet(uint16_t addr, uint8_t value) {
-	// normally all writes to IO areas should "write through" to RAM, 
-	// however PSID garbage does not always seem to tolerate that (see Fighting_Soccer)
+	// normally all writes to IO areas should "write
+	// through" to RAM, however PSID garbage does not
+	// always seem to tolerate that (see Fighting_Soccer)
 
 	if ((addr >= 0xd000) && (addr < 0xe000)) {	// handle I/O area 
 		if (isIoAreaVisible()) {
 			if ((addr >= 0xd000) && (addr < 0xd400)) {			// vic stuff
 				vicWriteMem(addr, value);
 				return;
-			} else if (((addr >= 0xd400) && (addr < 0xd800)) || ((addr >= 0xde00) && (addr < 0xdf00))) {	// SID stuff			
+				
+			} else if (((addr >= 0xd400) && (addr < 0xd800)) || 
+						((addr >= 0xde00) && (addr < 0xdf00))) {	// SID stuff			
 				sidWriteMem(addr, value);
 				return;
+				
 			} else if ((addr >= 0xdc00) && (addr < 0xde00)) {			// CIA timers
 				ciaWriteMem(addr, value);
-				_memory[addr]=value;			// make sure at least timer latches can be retrieved from RAM..
+				
+				// make sure at least timer latches can be retrieved from RAM..
+				_memory[addr]=value;	
 				return;
 			}
 			  
@@ -222,10 +250,10 @@ void memSet(uint16_t addr, uint8_t value) {
 			_memory[addr]=value;
 		}
 	} else {
-		// normal RAM or
-		// kernal ROM (even if the ROM is visible, writes always go to the RAM)
-		// example: Vikings.sid copied player data to BASIC ROM area while BASIC ROM
-		// is turned on..
+		// normal RAM or kernal ROM (even if the ROM is visible, 
+		// writes always go to the RAM) example: Vikings.sid copied 
+		// player data to BASIC ROM area while BASIC ROM is turned on..
+		
 		_memory[addr]=value;
 	}
 }
@@ -275,7 +303,7 @@ const static uint8_t _driverPSID[33] = {	// see sidplayer.c: driver_size
 void memInitTest() {
 
 	// environment needed for Wolfgang Lorenz's test suite
-    memset(&_kernal_rom[0], 0x00, KERNAL_SIZE);				// BRK by default 
+    memset(&_kernal_rom[0], 0x00, KERNAL_SIZE);					// BRK by default 
     memcpy(&_kernal_rom[0x1f48], _irq_handler_test_FF48, 19);	// $ff48 irq routine
 	
 	memset(&_kernal_rom[0x0a31], 0xea, 0x4d);				// $ea31 fill some NOPs
@@ -337,8 +365,9 @@ void memResetKernelROM(uint8_t *rom) {
 		_kernal_rom[0x039a]= 0x60;	// abort "BASIC start up messages" so as not to enter BASIC idle-loop 
 		
 	} else {
-		// we dont have the complete rom but in order to ensure consistent stack handling (regardless of
-		// which vector the sid-program is using) we provide dummy versions of the respective standard 
+		// we dont have the complete rom but in order to ensure consistent
+		// stack handling (regardless of which vector the sid-program is
+		// using) we provide dummy versions of the respective standard
 		// IRQ/NMI routines..
 		
 		// use RTS as default ROM content: some songs actually try to call stuff, e.g. mountain march.sid, 
@@ -388,28 +417,27 @@ void memSetupBASIC(uint16_t len) {
 	memWriteRAM(0x002b, memReadRAM(0x007a)+1);	// Pointer to beginning of BASIC area - Default: $0801
 	memWriteRAM(0x002c, memReadRAM(0x007b));
 	
-	// note: some BASIC songs use the TI variable.. which is automatically updated via the RASTER IRQ
-	// but some songs are REALLY slow before they play anything...
+	// note: some BASIC songs use the TI variable.. which is automatically updated via
+	// the RASTER IRQ but some songs are REALLY slow before they play anything...
 }
 
-uint16_t memPsidMain(uint16_t play_addr) {
+uint16_t memPsidMain(uint16_t free_space, uint16_t play_addr) {
 	memResetBanksPSID(play_addr);
 	uint8_t bank= memReadRAM(0x1); // test-case: Madonna_Mix.sid
 	
-	uint16_t free= envGetFreeSpace();
-	if (!free) {					
+	if (!free_space) {					
 		EM_ASM_({ console.log("FATAL ERROR: no free memory for driver");});
 		return 0;
 	} else {
-	    memcpy(&_memory[free], _driverPSID, 33);
+	    memcpy(&_memory[free_space], _driverPSID, 33);
 
 		// set JMP addr for endless loop
-		_memory[free+1]= free & 0xff;	
-		_memory[free+2]= free >> 8;
+		_memory[free_space+1]= free_space & 0xff;	
+		_memory[free_space+2]= free_space >> 8;
 
 		if (play_addr) {
 			// register IRQ handler
-			uint16_t handler= free +3;
+			uint16_t handler= free_space +3;
 			uint16_t handler314= handler +5;	// skip initial register php sequence already part of the default handler
 						
 			_memory[0x0314]= handler314 & 0xff;
@@ -419,48 +447,47 @@ uint16_t memPsidMain(uint16_t play_addr) {
 			_memory[0xFFFF]= handler >> 8;
 			
 			// patch-in the bank setting
-			_memory[free+12]= bank;
+			_memory[free_space+12]= bank;
 
 			// patch-in the playAddress
-			_memory[free+16]= play_addr & 0xff;
-			_memory[free+17]= play_addr >> 8;			
+			_memory[free_space+16]= play_addr & 0xff;
+			_memory[free_space+17]= play_addr >> 8;			
 		} else {
 			// just use the endless loop for main
 		}
-		return free;
+		return free_space;
 	}		
 }
 
-void memRsidInit(uint16_t *init_addr, uint8_t actual_subsong, uint8_t basic_mode) {
+void memRsidInit(uint16_t free_space, uint16_t *init_addr, uint8_t actual_subsong, uint8_t basic_mode) {
 	if (basic_mode) {
 		memWriteRAM(0x030c, actual_subsong);
 	} else {
-		memRsidMain(init_addr);
+		memRsidMain(free_space, init_addr);
 	}
 }
 
-void memRsidMain(uint16_t *init_addr) {
-	// For RSIDs that just RTS from their INIT (relying just on the
-	// IRQ/NMI they have started) there should better be something to return to..
+void memRsidMain(uint16_t free_space, uint16_t *init_addr) {
+	// For RSIDs that just RTS from their INIT (relying just on the IRQ/NMI
+	// they have started) there should better be something to return to..
 	
-	uint16_t free= envGetFreeSpace();
-	if (!free) {					
+	if (!free_space) {					
 		return;	// no free space anywhere.. that shit better not RTS!
 	} else {
-		uint16_t loopAddr= free+3;
+		uint16_t loopAddr= free_space+3;
 		
-		_memory[free]= 0x20;	// JSR
-		_memory[free+1]= (*init_addr) & 0xff;
-		_memory[free+2]= (*init_addr) >> 8;
-		_memory[free+3]= 0x4c;	// JMP
-		_memory[free+4]= loopAddr & 0xff;
-		_memory[free+5]= loopAddr >> 8;
+		_memory[free_space]= 0x20;	// JSR
+		_memory[free_space+1]= (*init_addr) & 0xff;
+		_memory[free_space+2]= (*init_addr) >> 8;
+		_memory[free_space+3]= 0x4c;	// JMP
+		_memory[free_space+4]= loopAddr & 0xff;
+		_memory[free_space+5]= loopAddr >> 8;
 		
-		(*init_addr)= free;
+		(*init_addr)= free_space;
 	}
 }
 
-void memResetRAM(uint8_t is_psid) {
+void memResetRAM(uint8_t is_ntsc, uint8_t is_psid) {
     memset(&_memory[0], 0x0, MEMORY_SIZE);
 
 	_memory[0x0314]= 0x31;		// standard IRQ vector
@@ -480,10 +507,11 @@ void memResetRAM(uint8_t is_psid) {
 	// seems some idiot RSIDs also benefit from this. test-case: Vicious_SID_2-Escos.sid
 		memcpy(&_memory[0xe000], &_kernal_rom[0], 0x2000);
 	}
-	// see "The SID file environment" (https://www.hvsc.c64.org/download/C64Music/DOCUMENTS/SID_file_format.txt)
-	// though this alone might be rather useless without the added timer tweaks mentioned in that spec?
-	// (the MUS player is actually checking this - but also setting it)
-	_memory[0x02a6]= (!envIsNTSC()) & 0x1;	
+	// see "The SID file environment" though this alone might be rather useless 
+	// without the added timer tweaks mentioned in that spec? (the MUS player is 
+	// actually checking this - but also setting it)
+	// (https://www.hvsc.c64.org/download/C64Music/DOCUMENTS/SID_file_format.txt)
+	_memory[0x02a6]= (!is_ntsc) & 0x1;	
 }
 void memResetIO() {
     memset(&_io_area[0], 0x0, IO_AREA_SIZE);

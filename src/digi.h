@@ -2,7 +2,7 @@
 * Poor man's emulation of the SID's digi sample playback features.
 *
 * WebSid (c) 2019 Jürgen Wothke
-* version 0.93
+* version 0.94
 *
 * Terms of Use: This software is licensed under a CC BY-NC-SA 
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
@@ -46,8 +46,7 @@ protected:
 	DigiDetector(class SID *sid);
 	
 	// setup
-	void reset(uint8_t compatibility, uint8_t is_6581);
-	void resetModel(uint8_t is_6581);
+	void reset(uint32_t clock_rate, uint8_t is_rsid, uint8_t compatibility);
 	void resetCount();
 
 	// result accessors
@@ -72,7 +71,6 @@ protected:
 	const char * getTypeDesc();
 	uint16_t getRate();
 private:
-	// what a fucking joke language to have all those impl details in the interface
 	void recordSample(uint8_t sample, uint8_t voice);
 	uint8_t assertSameSource(uint8_t voice_plus);
 	
@@ -95,36 +93,38 @@ private:
 
 private:
 	SID *_sid;
-	uint16_t _baseAddr;
+	uint16_t _base_addr;
 
-	uint8_t _digi_enabled;	// for manual muting
+	uint8_t _digi_enabled;	// for manual muting	
+	int8_t _digi_source;	// lo-nibble: voice +1
+	uint16_t _digi_count;
 	
-	int8_t _digiSource;	// lo-nibble: voice +1 
-	
-	uint16_t _digiCount;
-	uint8_t _isC64compatible;
+	// redundant environment state
+	uint8_t _is_rsid;
+	uint8_t _compatible;
+	uint8_t _clock_rate;
 
 	// diagnostic information for GUI use
-	DigiType _usedDigiType;
+	DigiType _used_digi_type;
 
 	// last detected
-	int32_t _currentDigiSample;
-	uint8_t _currentDigiSrc;
+	int32_t _current_digi_sample;
+	uint8_t _current_digi_src;
 
 	// FM: tracked timing state
 	uint8_t _fm_count;
-	FreqDetectState _freqDetectState[3];
-	uint32_t _freqDetectTimestamp[3];
-	uint8_t _freqDetectDelayedSample[3];
+	FreqDetectState _freq_detect_state[3];
+	uint32_t _freq_detect_ts[3];
+	uint8_t _freq_detect_delayed_sample[3];
 	
 	// PWM: tracked timing state
-	PulseDetectState _pulseDetectState[3];
-	uint32_t _pulseDetectTimestamp[3];
-	uint8_t _pulseDetectDelayedSample[3];
-	uint8_t _pulseDetectMode[3];	// 2= Pulse width LO/ 3= Pulse width HI
+	PulseDetectState _pulse_detect_state[3];
+	uint32_t _pulse_detect_ts[3];
+	uint8_t _pulse_detect_delayed_sample[3];
+	uint8_t _pulse_detect_mode[3];	// 2= Pulse width LO/ 3= Pulse width HI
 	
 	// swallow's PWM
-	uint16_t _swallowPWM[3];
+	uint16_t _swallow_pwm[3];
 	
 	// nmi d418 (hack)
 	uint8_t _use_non_nmi_D418;

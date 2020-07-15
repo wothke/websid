@@ -13,6 +13,6 @@
 
 #include "base.h"
 
-void hackIfNeeded(uint16_t *initAddr);	
+void hackIfNeeded(uint16_t init_addr);	
 
 #endif

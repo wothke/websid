@@ -25,6 +25,7 @@
 #include "core.h"
 
 extern "C" {
+#include "system.h"
 #include "memory.h"
 #include "cpu.h"
 #include "vic.h"
@@ -35,27 +36,25 @@ extern "C" {
 
 #include <emscripten.h>
 
-// if PSID 'init' subroutine takes longer than 4 secs then something
-// is wrong (mb in endless loop) test case: PSID "ALiH" type players
-// (e.g. Simulcra.sid) use more than 2M cycles in their INIT
-
-#define CYCLELIMIT 4000000
-
+//#define TIMING_TRACE
 
 // the clocks used in the emulation do not usually match the used audio
 // output sample rate and fractional overflows are handled here:
 static double _sample_cycles;
 
+
 static void resetDefaults(uint32_t sample_rate, uint8_t is_rsid, 
-							uint8_t ntsc_mode, uint8_t compatibility) {
+							uint8_t is_ntsc, uint8_t compatibility) {
+	sysReset();
 	cpuInit();
 	
     memResetIO();
 
-	ciaReset(is_rsid);
-	vicReset(is_rsid, ntsc_mode);
+	ciaReset(is_rsid, is_ntsc);
+	vicReset(is_rsid, is_ntsc);
 	
-	SID::resetAll(sample_rate, compatibility, 1);
+	uint32_t clock_rate= sysGetClockRate(is_ntsc);
+	SID::resetAll(sample_rate, clock_rate, is_rsid, compatibility);
 	
 	_sample_cycles= 0;
 }
@@ -76,23 +75,12 @@ void Core::rsidRunTest() {
 	
 	// use same sequence as in runEmulation (just without generating sample output)
 	while(test_running) {
-		// VIC always uses the 1st phase of each ϕ2 clock cycle (for bus access) so it
-		// should be clocked first (after all it is where the system clock comes from..)
-		vicClock();		
-		ciaClock();
-		SID::clockAll();
-		
-		cpuClock();	// invalid "main" should just keep burning cycles one-by-one
-		uint8_t valid_pc= cpuIsValidPcPSID();
-		
-		if (!valid_pc ) { 
+		if(!sysClockTest()) {
 			test_running= 0;
-		}	
-		cpuClockSystem();
+		}		
 	}
 }
 #endif
-
 
 void copyMonoSignal(int16_t *synth_buffer, uint16_t samples_per_call) {
 	for (int i = 0; i<samples_per_call; i++) {
@@ -101,19 +89,12 @@ void copyMonoSignal(int16_t *synth_buffer, uint16_t samples_per_call) {
 }
 
 // For some reason "inline" does not seem to reliably work in the 
-// EMSCRIPTEN context and the below "defines" serve the same purpose 
+// EMSCRIPTEN context and the below "define" serve the same purpose 
 // (avoid additional subroutine nesting just in case).
 
 // clocking used for "normal" songs". note: for a slow garbage song 
-// like Baroque_Music_64_BASIC the isAudible() check brings down 
+// like Baroque_Music_64_BASIC the sysClockOpt()/SYNTH_NORMAL  bring down 
 // the "silence detection" from 33 sec to 19 secs
-
-#define CLOCK_OPTIMIZED() \
-	vicClock(); \
-	ciaClock(); \
-	if (SID::isAudible()) { SID::clockAll(); }; \
-	cpuClock(); \
-	cpuClockSystem()
 
 #define SYNTH_NORMAL(synth_buffer, synth_trace_bufs, scale, i) \
 	if (SID::isAudible()) { \
@@ -121,16 +102,8 @@ void copyMonoSignal(int16_t *synth_buffer, uint16_t samples_per_call) {
 	} else { \
 		synth_buffer[(i<<1)]= 0; \
 	}
-
-#define CLOCK_NORMAL() \
-	vicClock(); \
-	ciaClock(); \
-	SID::clockAll(); \
-	cpuClock();	 \
-	cpuClockSystem()
-
 	
-void runEmulation(uint8_t is_single_sid, int16_t *synth_buffer, 
+void runEmulation(uint8_t is_simple_sid_mode, int16_t *synth_buffer, 
 					int16_t **synth_trace_bufs, uint16_t samples_per_call) {
 						
 	double n= SID::getCyclesPerSample();
@@ -148,11 +121,14 @@ void runEmulation(uint8_t is_single_sid, int16_t *synth_buffer,
 	// clock-by-clock emulation of the system components; 2 (5) vs 12 (21)
 	
 	double scale= SID::getScale();	// avoid recalc within loop
-	
-	if (is_single_sid) {
+
+#ifdef TIMING_TRACE
+	EM_ASM_({ window['start']= performance.now();});
+#endif	
+	if (is_simple_sid_mode) {
 		for (int i = 0; i<samples_per_call; i++) {
 			while(_sample_cycles < n) {
-				CLOCK_OPTIMIZED();
+				sysClockOpt();
 				_sample_cycles++;
 			}
 			_sample_cycles-= n;	// keep overflow
@@ -162,10 +138,9 @@ void runEmulation(uint8_t is_single_sid, int16_t *synth_buffer,
 		copyMonoSignal(synth_buffer, samples_per_call);
 
 	} else {
-//		EM_ASM_({ window['start']= performance.now();});		
 		for (int i = 0; i<samples_per_call; i++) {
 			while(_sample_cycles < n) {
-				CLOCK_NORMAL();
+				sysClock();
 				_sample_cycles++;
 			}
 			_sample_cycles-= n;	// keep overflow
@@ -174,32 +149,32 @@ void runEmulation(uint8_t is_single_sid, int16_t *synth_buffer,
 			// (my slow PC is really at the limit here as it is)
 			SID::synthSampleStripped(synth_buffer, synth_trace_bufs, &scale, i);
 		}
-/*
-		EM_ASM_({ 
-			window['start']= performance.now()-window['start'];
-			if (typeof window['count'] == 'undefined') { window['count']= 0; window['sum']= 0; }
-			
-			window['sum']+= window['start'];
-			window['count']+= 1;
-			
-			if (window['count'] == 100) {
-				console.log("t: "+window['sum']/100);
-				 window['count']= 0; 
-				 window['sum']= 0;
-			}			
-		});
-*/
 	}
+#ifdef TIMING_TRACE
+	EM_ASM_({ 
+		window['start']= performance.now()-window['start'];
+		if (typeof window['count'] == 'undefined') { window['count']= 0; window['sum']= 0; }
+		
+		window['sum']+= window['start'];
+		window['count']+= 1;
+		
+		if (window['count'] == 1000) {
+			console.log("t: "+window['sum']/1000);
+			 window['count']= 0; 
+			 window['sum']= 0;
+		}			
+	});
+#endif
 }
 
-uint8_t Core::runOneFrame(uint8_t is_single_sid, uint8_t speed, int16_t *synth_buffer, 
+uint8_t Core::runOneFrame(uint8_t is_simple_sid_mode, uint8_t speed, int16_t *synth_buffer, 
 							int16_t **synth_trace_bufs, uint16_t samples_per_call) {
 								
 	SID::resetGlobalStatistics();
 
 	ciaUpdateTOD(speed); // hack: TOD is rarely used so there is no point to do it more precisely
 	
-	runEmulation(is_single_sid, synth_buffer, synth_trace_bufs, samples_per_call);
+	runEmulation(is_simple_sid_mode, synth_buffer, synth_trace_bufs, samples_per_call);
 	
 	return 0;
 }
@@ -216,17 +191,7 @@ void Core::loadSongBinary(uint8_t *src, uint16_t dest_addr, uint16_t len, uint8_
 
 uint8_t runSubroutineTilEnd() {
 	while (cpuIsValidPcPSID()) {
-		cpuClock();
-		
-		if (cpuCycles() >= CYCLELIMIT ) {
-			EM_ASM_({ console.log('ERROR: PSID INIT hangs');});	// less mem than inclusion of fprintf
-			return 0;
-		}
-		// this is probably overkill for PSID crap..
-		vicClock(); 
-		ciaClock(); 
-		SID::clockAll();
-		cpuClockSystem();
+		if (!sysClockTimeout()) return 0;
 	}
 	return 1;
 }
@@ -238,10 +203,12 @@ void Core::callKernalROMReset() {
 		
 	resetDefaults(44100, 1, 0, 1);	// dummy settings good enough for RESET
 
+	sysReset();
+	
 	// note: it might be a good idea to strip down the standard ROM impl 
 	// which unnecessarily wastes many cycles for useless RAM tests, etc
 	uint16_t rom_routine= 0xFCE2;	
-	cpuReset(rom_routine, 0);
+	cpuSetProgramCounter(rom_routine, 0);
 	
 	runSubroutineTilEnd();
 	
@@ -253,11 +220,12 @@ void Core::callKernalROMReset() {
 	// always reset before playing a sub-tune.
 }
 
-uint8_t runInitPSID(uint16_t *init_addr, uint8_t actual_subsong) {
+uint8_t runInitPSID(uint16_t init_addr, uint8_t selected_track) {
 	// run the the PSID's "INIT" subroutine separately so that the "bank"
 	// setting can be handled here on the C/C++ side
-	
-	cpuReset((*init_addr), actual_subsong);	// set starting point for emulation	
+
+	sysReset();	
+	cpuSetProgramCounter(init_addr, selected_track);	// set starting point for emulation	
 	
 	cpuIrqFlagPSID(1);	// block IRQ during INIT
 	
@@ -268,32 +236,34 @@ uint8_t runInitPSID(uint16_t *init_addr, uint8_t actual_subsong) {
 	return 1;
 }
 
-void Core::startupSong(uint32_t sample_rate, uint8_t is_rsid, uint8_t is_timer_driven_psid, 
-						uint8_t ntsc_mode, uint8_t compatibility, uint8_t basic_mode, 
-						uint16_t *init_addr, uint16_t load_end_addr, 
-						uint16_t play_addr, uint8_t actual_subsong) {
+void Core::startupTune(uint32_t sample_rate, uint8_t selected_track,
+						uint8_t is_rsid, uint8_t is_timer_driven_psid, uint8_t is_ntsc, 
+						uint8_t compatibility, uint8_t basic_mode, 
+						uint16_t free_space, uint16_t *init_addr, uint16_t load_end_addr, 
+						uint16_t play_addr) {
 	
-	resetDefaults(sample_rate, is_rsid, ntsc_mode, compatibility);
+	resetDefaults(sample_rate, is_rsid, is_ntsc, compatibility);
 	
 	memRestoreSnapshot();	// previous sub-tune run may have corrupted the RAM
-
-	hackIfNeeded(init_addr);
+	hackIfNeeded((*init_addr));
 	
 	memSetDefaultBanksPSID(is_rsid, (*init_addr), load_end_addr);	// PSID crap
-		
+				
 	if (!is_rsid) {
 		
-		if (!runInitPSID(init_addr, actual_subsong)) return;
+		if (!runInitPSID((*init_addr), selected_track)) return;
 		
-		uint16_t main= memPsidMain(play_addr);		
-		cpuResetToPSID(main);	// just install an endless loop for main
+		uint16_t main= memPsidMain(free_space, play_addr);		
+		cpuSetProgramCounterPSID(main);	// just install an endless loop for main
 			
 		ciaSetDefaultsPSID(is_timer_driven_psid);
 		vicSetDefaultsPSID(is_timer_driven_psid);
 		
 	} else {
-		memRsidInit(init_addr, actual_subsong, basic_mode);
-		cpuReset((*init_addr), actual_subsong);
+		memRsidInit(free_space, init_addr, selected_track, basic_mode);
+		
+		sysReset();
+		cpuSetProgramCounter((*init_addr), selected_track);
 	}
 }
 

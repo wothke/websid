@@ -12,16 +12,19 @@
 *
 * Known limitations: 
 *
-*  - effects of the digital-to-analog conversion (e.g. respective 6581 flaws) are NOT handled
+*  - effects of the digital-to-analog conversion (e.g. respective 6581 flaws)
+*    are NOT handled
 *
 * Credits:
 * 
-*  - TinySid (c) 1999-2012 T. Hinrichs, R. Sinsch (with additional fixes from Markus Gritsch) 
-*             originally provided the starting point - though very little of that code remains here
+*  - TinySid (c) 1999-2012 T. Hinrichs, R. Sinsch (with additional fixes from
+*             Markus Gritsch) originally provided the starting point - though
+*             very little of that code remains here
 * 
-*  - Hermit's jsSID.js provided a variant of "resid filter implementation", an "anti aliasing" 
-*             for "pulse" and "saw" waveforms, and a rather neat approach to
-*             generate combined waveforms (see http://hermit.sidrip.com/jsSID.html)
+*  - Hermit's jsSID.js provided a variant of "resid filter implementation", an
+*             "anti aliasing" for "pulse" and "saw" waveforms, and a rather
+*             neat approach to generate combined waveforms 
+*             (see http://hermit.sidrip.com/jsSID.html)
 *
 * Links:
 *
@@ -39,8 +42,8 @@
 // todo: run performance tests to check how cycle based oversampling fares as compared to 
 // current once-per-sample approach
 
-// todo: with the added external filter Hermit's antialiasing might no longer make sense and the 
-// respective handling may be the source of high-pitched noise during PWM/FM digis..
+// todo: with the added external filter Hermit's antialiasing might no longer make sense
+// and the respective handling may be the source of high-pitched noise during PWM/FM digis..
 
 #include <string.h>
 #include <stdio.h>
@@ -55,12 +58,10 @@
 extern "C" {
 #include "base.h"
 #include "memory.h"
-#include "cpu.h"		// cpuGetProgramMode(), etc
-#include "env.h"		// envNumberOfSamplesPerCall(), etc
 };
 
 
-/* Get the bit from an uint32_t at a specified position */
+// Get the bit from an uint32_t at a specified position
 static uint8_t getBit(uint32_t val, uint8_t b) { return (uint8_t) ((val >> b) & 1); }
 
 #define SYNC_BITMASK 	0x02		
@@ -73,11 +74,21 @@ static uint8_t getBit(uint32_t val, uint8_t b) { return (uint8_t) ((val >> b) & 
 #define NOISE_BITMASK 	0x80
 
 
-const uint8_t MAX_SID_CHIPS= MAX_SIDS;
+// --------- HW configuration ----------------
+
+static uint16_t	_sid_addr[MAX_SIDS];		// start addr of SID chips (0 means NOT available)
+static uint8_t 	_sid_is_6581[MAX_SIDS];		// models of installed SID chips 
+static uint8_t 	_sid_target_chan[MAX_SIDS];	// output channel for the SID chips 
+static uint8_t 	_sid_2nd_chan_idx;			// stereo sid-files: 1st chip using 2nd channel
+static uint8_t 	_ext_multi_sid;				// use extended multi-sid mode
+
+static struct SIDConfigurator _hw_config;
+
+
 static uint8_t _used_sids= 0;
 static uint8_t _is_audible= 0;
 
-static SID _sids[MAX_SID_CHIPS];	// allocate the maximum
+static SID _sids[MAX_SIDS];	// allocate the maximum
 
 // globally shared by all SIDs
 static double		_cycles_per_sample;	
@@ -211,13 +222,15 @@ static uint8_t getNextVoice(uint8_t voice) {
 }
 
 uint32_t SID::getRingModCounter(uint8_t voice) {
-	// Bob Yannes: "Ring Modulation was accomplished by substituting the accumulator MSB of an oscillator 
-	// in the EXOR function of the triangle waveform generator with the accumulator MSB of the 
-	// previous oscillator. That is why the triangle waveform must be selected to use Ring Modulation."
+	// Bob Yannes: "Ring Modulation was accomplished by substituting
+	// the accumulator MSB of an oscillator in the EXOR function of
+	// the triangle waveform generator with the accumulator MSB of the
+	// previous oscillator. That is why the triangle waveform must be
+	// selected to use Ring Modulation."
 	
 	if (_osc[voice]->wave & RING_BITMASK) {
-		// wtf does he mean? (1) substitute MSB before using it in some EXOR logic OR (2) substitute it 
-		// using EXOR?
+		// wtf does he mean? (1) substitute MSB before using it in some
+		// EXOR logic OR (2) substitute it using EXOR?
 		
 		uint8_t src_voice = getPreviousVoice(voice);  
 //		return (_osc[voice]->counter & 0x7fffff) | (_osc[src_voice]->counter & 0x800000);	// (1)	
@@ -226,7 +239,7 @@ uint32_t SID::getRingModCounter(uint8_t voice) {
 		return _osc[voice]->counter;		
 	}
 }
-void SID::resetEngine(uint32_t sample_rate, uint8_t is_6581) {	
+void SID::resetEngine(uint32_t sample_rate, uint8_t is_6581, uint32_t clock_rate) {	
 	// note: structs are NOT packed and contain additional padding..
 	
 	// reset _sid
@@ -235,7 +248,7 @@ void SID::resetEngine(uint32_t sample_rate, uint8_t is_6581) {
 	resetModel(is_6581);
 	
 	_sample_rate = sample_rate;
-	_cycles_per_sample = ((double)envClockRate()) / sample_rate;	// corresponds to Hermit's clk_ratio
+	_cycles_per_sample = ((double)clock_rate) / sample_rate;	// corresponds to Hermit's clk_ratio
 
 	for (uint8_t i=0; i<3; i++) {
 //		memset((uint8_t*)&_sid->voices[i], 0, sizeof(struct SidState::Voice));	// already included in _sid		
@@ -265,29 +278,31 @@ void SID::resetEngine(uint32_t sample_rate, uint8_t is_6581) {
 // ------------------------- wave form generation ----------------------------
 
 void SID::syncOscillator(uint8_t voice) {
-	// Hard Sync is accomplished by clearing the accumulator of an Oscillator  
+	// Hard Sync is accomplished by clearing the accumulator of an Oscillator
 	// based on the accumulator MSB of the previous oscillator.
 
-	// tests for hard sync:  Ben Daglish's Wilderness music from The Last Ninja  
-	// (https://www.youtube.com/watch?v=AbBENI8sHFE) .. seems to be used on voice 2 early on..
-	// for some reason the instrument that starts on voice 1 at about 45 secs (come combined waveform?)
-	// does not sound as crisp as it should.. (neither in Hermit's player)
+	// tests for hard sync:  Ben Daglish's Wilderness music from The Last Ninja
+	// (https://www.youtube.com/watch?v=AbBENI8sHFE) .. seems to be used on
+	// voice 2 early on.. for some reason the instrument that starts on voice 1
+	// at about 45 secs (some combined waveform?) does not sound as crisp as it
+	// should.. (neither in Hermit's player)
 		
-	// intro noise in Martin Galway's Roland's Rat Race (https://www.youtube.com/watch?v=Zc91S1lrU1I) music.
+	// intro noise in Martin Galway's Roland's Rat Race
+	// (https://www.youtube.com/watch?v=Zc91S1lrU1I) music.
 	
 	// the below logic is from the "previous oscillator" perspective
 	
 	if (!_osc[voice]->freq_inc_cycle) return;
 	
-	uint8_t msb_rising= _osc[voice]->msb_rising;				// base trigger condition
+	uint8_t msb_rising= _osc[voice]->msb_rising;		// base trigger condition
 	
 	uint8_t dest_voice = getNextVoice(voice);  
 	uint8_t dest_sync= _osc[dest_voice]->wave & SYNC_BITMASK;	// sync requested?
 
-	// exception: when sync source is itself synced in the same cycle then destination 
+	// exception: when sync source is itself synced in the same cycle then destination
 	// is NOT synced (based on analysis performed by reSID team)
 	
-	uint8_t src_sync= _osc[voice]->wave & SYNC_BITMASK;		// for special case handling 
+	uint8_t src_sync= _osc[voice]->wave & SYNC_BITMASK;		// for special case handling
 	uint8_t src_msb_rising= _osc[getPreviousVoice(voice)]->msb_rising;
 
 	if (msb_rising && dest_sync && !(src_sync && src_msb_rising)) {	  
@@ -300,10 +315,12 @@ void SID::clockOscillators() {
 	for (uint8_t voice=0; voice<3; voice++) {
 		_osc[voice]->prev_counter= _osc[voice]->counter;
 		
-		// note: TEST (Bit 3): The TEST bit, when set to one, resets and locks oscillator 1 at zero 
-		// until the TEST bit is cleared. The noise waveform output of oscillator 1 is also 
-		// reset and the pulse waveform output is held at a DC level; test bit has no influence 
-		// on the envelope generator whatsoever!
+		// note: TEST (Bit 3): The TEST bit, when set to one, resets and locks
+		// oscillator 1 at zero until the TEST bit is cleared. The noise waveform
+		// output of oscillator 1 is also reset and the pulse waveform output is
+		// held at a DC level; test bit has no influence on the envelope generator
+		// whatsoever!
+		
 		if (isTestBit(voice)) {
 			_osc[voice]->counter  = 0;
 			_osc[voice]->noisepos = 0;
@@ -317,7 +334,8 @@ void SID::clockOscillators() {
 		_osc[voice]->msb_rising = (_osc[voice]->counter & 0x800000) > (_osc[voice]->prev_counter & 0x800000);
 	}
 	
-	// handle oscillator HARD SYNC (quality wise it isn't worth the trouble to use this correct impl..)
+	// handle oscillator HARD SYNC (quality wise it isn't worth the trouble to
+	// use this correct impl..)
 	for (uint8_t voice=0; voice<3; voice++) {
 		syncOscillator(voice);
 	}	
@@ -329,10 +347,10 @@ double SID::getCyclesPerSample() {
 
 // ------------------------- wave form generation ----------------------------
 
-// Hermit's impl to calculate combined waveforms (check his jsSID-0.9.1-tech_comments in 
-// commented jsSID.js for background info): I did not thoroughly check how well this really 
-// works (it works well enough for Kentilla and Clique_Baby (apparently this one has to sound 
-// as shitty as it does)
+// Hermit's impl to calculate combined waveforms (check his jsSID-0.9.1-tech_comments
+// in commented jsSID.js for background info): I did not thoroughly check how well
+// this really works (it works well enough for Kentilla and Clique_Baby (apparently
+// this one has to sound as shitty as it does)
 
 uint16_t SID::combinedWF(uint8_t channel, double *wfarray, uint16_t index, uint8_t differ6581) { 
 	//on 6581 most combined waveforms are essentially halved 8580-like waves
@@ -340,7 +358,7 @@ uint16_t SID::combinedWF(uint8_t channel, double *wfarray, uint16_t index, uint8
 	if (differ6581 && _sid->is_6581) index &= 0x7ff;
 	/* orig
 	double combiwf = (wfarray[index] + _sid->voices[channel].prev_wav_data) / 2;
-	_sid->voices[channel].prev_wav_data = wfarray[index];	
+	_sid->voices[channel].prev_wav_data = wfarray[index];
 	return (uint16_t)round(combiwf);
 	*/
 	
@@ -372,13 +390,13 @@ uint16_t SID::createSawOutput(uint8_t voice) {	// test-case: Alien.sid, Kawasaki
 
 void SID::calcPulseBase(uint8_t voice, uint32_t *tmp, uint32_t *pw) {
 	// based on Hermit's impl
-	(*pw) = _osc[voice]->pulse;								// 16 bit
-	(*tmp) = _osc[voice]->freq_pulse_base;					// 15 MSB needed
+	(*pw) = _osc[voice]->pulse;						// 16 bit
+	(*tmp) = _osc[voice]->freq_pulse_base;			// 15 MSB needed
 	
 	if ((0 < (*pw)) && ((*pw) < (*tmp))) { (*pw) = (*tmp); }
 	(*tmp) ^= 0xffff;
 	if ((*pw) > (*tmp)) { (*pw) = (*tmp); }
-	(*tmp) = _osc[voice]->counter >> 8;						// 16 MSB needed
+	(*tmp) = _osc[voice]->counter >> 8;				// 16 MSB needed
 }
 
 uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// elementary pulse
@@ -389,11 +407,12 @@ uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// e
 	
 	// Hermit's "anti-aliasing" pulse
 	
-	// note: the smaller the step, the slower the phase shift, e.g. ramp-up/-down rather than
-	// immediate switch (current setting does not cause much of an effect - use "0.1*" to make it obvious )
-	// larger steps cause "sizzling noise"
+	// note: the smaller the step, the slower the phase shift, e.g. ramp-up/-down
+	// rather than immediate switch (current setting does not cause much of an
+	// effect - use "0.1*" to make it obvious ) larger steps cause "sizzling noise"
 		
-	// test-case: Touch_Me.sid - for some reason avoiding the "division by zero" actually breaks this song..
+	// test-case: Touch_Me.sid - for some reason avoiding the "division by zero"
+	// actually breaks this song..
 	
 //	double step= ((double)256.0) / (_osc[voice]->freq_inc_sample / (1<<16));	// Hermit's original shift-impl was prone to division-by-zero
     const double step = _osc[voice]->freq_pulse_step; 	// simple pulse, most often used waveform, make it sound as clean as possible without oversampling
@@ -416,38 +435,28 @@ uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// e
 //	return 0xffff - wfout; // like "plain 1)"
 }
 
-// combined noise-waveform will feed back into noiseval shift-register potentially clearing
-// bits that are used for the "noiseout" (no others.. and not setting!)
+// combined noise-waveform will feed back into noiseval shift-register potentially
+// clearing bits that are used for the "noiseout" (no others.. and not setting!)
 
 static const uint32_t COMBINED_NOISE_MASK = ~((1<<22)|(1<<20)|(1<<16)|(1<<13)|(1<<11)|(1<<7)|(1<<4)|(1<<2));
 
 uint16_t SID::createNoiseOutput(uint8_t voice) {
-	// generate noise waveform (FIXME flaw: "noiseval" shift register is only updated when noise 
-	// is actually used..)
-	
-	// "random values are output through the waveform generator according to the 
+	// "random values are output through the waveform generator according to the
 	// frequency setting" (http://www.ffd2.com/fridge/blahtune/SID.primer)
 	
-	// test-case for calibration: see Hermit's noisewfsweep.sid
-	uint32_t p= _osc[voice]->counter>>20;		//  top 4-bit seem to be about right.. (didn't find specific specs unfortunately..)
+	// known limitations of current impl: 1) "noiseval" shift register is only
+	// updated when noise is actually used  2) instead of generating an average
+	// from the output that should correctly change every clock cycle, only one
+	// output is considered for a one-sample interval (e.g. ~22 cycles)!
+		
+	// use of top 4-bit seems to sound about right: see Hermit's noisewfsweep.sid
+	uint32_t p= _osc[voice]->counter>>20;	
 	if (_osc[voice]->noisepos != p) {
 		_osc[voice]->noisepos = p;
 		
 		// impl consistent with: http://www.sidmusic.org/sid/sidtech5.html
 		// doc here is probably wrong: http://www.oxyron.de/html/registers_sid.html
 		
-		// performance: compared to rand() this impl is about 2x slower! 
-	/*	_osc[voice]->noiseout = 
-				(getBit(_osc[voice]->noiseval,22) << 7) |	// FIXME: the extra back shifts could be eliminated 
-				(getBit(_osc[voice]->noiseval,20) << 6) |
-				(getBit(_osc[voice]->noiseval,16) << 5) |
-				(getBit(_osc[voice]->noiseval,13) << 4) |
-				(getBit(_osc[voice]->noiseval,11) << 3) |
-				(getBit(_osc[voice]->noiseval, 7) << 2) |
-				(getBit(_osc[voice]->noiseval, 4) << 1) |
-				(getBit(_osc[voice]->noiseval, 2) << 0);
-		*/		
-		// same as above but without unnecessary shifting
 		uint32_t * n= &(_osc[voice]->noiseval);
 		_osc[voice]->noiseout = (((*n) >> (22-7) ) & 0x80 ) |
 								(((*n) >> (20-6) ) & 0x40 ) |
@@ -459,8 +468,7 @@ uint16_t SID::createNoiseOutput(uint8_t voice) {
 								(((*n) >> (2) ) & 0x01 );
 
 		_osc[voice]->noiseval = (_osc[voice]->noiseval << 1) |
-				(getBit(_osc[voice]->noiseval,22) ^ getBit(_osc[voice]->noiseval,17));	
-		
+				(getBit(_osc[voice]->noiseval,22) ^ getBit(_osc[voice]->noiseval,17));		
 	}
 	return ((uint16_t)_osc[voice]->noiseout) << 8;
 }
@@ -470,7 +478,7 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 	const uint8_t ctrl= _osc[voice]->wave;
 		
 	if (_sid->voices[voice].not_muted) {
-		int8_t combined= 0;	// flags some specifically handled "combined waveforms" (not all)
+		int8_t combined= 0;	// flags specifically handled "combined waveforms" (not all)
 		
 		// use special handling for certain combined waveforms
 		uint16_t plsout;
@@ -488,9 +496,11 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 				if ((ctrl & TRI_BITMASK) && ++combined)  {
 					if (ctrl & SAW_BITMASK) {	// PULSE & TRIANGLE & SAW	- like in Lenore.sid
 						outv = plsout ? combinedWF(voice, _wave.PulseTriSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
-					} else { // PULSE & TRIANGLE - like in Kentilla, Convincing, Clique_Baby, etc
-						// a good test is Last_Ninja:6 voice 1 at 35secs; here Hermit's original PulseSaw settings seem to
-						// be lacking: the respective sound has none of the crispness nor volume of the original
+					} else { 
+						// PULSE & TRIANGLE - like in Kentilla, Convincing, Clique_Baby, etc
+						// a good test is Last_Ninja:6 voice 1 at 35secs; here Hermit's
+						// original PulseSaw settings seem to be lacking: the respective
+						// sound has none of the crispness nor volume of the original
 						
 						tmp = getRingModCounter(voice); 
 						outv = plsout ? combinedWF(voice, _wave.PulseTri_8580, (tmp ^ (tmp & 0x800000 ? 0xffffff : 0)) >> 11, 0) : 0;	// either on or off						
@@ -499,7 +509,7 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 					outv = plsout ? combinedWF(voice, _wave.PulseSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
 				}
 			}
-		} else if ((ctrl & TRI_BITMASK) && (ctrl & SAW_BITMASK) && ++combined) {		// TRIANGLE & SAW - like in Garden_Party.sid
+		} else if ((ctrl & TRI_BITMASK) && (ctrl & SAW_BITMASK) && ++combined) {	// TRIANGLE & SAW - like in Garden_Party.sid
 			uint32_t tmp = _osc[voice]->counter >> 12;
 			outv = combinedWF(voice, _wave.TriSaw_8580, tmp, 1);	// tmp 12 MSB
 		} 
@@ -508,17 +518,19 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 			if (ctrl & 0x70) {	// combined waveform with noise
 				// test-case: Hollywood_Poker_Pro.sid (also Wizax_demo.sid, Billie_Jean.sid)
 				
-				// The wave-output of the SOASC recording of the above song (at the very beginning) shows a pulse-wave that is 
-				// overlaid with a combined "triangle-noise" waveform (without the below there would be strong noise
-				// that doesn't belong there)
+				// The wave-output of the SOASC recording of the above song (at the very
+				// beginning) shows a pulse-wave that is overlaid with a combined "triangle-
+				// noise" waveform (without the below there would be strong noise that
+				// doesn't belong there)
 				
-				// according to resid team's analysis "waveform bits are and-ed into the shift register via the 
-				// shift register outputs" and thereby the noise zeros-out after a few cycles"
+				// according to resid team's analysis "waveform bits are and-ed into the
+				// shift register via the shift register outputs" and thereby the noise
+				// zeros-out after a few cycles"
 				
-				// (as long as noise is not actually used there does not seem to be a point to
-				// calculate the respective feedback loop.. eventhough other combined waveforms could 
-				// squelch the noise by the same process, requiring a GATE to re-activate it..
-				// have yet to find a song that would use that approach)
+				// (as long as noise is not actually used there does not seem to be a point
+				// to calculate the respective feedback loop.. eventhough other combined
+				// waveforms could squelch the noise by the same process, requiring a GATE
+				// to re-activate it.. have yet to find a song that would use that approach)
 				outv &= createNoiseOutput(voice);
 				
 				uint32_t feedback=	(getBit(outv,15) << 22) |
@@ -535,19 +547,19 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 				outv &= createNoiseOutput(voice);
 			}
 		} else if (!combined) {
-			/* for the rest mix the oscillators with an AND operation as stated in
-				the SID's reference manual - even if this is absolutely wrong. */
+			// for the rest mix the oscillators with an AND operation as stated
+			// in the SID's reference manual - even if this is absolutely wrong
 		
 			if (ctrl & TRI_BITMASK)  outv &= createTriangleOutput(voice);					
 			if (ctrl & SAW_BITMASK)  outv &= createSawOutput(voice);
 			if (ctrl & PULSE_BITMASK) outv &= plsout;
 		}
 		
-		// emulate waveform 00 floating wave-DAC 
-		if (ctrl & 0xf0) {	// TODO: find testcase song where this is relevant.. 
+		// emulate waveform 00 floating wave-DAC
+		if (ctrl & 0xf0) {	// TODO: find testcase song where this is relevant..
 			_sid->voices[voice].prev_wave_form_out= outv;
 		} else {
-			// no waveform set						
+			// no waveform set
 			outv= _sid->voices[voice].prev_wave_form_out;
 		}	
 	} else {
@@ -558,23 +570,45 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 
 // ------------------------- public API ----------------------------
 
+
+struct SIDConfigurator* SID::getHWConfigurator() {
+	// hack: let loader directly manipulate respective state
+	_hw_config.addr= _sid_addr;
+	_hw_config.is_6581= _sid_is_6581;
+	_hw_config.target_chan= _sid_target_chan;
+	_hw_config.second_chan_idx= &_sid_2nd_chan_idx;
+	_hw_config.ext_multi_sid_mode= &_ext_multi_sid;
+	
+	return &_hw_config;
+}
+
+uint8_t SID::isSID6581() {
+	return _sid_is_6581[0];		// only for the 1st chip
+}
+
+uint8_t SID::setSID6581(uint8_t is6581) {
+	// this minimal update should allow to toggle the 
+	// used filter without disrupting playback in progress
+	
+	_sid_is_6581[0]= _sid_is_6581[1]= _sid_is_6581[2]= is6581;
+	SID::setModels(_sid_is_6581);
+	return 0;
+}
+
 // who knows what people might use to wire up the output signals of their
-// multi-SID configurations... it probably depends on the song what might be "good" 
-// settings here.. alternatively I could just let the clipping do its work (without any 
-// rescaling). but for now I'll use Hermit's settings - this will make for a better user 
-// experience in DeepSID when switching players..
+// multi-SID configurations... it probably depends on the song what might be
+// "good" settings here.. alternatively I could just let the clipping do its
+// work (without any rescaling). but for now I'll use Hermit's settings - this
+// will make for a better user experience in DeepSID when switching players..
 
-// FIXME: only designed for even number of SIDs.. if there actually are 3SID (etc) stereo
-// songs then something more sophisticated would be needed...
+// FIXME: only designed for even number of SIDs.. if there actually are 3SID
+// (etc) stereo songs then something more sophisticated would be needed...
 
-static double _vol_map[]= { 1.0f, 0.6f, 0.4f, 0.3f, 0.3f, 0.3f, 0.3f, 0.3f };	
+static double _vol_map[]= { 1.0f, 0.6f, 0.4f, 0.3f, 0.3f, 0.3f, 0.3f, 0.3f };
+static double _vol_scale;
 
 double SID::getScale() {
-	if (envSidVersion() != MULTI_SID_TYPE ) {
-		return _vol_map[SID::getNumberUsedChips()-1] / 0xff;	// 0xff serves to normalize the 8-bit envelope
-	} else {
-		return _vol_map[env2ndOutputChanIdx() ? SID::getNumberUsedChips()>>1 : SID::getNumberUsedChips()-1]	/ 0xff;		
-	}
+	return _vol_scale;
 }
 
 uint16_t SID::getBaseAddr() {
@@ -597,18 +631,19 @@ void SID::resetModel(uint8_t is_6581) {
 		
 		_filter->resetInput8580();
 	}
-	_digi->resetModel(is_6581);
 }
 
-void SID::reset(uint16_t addr, uint32_t sample_rate, uint8_t is_6581, uint8_t compatibility, uint8_t output_channel) {
+void SID::reset(uint16_t addr, uint32_t sample_rate, uint8_t is_6581, uint32_t clock_rate,
+				 uint8_t is_rsid, uint8_t compatibility, uint8_t output_channel) {
+	
 	_addr= addr;
 	_dest_channel= output_channel;
 	
-	resetEngine(sample_rate, is_6581);
+	resetEngine(sample_rate, is_6581, clock_rate);
 	
 	Envelope::resetConfiguration(sample_rate);
 	
-	_digi->reset(compatibility, is_6581);
+	_digi->reset(clock_rate, is_rsid, compatibility);
 }
 
 uint8_t SID::isModel6581() {
@@ -622,17 +657,18 @@ uint8_t SID::peekMem(uint16_t addr) {
 uint8_t SID::readMem(uint16_t addr) {
 	uint16_t offset= addr-_addr;
 	switch (offset) {
-	case 0x1b:									// "oscillator"		
+	case 0x1b:									// "oscillator"
 		return createWaveOutput(2) >> 8;
 		
 	case 0x1c:									// envelope
 		return _env[2]->getOutput();
 	}
 	
-	// reading of "write only" registers returns whatever has been last written to the bus
-	// (register independent) and that value normally would also fade away eventually..
-	// only few songs use this and NONE seem to depend on "fading" to be actually
-	// implemented; testcase: Mysterious_Mountain.sid 
+	// reading of "write only" registers returns whatever has been last
+	// written to the bus (register independent) and that value normally
+	// would also fade away eventually.. only few songs use this and NONE
+	// seem to depend on "fading" to be actually implemented;
+	// testcase: Mysterious_Mountain.sid
 	
 	return _sid->bus_write;
 }
@@ -673,8 +709,7 @@ void SID::poke(uint8_t reg, uint8_t val) {
         case 0x0: { // Set frequency: Low byte
 			_sid->voices[voice].freq = (_sid->voices[voice].freq&0xff00) | val;
 			
-			// convenience:
-			updateFreqCache(voice);
+			updateFreqCache(voice);	// convenience
 			
 			_osc[voice]->freq_inc_cycle= ((uint32_t)_sid->voices[voice].freq);
             break;
@@ -682,8 +717,8 @@ void SID::poke(uint8_t reg, uint8_t val) {
         case 0x1: { // Set frequency: High byte
             _sid->voices[voice].freq = (_sid->voices[voice].freq&0xff) | (val<<8);
 			
-			// convenience:
-			updateFreqCache(voice);
+			updateFreqCache(voice);	// convenience
+			
 			_osc[voice]->freq_inc_cycle= ((uint32_t)_sid->voices[voice].freq);
             break;
         }
@@ -698,8 +733,7 @@ void SID::poke(uint8_t reg, uint8_t val) {
             break;
         }
         case 0x4: {
-	//		_sid->voices[voice].wave = val;
-			_osc[voice]->wave= val; //_sid->voices[voice].wave;
+			_osc[voice]->wave= val;
 			break;
 		}
     }
@@ -718,9 +752,11 @@ void SID::writeMem(uint16_t addr, uint8_t value) {
 	poke(reg, value);
 	memWriteIO(addr, value);
 
-	// some crappy songs like Aliens_Symphony.sid actually use d5xx instead of d4xx for their SID
-	// settings.. i.e. they use mirrored addresses that might actually be used by additional SID chips.
-	// always map to standard address to ease debug output handling, e.g. visualization in DeepSid
+	// some crappy songs like Aliens_Symphony.sid actually use d5xx instead
+	// of d4xx for their SID settings.. i.e. they use mirrored addresses that
+	// might actually be used by additional SID chips. always map to standard
+	// address to ease debug output handling, e.g. visualization in DeepSid
+	
 	if (_used_sids == 1) {
 		addr= 0xd400 | reg;
 		memWriteIO(addr, value);
@@ -735,15 +771,23 @@ void SID::clock() {
 	}
 }
 
-void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offset, double *scale, uint8_t do_clear) {	
-	// just try the cycle based logic to be used in cleaned up emu
-		
+// clipping (filter, multi-SID as well as PSID digi may bring output over the edge)
+#define RENDER_CLIPPED(dest, final_sample) \
+	const int32_t clip_value = 32767; \
+	if ( final_sample < -clip_value ) { \
+		final_sample = -clip_value; \
+	} else if ( final_sample > clip_value ) { \
+		final_sample = clip_value; \
+	} \
+	*(dest)= (int16_t)final_sample
+
+void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offset, double *scale, uint8_t do_clear) {			
 	// generate the two output signals (filtered / non-filtered)
 	int32_t outf= 0, outo= 0;	// outf and outo here end up with the sum of 3 voices..
 	
-	// sim duration of 1 sample (might try higher sampling for better quality - see filter adjustments)
-	
-	
+	// sim duration of 1 sample (might try higher sampling for
+	// better quality - see filter adjustments)
+		
 	if (!_digi->isMahoneyDigi()) {	// use here once rather than create nicer but slower scope output below
 
 		// create output sample based on current SID state
@@ -806,18 +850,12 @@ void SID::synthSample(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offs
 	
 	if (!do_clear) final_sample+= *(dest);
 
-	// clipping (filter, multi-SID as well as PSID digi may bring output over the edge)
-	const int32_t clip_value = 32767;
-	if ( final_sample < -clip_value ) {
-		final_sample = -clip_value;
-	} else if ( final_sample > clip_value ) {
-		final_sample = clip_value;
-	}
-	*(dest)= (int16_t)final_sample;
+	RENDER_CLIPPED(dest, final_sample);
 }
 
-// same as above but without digi & no filter for trace buffers - once faster PCs are
-// more widely in use, then this optimization may be ditched..
+
+// same as above but without digi & no filter for trace buffers - once faster
+// PCs are more widely in use, then this optimization may be ditched..
 void SID::synthSampleStripped(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offset, double *scale, uint8_t do_clear) {	
 	int32_t outf= 0, outo= 0;	// outf and outo here end up with the sum of 3 voices..
 	
@@ -830,10 +868,12 @@ void SID::synthSampleStripped(int16_t *buffer, int16_t **synth_trace_bufs, uint3
 		
 		// trace output (always make it 16-bit)
 		if (synth_trace_bufs) {
-			// performance note: specially for multi-SID (e.g. 8SID) songs use of the filter for trace buffers
-			// has a significant runtime cost (e.g. 8*3= 24 additional filter calculations - per sample - instead of just 1).
-			// switching to display of non-filtered data may make the difference between "still playing" and
-			// "much too slow" -> like on my old machine
+			// performance note: specially for multi-SID (e.g. 8SID) songs use
+			// of the filter for trace buffers has a significant runtime cost
+			// (e.g. 8*3= 24 additional filter calculations - per sample - instead
+			// of just 1). switching to display of non-filtered data may make the
+			// difference between "still playing" and "much too slow" -> like on
+			// my old machine
 			
 			int16_t *voice_trace_buffer= synth_trace_bufs[voice];
 			*(voice_trace_buffer+offset)= (int16_t)(voiceOut);
@@ -845,20 +885,12 @@ void SID::synthSampleStripped(int16_t *buffer, int16_t **synth_trace_bufs, uint3
 	
 	if (!do_clear) final_sample+= *(dest);
 
-	// clipping (filter, multi-SID as well as PSID digi may bring output over the edge)
-	const int32_t clip_value = 32767;
-	if ( final_sample < -clip_value ) {
-		final_sample = -clip_value;
-	} else if ( final_sample > clip_value ) {
-		final_sample = clip_value;
-	}
-	*(dest)= (int16_t)final_sample;
+	RENDER_CLIPPED(dest, final_sample);
 }
 
 // "friends only" accessors
 uint8_t SID::getWave(uint8_t voice) {
 	return _osc[voice]->wave;
-//	return _sid->voices[voice].wave;
 }
 uint8_t SID::getAD(uint8_t voice) {
 	return _env[voice]->getAD();
@@ -946,7 +978,7 @@ void SID::synthSampleStripped(int16_t *buffer, int16_t **synth_trace_bufs, doubl
 	for (uint8_t i= 0; i<_used_sids; i++) {
 		SID &sid= _sids[i];
 		int16_t **sub_buf= !synth_trace_bufs ? 0 : &synth_trace_bufs[i<<2];	// synthSample uses 4 entries..
-		sid.synthSampleStripped(buffer, sub_buf, offset, scale, (i==0) || (i==env2ndOutputChanIdx()));
+		sid.synthSampleStripped(buffer, sub_buf, offset, scale, (i==0) || (i==_sid_2nd_chan_idx));
 	}
 }
 
@@ -957,7 +989,7 @@ void SID::resetGlobalStatistics() {
 	}
 }
 
-void SID::setModels(uint8_t *is_6581) {
+void SID::setModels(const uint8_t *is_6581) {
 	for (uint8_t i= 0; i<_used_sids; i++) {
 		SID &sid= _sids[i];			
 		sid.resetModel(is_6581[i]);
@@ -972,10 +1004,8 @@ uint8_t SID::isAudible() {
 	return _is_audible;
 }
 
-void SID::resetAll(uint32_t sample_rate, uint8_t compatibility, uint8_t resetVol) {
-	uint16_t *addrs= envSIDAddresses(); 
-	uint8_t *is_6581= envSID6581s(); 
-	uint8_t *output_chan= envSIDOutputChannels();
+void SID::resetAll(uint32_t sample_rate, uint32_t clock_rate, uint8_t is_rsid, 
+					uint8_t compatibility) {
 
 	_used_sids= 0;
 	memset(_mem2sid, 0, MEM_MAP_SIZE); // default is SID #0
@@ -983,25 +1013,40 @@ void SID::resetAll(uint32_t sample_rate, uint8_t compatibility, uint8_t resetVol
 	_is_audible= 0;
 	
 	// determine the number of used SIDs
-	for (uint8_t i= 0; i<MAX_SID_CHIPS; i++) {
-		if (addrs[i]) {
+	for (uint8_t i= 0; i<MAX_SIDS; i++) {
+		if (_sid_addr[i]) {
 			_used_sids++;
 		}
 	}
 	// setup the configured SID chips & make map where to find them
 	for (uint8_t i= 0; i<_used_sids; i++) {
 		SID &sid= _sids[i];
-		sid.reset(addrs[i], sample_rate, is_6581[i], compatibility, output_chan[i]);	// stereo only used for my extended sid-file format
+		sid.reset(_sid_addr[i], sample_rate, _sid_is_6581[i], clock_rate, is_rsid, compatibility, _sid_target_chan[i]);	// stereo only used for my extended sid-file format
 		
-		if (resetVol) {
-			memWriteIO(sid.getBaseAddr()+0x18, 0xf);		// turn on full volume
-			sid.poke(0x18, 0xf);
-		}
-		
+		// turn on full volume
+		memWriteIO(sid.getBaseAddr()+0x18, 0xf);
+		sid.poke(0x18, 0xf);
+	
 		if (i) {	// 1st entry is always the regular default SID
-			memset((void*)(_mem2sid+addrs[i]-0xd400), i, 0x1f);
+			memset((void*)(_mem2sid+_sid_addr[i]-0xd400), i, 0x1f);
 		}
 	}
+	
+	if (!_ext_multi_sid) {
+		_vol_scale= _vol_map[_used_sids-1] / 0xff;	// 0xff serves to normalize the 8-bit envelope
+	} else {
+		_vol_scale= _vol_map[_sid_2nd_chan_idx ? _used_sids>>1 : _used_sids-1]	/ 0xff;		
+	}
+}
+
+uint8_t SID::isExtMultiSidMode() {
+	return _ext_multi_sid;
+}
+
+// gets what has actually been last written (even for write-only regs)
+uint8_t SID::peek(uint16_t addr) {
+	uint8_t sid_idx= _mem2sid[addr-0xd400];
+	return _sids[sid_idx].peekMem(addr);
 }
 
 // -------------- API used by C code --------------
@@ -1011,11 +1056,6 @@ extern "C" uint8_t sidReadMem(uint16_t addr) {
 	return _sids[sid_idx].readMem(addr);
 }
 
-// gets what has actually been last written (even for write-only regs)
-extern "C" uint8_t sidPeekMem(uint16_t addr) {
-	uint8_t sid_idx= _mem2sid[addr-0xd400];
-	return _sids[sid_idx].peekMem(addr);
-}
 extern "C" void sidWriteMem(uint16_t addr, uint8_t value) {
 	_is_audible |= value;	// detect use by the song
 	

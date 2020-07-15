@@ -9,6 +9,8 @@
 * indirections that might slow down the code. From a code structuring/readability point
 * of view that should already be an improvement.
 *
+* Only one loader is used for a specific song, i.e. at any given moment!
+*
 * Terms of Use: This software is licensed under a CC BY-NC-SA 
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
@@ -21,16 +23,18 @@
 #include <emscripten.h>
 
 extern "C" {
-#include "env.h"
 #include "core.h"
 #include "memory.h"
 }
+#include "sid.h"	
 
 #include "loaders.h"
 
 #include "compute!.h"
 
-// -------------- these are implementation classes that should rather be hidden from the interface ---------
+#define MULTI_SID_TYPE 0x4E
+
+// ---- these are implementation classes that should rather be hidden from the interface ----
 
 #ifdef TEST
 /**
@@ -40,7 +44,8 @@ class TestFileLoader: public FileLoader {
 public:
 	TestFileLoader();
 	
-	virtual uint32_t load(uint8_t *in_buffer, uint32_t in_buf_size, char *filename, void *basic_ROM, void *char_ROM, void *kernal_ROM);
+	virtual uint32_t load(uint8_t *in_buffer, uint32_t in_buf_size, char *filename,
+							void *basic_ROM, void *char_ROM, void *kernal_ROM);
 };
 #endif
 
@@ -51,7 +56,8 @@ class MusFileLoader: public FileLoader {
 public:
 	MusFileLoader();
 
-	virtual uint32_t load(uint8_t *in_buffer, uint32_t in_buf_size, char *filename, void *basic_ROM, void *char_ROM, void *kernal_ROM);
+	virtual uint32_t load(uint8_t *in_buffer, uint32_t in_buf_size, char *filename,
+							void *basic_ROM, void *char_ROM, void *kernal_ROM);
 	
 	virtual uint8_t isTrackEnd();
 private:
@@ -65,23 +71,16 @@ class SidFileLoader: public FileLoader {
 public:
 	SidFileLoader();
 	
-	virtual uint32_t load(uint8_t *in_buffer, uint32_t in_buf_size, char *filename, void *basic_ROM, void *char_ROM, void *kernal_ROM);
+	virtual uint32_t load(uint8_t *in_buffer, uint32_t in_buf_size, char *filename,
+							void *basic_ROM, void *char_ROM, void *kernal_ROM);
 };
 
 
-// ------------------  abstract base class of all loaders  --------------------------------------------------------------
+// ----  meta information originating from music file  ----------------------------------
 
-static uint16_t	_sid_addr[MAX_SIDS];		// start addr of installed SID chips (0 means NOT available)
-static uint8_t 	_sid_is_6581[MAX_SIDS];	// models of installed SID chips 
-static uint8_t 	_sid_target_chan[MAX_SIDS];// output channel for this SID 
-static uint8_t 	_sid_2nd_chan_idx;
-
-
-// only one loader is used for a given song
-static uint8_t 	_sid_version;
+static uint8_t 	_sid_file_version;
 
 static uint8_t	_is_rsid;
-static uint8_t	_is_psid;			// redundancy to avoid runtime logic
 
 static uint8_t 	_ntsc_mode= 0;
 
@@ -90,7 +89,7 @@ static uint8_t 	_basic_prog;
 static uint16_t _free_space;
 
 static uint16_t	_load_addr, _init_addr, _play_addr, _load_end_addr;
-static uint8_t 	_actual_subsong, _max_subsong;
+static uint8_t 	_selected_track, _max_track;
 static uint32_t	_play_speed;
 
 // song specific infos
@@ -127,6 +126,9 @@ static void resetInfoText() {
 	memset(_song_copyright, 0, MAX_INFO_LEN);
 }
 
+
+// ----  abstract base class of all loaders  --------------------------------------------
+
 FileLoader::FileLoader() {
 }
 
@@ -160,8 +162,8 @@ void FileLoader::init() {
 	_init_addr= 0;
 	_play_addr= 0;
 	_load_end_addr= 0;
-	_actual_subsong= 0;
-	_max_subsong= 0;	
+	_selected_track= 0;
+	_max_track= 0;	
 	_play_speed= 0;
 	
 	resetInfoText();
@@ -169,73 +171,44 @@ void FileLoader::init() {
 uint8_t FileLoader::getNTSCMode() {
 	return _ntsc_mode;
 }
-uint8_t* FileLoader::getTargetChannels() {
-	return _sid_target_chan;
-}
-uint8_t* FileLoader::getSID6581s() {
-	return _sid_is_6581;
-}
-uint16_t* FileLoader::getSIDAddresses() {
-	return _sid_addr;
-}
-uint8_t FileLoader::get2ndOutputChanIdx() {
-	return _sid_2nd_chan_idx;
-}
-uint8_t FileLoader::isSID6581() {
-	return _sid_is_6581[0];		// only for the 1st chip
-}
 uint8_t FileLoader::getValidatedTrack(uint8_t selected_track) {
-	return  (selected_track >= _max_subsong) ? _actual_subsong : selected_track;
+	return  (selected_track >= _max_track) ? _selected_track : selected_track;
 }
 void FileLoader::setRsidMode(uint8_t is_rsid) {
 	_is_rsid= is_rsid;
-	_is_psid= !is_rsid;
 }
 
-uint16_t FileLoader::getFreeSpace() {
-	return _free_space;
-}
-
-uint8_t FileLoader::getSidVersion() {
-	return _sid_version;
+uint8_t FileLoader::isExtendedSidFile() {
+	return _sid_file_version == MULTI_SID_TYPE;
 }
 
 uint8_t FileLoader::isRSID() {
 	return _is_rsid;
 }
 
-uint8_t FileLoader::isPSID(){
-	return _is_psid;
-}
-
-uint16_t FileLoader::getSidPlayAddr() {
-	return _play_addr;
+uint8_t FileLoader::getCompatibility(){
+	return _compatibility;
 }
 
 void FileLoader::setNTSCMode(uint8_t is_ntsc) {
-	_ntsc_mode= is_ntsc;
-}
-
-uint8_t FileLoader::setSID6581(uint8_t is6581) {
-	// this minimal update should allow to toggle the used filter without disrupting playback in progress
-	_sid_is_6581[0]= _sid_is_6581[1]= _sid_is_6581[2]= is6581;
-	SID::setModels(getSID6581s());
-	return 0;
+	_ntsc_mode= is_ntsc;	
 }
 
 void FileLoader::initTune(uint32_t sample_rate, uint8_t selected_track) {
-	_actual_subsong= getValidatedTrack(selected_track);
+	_selected_track= getValidatedTrack(selected_track);
 	
-	uint8_t timerDrivenPSID= (envIsPSID() && (envCurrentSongSpeed() == 1));
+	uint8_t timerDrivenPSID= (!_is_rsid && (FileLoader::getCurrentSongSpeed() == 1));
 	
-	Core::startupSong(sample_rate, envIsRSID(), timerDrivenPSID, _ntsc_mode, _compatibility, _basic_prog, &_init_addr, _load_end_addr, _play_addr, _actual_subsong);
+	Core::startupTune(sample_rate, _selected_track, 
+					_is_rsid, timerDrivenPSID, _ntsc_mode, _compatibility, _basic_prog, 
+					_free_space, &_init_addr, _load_end_addr, _play_addr);
 }
 
 void FileLoader::storeFileInfo() {
 	_load_result[0]= &_load_addr;
 	_load_result[1]= &_play_speed;
-	_load_result[2]= &_max_subsong;
-	_load_result[3]= &_actual_subsong;
+	_load_result[2]= &_max_track;
+	_load_result[3]= &_selected_track;
 	_load_result[4]= _song_name;
 	_load_result[5]= _song_author;
 	_load_result[6]= _song_copyright;
@@ -254,9 +227,9 @@ uint8_t FileLoader::getCurrentSongSpeed() {
 	/*
 	* PSID V2: songSpeed 0: means screen refresh based, i.e. ignore 
 	*                       timer settings an just play 1x per refresh 
-	*					 1: means 60hz OR CIA 1 timer A 
+	*					 1: means CIA 1 timer A or 60hz (this is the ROM's default) 
 	*/	
-	return get_bit(_play_speed, _actual_subsong > 31 ? 31 : _actual_subsong); 
+	return get_bit(_play_speed, _selected_track > 31 ? 31 : _selected_track); 
 }
 
 uint16_t FileLoader::getSidAddr(uint8_t center_byte) {
@@ -270,55 +243,69 @@ uint16_t FileLoader::getSidAddr(uint8_t center_byte) {
 }
 
 void FileLoader::configureSids(uint16_t flags, uint8_t *addr_list) {
-	_sid_2nd_chan_idx= 0;
+	// fixme: provide proper accessor instead of directy exposing SIDConfigurator struct here..
+	struct SIDConfigurator* cf= SID::getHWConfigurator();
 	
-	_sid_addr[0]= 0xd400;
-	_sid_is_6581[0]= (flags>>4) & 0x3;
-	_sid_is_6581[0]= !((_sid_is_6581[0]>>1) & 0x1); 	// only use 8580 when bit is explicitly set
+	(*cf->second_chan_idx)= 0;
 	
-	if (_sid_version != MULTI_SID_TYPE) {	// allow max of 3 SIDs
-		_sid_target_chan[0]= 0;	// no stereo support
+	cf->addr[0]= 0xd400;
+	cf->is_6581[0]= (flags>>4) & 0x3;
+	cf->is_6581[0]= !((cf->is_6581[0]>>1) & 0x1); 	// only use 8580 when bit is explicitly set
+	
+	if (!FileLoader::isExtendedSidFile()) {	// allow max of 3 SIDs
+		(*cf->ext_multi_sid_mode)= 0;
+	
+		cf->target_chan[0]= 0;	// no stereo support
 		
 		// standard PSID maxes out at 3 sids
-		_sid_addr[1]= getSidAddr((addr_list && (_sid_version>2))?addr_list[0x0]:0);
-		_sid_is_6581[1]= (flags>>6) & 0x3;
-		_sid_is_6581[1]= !_sid_is_6581[1] ? _sid_is_6581[0] : !((_sid_is_6581[1]>>1) & 0x1);
-		_sid_target_chan[1]= 0;
+		cf->addr[1]= getSidAddr((addr_list && (_sid_file_version>2))?addr_list[0x0]:0);
+		cf->is_6581[1]= (flags>>6) & 0x3;
+		cf->is_6581[1]= !cf->is_6581[1] ? cf->is_6581[0] : !((cf->is_6581[1]>>1) & 0x1);
+		cf->target_chan[1]= 0;
 		
-		_sid_addr[2]= getSidAddr((addr_list && (_sid_version>3))?addr_list[0x1]:0);
-		_sid_is_6581[2]= (flags>>8) & 0x3;
-		_sid_is_6581[2]= !_sid_is_6581[2] ? _sid_is_6581[0] : !((_sid_is_6581[2]>>1) & 0x1);
-		_sid_target_chan[2]= 0;
+		cf->addr[2]= getSidAddr((addr_list && (_sid_file_version>3))?addr_list[0x1]:0);
+		cf->is_6581[2]= (flags>>8) & 0x3;
+		cf->is_6581[2]= !cf->is_6581[2] ? cf->is_6581[0] : !((cf->is_6581[2]>>1) & 0x1);
+		cf->target_chan[2]= 0;
+		
+		cf->addr[3]= 0;
+		cf->is_6581[3]= 0;
+		cf->target_chan[3]= 0;
+		
 	} else {	// allow max of 10 SIDs
-		_sid_target_chan[0]= (flags>>6) & 0x1;
+		(*cf->ext_multi_sid_mode)= 1;
 		
-		uint8_t prev_chan= _sid_target_chan[0];
+		cf->target_chan[0]= (flags>>6) & 0x1;
 		
-		uint16_t *addr_list2= (uint16_t*)addr_list;	// is at even offset so there should be no alignment issue
+		uint8_t prev_chan= cf->target_chan[0];
+		
+		// is at even offset so there should be no alignment issue
+		uint16_t *addr_list2= (uint16_t*)addr_list;
 		
 		uint8_t i;
 		for (i= 0; i<(MAX_SIDS-1); i++) {
 			uint16_t flags2= addr_list2[i];	// bytes are flipped here
 			if (!flags2) break;
 			
-			_sid_addr[1+i]= getSidAddr(flags2&0xff);
-			_sid_is_6581[1+i]= (flags2>>12) & 0x3;
-			_sid_target_chan[1+i]= (flags2>>14) & 0x1;
+			cf->addr[1+i]= getSidAddr(flags2&0xff);
+			cf->is_6581[1+i]= (flags2>>12) & 0x3;
+			cf->target_chan[1+i]= (flags2>>14) & 0x1;
 
-			if (!_sid_2nd_chan_idx) {
-				if (prev_chan != _sid_target_chan[1+i] ) {
-					_sid_2nd_chan_idx= i+1;	// 0 is the $d400 SID
+			if (!(*cf->second_chan_idx)) {
+				if (prev_chan != cf->target_chan[1+i] ) {
+					(*cf->second_chan_idx)= i+1;	// 0 is the $d400 SID
 					
-					prev_chan= _sid_target_chan[1+i];
+					prev_chan= cf->target_chan[1+i];
 				}
 			}
 			
-			if (!_sid_is_6581[1+i]) _sid_is_6581[1+i]= _sid_is_6581[0];	// default to whatever main SID is using
+			// default to whatever main SID is using
+			if (!cf->is_6581[1+i]) cf->is_6581[1+i]= cf->is_6581[0];
 		}
 		for (; i<(MAX_SIDS-1); i++) {	// mark as unused
-			_sid_addr[1+i]= 0;
-			_sid_is_6581[1+i]= 0;
-			_sid_target_chan[1+i]= 0;
+			cf->addr[1+i]= 0;
+			cf->is_6581[1+i]= 0;
+			cf->target_chan[1+i]= 0;
 		}
 	}
 }
@@ -355,21 +342,22 @@ static uint16_t loadTestFromMemory(void *buf, uint32_t buflen)
     return load_addr;	
 }
 
-uint32_t TestFileLoader::load(void *in_buffer, uint32_t in_buf_size, char *filename, void *basic_ROM, void *char_ROM, void *kernal_ROM) {
+uint32_t TestFileLoader::load(void *in_buffer, uint32_t in_buf_size, char *filename, 
+								void *basic_ROM, void *char_ROM, void *kernal_ROM) {
+
 	fprintf(stderr, "starting test %s\n", filename);
 
 	init();
 	
-	_sid_version= 2;
+	_sid_file_version= 2;
 	_basic_prog= 0;
 	_compatibility= 1;
 
 	setRsidMode(1);
 	
-	_ntsc_mode= 0;
-	envSetNTSC(_ntsc_mode);
+	FileLoader::setNTSCMode(0);
 	
-	configureSids(0, 0); 	// just use one *old* SID at d400 
+	FileLoader::configureSids(0, 0); 	// just use one *old* SID at d400 
 	
 	memInitTest();
 	
@@ -377,7 +365,8 @@ uint32_t TestFileLoader::load(void *in_buffer, uint32_t in_buf_size, char *filen
 	
 	if (_init_addr) {
 		if (_init_addr != 0x0801) {
-			fprintf(stderr, "ERROR: unexpected start for  test: %s len: %lu addr: %d\n", filename, in_buf_size, _init_addr);
+			fprintf(stderr, "ERROR: unexpected start for  test: %s len: %lu addr: %d\n", 
+					filename, in_buf_size, _init_addr);
 		}
 		Core::rsidRunTest();		
 	} else {
@@ -401,10 +390,10 @@ uint32_t TestFileLoader::load(void *in_buffer, uint32_t in_buf_size, char *filen
 
 const static uint16_t MUS_REL_DATA_START= MUS_DATA_START - MUS_BASE_ADDR;
 const static uint16_t MUS_MAX_SIZE= MUS_REL_DATA_START;
-const static uint16_t MUS_MAX_SONG_SIZE= 0xA000 - MUS_DATA_START;		// stop at BASIC ROM.. or how big are these songs?
+const static uint16_t MUS_MAX_SONG_SIZE= 0xA000 - MUS_DATA_START;	// stop at BASIC ROM.. or how big are these songs?
 
 	// buffer used to combine .mus and player
-static uint8_t*			_mus_mem_buffer= 0;										// represents memory at MUS_BASE_ADDR
+static uint8_t*			_mus_mem_buffer= 0;								// represents memory at MUS_BASE_ADDR
 const static uint16_t	_mus_mem_buffer_size= 0xA000 - MUS_BASE_ADDR;
 
 
@@ -412,7 +401,9 @@ static uint16_t musGetOffset(uint8_t* buf) {
 	return (((uint16_t)buf[1]) << 8) + buf[0];
 }
 
-static void musGetSizes(uint8_t *mus_song_file, uint16_t *v1len, uint16_t *v2len, uint16_t *v3len, uint16_t *track_data_len) {
+static void musGetSizes(uint8_t *mus_song_file, uint16_t *v1len, uint16_t *v2len, 
+						uint16_t *v3len, uint16_t *track_data_len) {
+							
 	(*v1len)= musGetOffset(mus_song_file+2);
 	(*v2len)= musGetOffset(mus_song_file+4);
 	(*v3len)= musGetOffset(mus_song_file+6);
@@ -442,13 +433,15 @@ static void musMapInfoTexts(uint8_t *mus_song_file, uint32_t mus_song_file_len, 
 	for (uint8_t j= 0; j<max_info_len; j++) {	// iterate over all the remaining chars in the file 
 		uint8_t ch= buffer[j];	
 		
-		if (!(ch == 0xd) && ((ch < 0x20) || (ch > 0x60))) continue; // remove C64 special chars.. don't have that font anyway 
+		// remove C64 special chars.. don't have that font anyway 
+		if (!(ch == 0xd) && ((ch < 0x20) || (ch > 0x60))) continue; 
 		
 		if (current_len < MAX_INFO_LEN) {
 			char* dest = _info_texts[line];
 			dest[current_len++]= (ch == 0xd)? 0 : ch;
 			
-			if (MAX_INFO_LEN == current_len) current_len--; // last one wins.. hopefully the 0 terminator..
+			// last one wins.. hopefully the 0 terminator..
+			if (MAX_INFO_LEN == current_len) current_len--; 
 		} else {
 			// ignore: should not be possible..
 		}
@@ -467,14 +460,12 @@ MusFileLoader::MusFileLoader() {
 // Compute!'s .mus files require an addtional player that must installed with the song file.
 uint16_t MusFileLoader::loadComputeSidplayerData(uint8_t *mus_song_file, uint32_t mus_song_file_len) {
 	// note: the player can also be used in RSID mode (but for some reason the timing is then much slower..)
-	_sid_version= 2;
+	_sid_file_version= 2;
 	_basic_prog= 0;
 	_compatibility= 1;
-	_ntsc_mode= 1;
-	envSetNTSC(_ntsc_mode);	// .mus stuff is mostly from the US..
-
+	FileLoader::setNTSCMode(1);// .mus stuff is mostly from the US..
 	
-	configureSids(0, 0); 	// just use one *old* SID at d400 
+	FileLoader::configureSids(0, 0); 	// just use one *old* SID at d400 
 	
 	_load_addr= MUS_BASE_ADDR;
 	_load_end_addr= 0x9fff;
@@ -522,11 +513,13 @@ uint16_t MusFileLoader::loadComputeSidplayerData(uint8_t *mus_song_file, uint32_
 }
 
 
-uint32_t MusFileLoader::load(uint8_t *input_file_buffer, uint32_t in_buf_size, char *filename, void *basic_ROM, void *char_ROM, void *kernal_ROM) {
+uint32_t MusFileLoader::load(uint8_t *input_file_buffer, uint32_t in_buf_size, char *filename,
+							void *basic_ROM, void *char_ROM, void *kernal_ROM) {
+	
 	init();
 	
 	setRsidMode(1);
-	memResetRAM(FileLoader::isPSID());
+	memResetRAM(FileLoader::getNTSCMode(), !FileLoader::isRSID());
 	
 	// todo: the same kind of impl could be used for .sid files that contain .mus data.. (see respective flag)
 	if (!loadComputeSidplayerData(input_file_buffer, in_buf_size)) {
@@ -549,10 +542,11 @@ uint8_t MusFileLoader::isTrackEnd() {
 SidFileLoader::SidFileLoader() {
 }
 
-static uint16_t loadSIDFromMemory(void *sid_data, uint16_t *load_addr, uint16_t *load_end_addr, uint16_t *init_addr, 
-									uint16_t *play_addr, uint8_t *subsongs, uint8_t *startsong, uint32_t *speed, 
-									uint32_t file_size, int32_t *load_size, uint8_t basic_mode)
-{
+static uint16_t loadSIDFromMemory(void *sid_data, uint16_t *load_addr, uint16_t *load_end_addr,
+									uint16_t *init_addr, uint16_t *play_addr, uint8_t *subsongs,
+									uint8_t *startsong, uint32_t *speed, uint32_t file_size,
+									int32_t *load_size, uint8_t basic_mode) {
+	
     uint8_t *pdata= (uint8_t*)sid_data;;
     uint8_t data_file_offset= pdata[7];
 
@@ -565,7 +559,10 @@ static uint16_t loadSIDFromMemory(void *sid_data, uint16_t *load_addr, uint16_t 
     *play_addr = pdata[12]<<8;
     *play_addr|= pdata[13];
 
-	uint16_t tracks= pdata[0xf] | (((uint16_t)pdata[0xe])<<8); // pointless using 2 bytes for a max of 256.. when the max of speed flags is 32..
+	
+	// "sid file format" stupidity: use of 16 bits just so that 
+	// counter can run from 1 to 256 instead of 0 to 255:
+	uint16_t tracks= pdata[0xf] | (((uint16_t)pdata[0xe])<<8);
 	if (tracks == 0) tracks= 1;
 	if (tracks > 0xff) tracks= 0xff;
     *subsongs = tracks & 0xff;
@@ -587,6 +584,7 @@ static uint16_t loadSIDFromMemory(void *sid_data, uint16_t *load_addr, uint16_t 
 		*init_addr= *load_addr;	// 0 implies that init routine is at load_addr
 	}	
 	
+	// more "sid file format" sillyness: only 32 "speed" bits for possible 256 tracks
     *speed = pdata[0x12]<<24;
     *speed|= pdata[0x13]<<16;
     *speed|= pdata[0x14]<<8;
@@ -664,17 +662,22 @@ void startFromBasic(uint16_t *init_addr, uint8_t has_ROMs, int32_t load_size) {
 	}
 }
 
-uint32_t SidFileLoader::load(uint8_t *input_file_buffer, uint32_t in_buf_size, char *filename, void *basic_ROM, void *char_ROM, void *kernal_ROM) {
+uint32_t SidFileLoader::load(uint8_t *input_file_buffer, uint32_t in_buf_size, char *filename,
+							void *basic_ROM, void *char_ROM, void *kernal_ROM) {
+	
 	init();
 	
 	memResetKernelROM((uint8_t *)kernal_ROM);
 	
 	setRsidMode((input_file_buffer[0x00] != 0x50) ? 1 : 0);
-	memResetRAM(FileLoader::isPSID());	// dummy env that still may be overridden by hard RESET used for BASIC progs
-
-	_sid_version= input_file_buffer[0x05];
+	
+	// dummy env that still may be overridden by hard RESET used for BASIC progs
+	memResetRAM(FileLoader::getNTSCMode(), !FileLoader::isRSID());	
+	
+	_sid_file_version= input_file_buffer[0x05];
 			
-	uint16_t flags= (_sid_version > 1) ? (((uint16_t)input_file_buffer[0x77]) | (((uint16_t)input_file_buffer[0x77])<<8)) : 0x0;
+	uint16_t flags= (_sid_file_version > 1) ? 
+					(((uint16_t)input_file_buffer[0x77]) | (((uint16_t)input_file_buffer[0x77])<<8)) : 0x0;
 			
 	_basic_prog= (FileLoader::isRSID() && (flags & 0x2));	// a C64 BASIC program needs to be started..
 
@@ -689,10 +692,10 @@ uint32_t SidFileLoader::load(uint8_t *input_file_buffer, uint32_t in_buf_size, c
 	
 	if (FileLoader::isRSID()) memResetCharROM((uint8_t *)char_ROM);
 
-	_compatibility= ( (_sid_version & 0x2) &&  ((flags & 0x2) == 0));	
-	uint8_t ntsc_mode= (_sid_version >= 2) && (flags & 0x8); // NTSC bit
+	_compatibility= ( (_sid_file_version & 0x2) &&  ((flags & 0x2) == 0));	
+	uint8_t ntsc_mode= (_sid_file_version >= 2) && (flags & 0x8); // NTSC bit
 	
-	configureSids(flags, &(input_file_buffer[0x7a]));
+	FileLoader::configureSids(flags, &(input_file_buffer[0x7a]));
 		
 	uint8_t i;
 	for (i=0;i<32;i++) _song_name[i] = input_file_buffer[0x16+i];
@@ -703,15 +706,15 @@ uint32_t SidFileLoader::load(uint8_t *input_file_buffer, uint32_t in_buf_size, c
 	
 	// loading of song binary is the last step in the general memory initialization
 	if (!loadSIDFromMemory(input_file_buffer, &_load_addr, &_load_end_addr, &_init_addr, 
-			&_play_addr, &_max_subsong, &_actual_subsong, &_play_speed, in_buf_size, &load_size, _basic_prog && basic_ROM && kernal_ROM)) {
+			&_play_addr, &_max_track, &_selected_track, &_play_speed, 
+			in_buf_size, &load_size, _basic_prog && basic_ROM && kernal_ROM)) {
 		return 1;	// could not load file
 	}
 	
 	if (_basic_prog) startFromBasic(&_init_addr, basic_ROM && kernal_ROM, load_size);
 	
 	// global settings that depend on the loaded music file
-	_ntsc_mode= ntsc_mode;
-	envSetNTSC(ntsc_mode);
+	FileLoader::setNTSCMode(ntsc_mode);
 	
 	storeFileInfo();
 	return 0;

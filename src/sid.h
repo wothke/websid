@@ -15,9 +15,24 @@ extern "C" {
 }
 
 /**
+* Struct used to configure the number/types of used SID chips.
+*
+* Used to "write through" to the underlying state information.
+*/
+struct SIDConfigurator {
+	uint16_t* addr;				// array of addresses
+	uint8_t* is_6581;			// array of models
+	
+	// use of stereo:
+	uint8_t* target_chan;		// array of used channel-idx (for stereo scenarios)
+	uint8_t* second_chan_idx;	// single int: index of the 1st SID that maps to the 2nd stereo channel
+	uint8_t* ext_multi_sid_mode;// single int: activates "extended sid file" handling
+};
+
+/**
 * This class emulates the "MOS Technology SID" chips (see 6581, 8580 or 6582).
 *
-* Some aspects of the implementation are delegated to separate helpers, 
+* Some aspects of the implementation are delegated to separate helpers,
 * see digi.h, envelope.h, filter.h
 */
 class SID {
@@ -33,13 +48,14 @@ public:
 	* Resets this instance according to the passed params.
 	*/
 	void resetModel(uint8_t is_6581);
-	void reset(uint16_t addr, uint32_t sample_rate, uint8_t is_6581, uint8_t compatibility, uint8_t output_channel);
+	void reset(uint16_t addr, uint32_t sample_rate, uint8_t is_6581, uint32_t clock_rate, 
+				 uint8_t is_rsid, uint8_t compatibility, uint8_t output_channel);
 	void resetStatistics();
 		
 	/**
 	* Directly updates one of the SID's registers.
 	*
-	* <p>DOES NOT reflect in the memory mapped IO area.
+	* DOES NOT reflect in the memory mapped IO area.
 	*/
 	void poke(uint8_t reg, uint8_t val);
 		
@@ -73,17 +89,17 @@ public:
 	void synthSampleStripped(int16_t *buffer, int16_t **synth_trace_bufs, uint32_t offset, double *scale, uint8_t do_clear);
 
 	/**
-	* Measures the length if one sample in system cycles.
-	*/
-	static double getCyclesPerSample();
-
-	/**
 	* Clocks this instance by one system cycle.
 	*/	
 	void clock();
 	
 	// ------------- class level functions ----------------------
 	
+	/**
+	* Measures the length if one sample in system cycles.
+	*/
+	static double getCyclesPerSample();
+
 	/**
 	* Rescaling that should be used on the output signal (depending on the used number of SID chips).
 	*/
@@ -97,7 +113,8 @@ public:
 	/**
 	* Resets all used SID chips.
 	*/
-	static void resetAll(uint32_t sample_rate, uint8_t compatibility, uint8_t resetVol);
+	static void resetAll(uint32_t sample_rate, uint32_t clock_rate, uint8_t is_rsid, 
+							uint8_t compatibility);
 
 	/**
 	* Clock all used SID chips.
@@ -130,12 +147,6 @@ public:
 	*/
 	static void	setMute(uint8_t sid_idx, uint8_t voice, uint8_t value);
 		
-	/**
-	* Reconfigures all used chips to the specified model.
-	* @param is_6581 array with one byte corresponding to each available chip
-	*/
-	static void	setModels(uint8_t *is_6581);
-
 	static uint8_t isAudible();
 
 	/**
@@ -143,7 +154,16 @@ public:
 	*/
 	static void	synthSample(int16_t *buffer, int16_t **synth_trace_bufs, double* scale, uint32_t offset);
 	static void	synthSampleStripped(int16_t *buffer, int16_t **synth_trace_bufs, double* scale, uint32_t offset);
+
 	
+	// ---------- HW configuration -----------------
+	static struct SIDConfigurator* getHWConfigurator();
+	
+	static uint8_t isSID6581();
+	/**
+	* Manually override original "SID model" setting from music file.
+	*/
+	static uint8_t setSID6581(uint8_t is6581);
 protected:
 	friend class Envelope;
 	friend class DigiDetector;
@@ -155,6 +175,9 @@ protected:
 	uint16_t	getFreq(uint8_t voice);
 	uint16_t	getPulse(uint8_t voice);
 
+	static uint8_t isExtMultiSidMode();
+	static uint8_t peek(uint16_t addr);
+	
 	DigiType	getDigiType();
 	const char*	getDigiTypeDesc();
 	uint16_t	getDigiRate();
@@ -162,8 +185,15 @@ protected:
 	static uint32_t	getSampleFreq();
 	void		setMute(uint8_t voice, uint8_t value);
 private:
+	/**
+	* Reconfigures all used chips to the specified model.
+	*
+	* @param is_6581 array with one byte corresponding to each available chip
+	*/
+	static void	setModels(const uint8_t *is_6581);
+	
 	// convenience accessors & utilities
-	void		resetEngine(uint32_t sample_rate, uint8_t is_6581);
+	void		resetEngine(uint32_t sample_rate, uint8_t is_6581, uint32_t clock_rate);
 	uint32_t	getRingModCounter(uint8_t voice);
 	
 	// oscillator handling

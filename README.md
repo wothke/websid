@@ -1,6 +1,6 @@
 # WebSid (WebAudio version of Tiny'R'Sid)
 
-This is a JavaScript/WebAudio based C64 emulator / music player. This plugin is designed to work with version 1.0 of my 
+This is a JavaScript/WebAudio based C64 emulator / music player. This plugin is designed to work with version 1.02 of my 
 generic WebAudio ScriptProcessor music player (see separate project). 
 
 It allows to play .mus and RSID/PSID format *.sid music files. (Respective music files can be found here: http://www.hvsc.c64.org/)

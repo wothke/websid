@@ -4,8 +4,8 @@
 * WebSid (c) 2019 Jürgen Wothke
 * version 0.93
 * 
-* Only those features actually observed in RSID files have been implemented, i.e. simple 
-* cycle counting and timer B to timer A linking.
+* Only those features actually observed in RSID files have been implemented,
+* i.e. simple cycle counting and timer B to timer A linking.
 *
 * Terms of Use: This software is licensed under a CC BY-NC-SA 
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
@@ -16,27 +16,22 @@
 
 #include "base.h"
 
-#define CIA1 0
-#define CIA2 1
-#define TIMER_A 0
-#define TIMER_B 1
+// init
+void 		ciaReset(uint8_t is_rsid, uint8_t is_ntsc);
+void 		ciaSetDefaultsPSID(uint8_t is_timer_driven);
 
-void 		ciaReset(uint8_t is_rsid);
-void 		ciaSetDefaultsPSID(uint8_t timerDrivenPSID);
-
+// clocking
 void 		ciaClock();
+
+// CPU interactions
 uint8_t 	ciaNMI();
 uint8_t 	ciaIRQ();
 
-// PSID crap
-uint16_t	ciaGetTimerPSID();
-void		ciaFakeIrqPSID();
-
-// hacks
-void 		ciaUpdateTOD(uint8_t song_speed);
-	
 // memory access interface (for memory.c)
 uint8_t 	ciaReadMem(uint16_t addr);
 void 		ciaWriteMem(uint16_t addr, uint8_t value);
+
+// hack
+void 		ciaUpdateTOD(uint8_t song_speed);
 
 #endif

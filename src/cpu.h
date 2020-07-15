@@ -13,29 +13,22 @@
 
 #include "base.h"
 
-// global system clock related
-uint32_t	cpuCycles();		// system cycles since starting the song
-void 		cpuClockSystem();
-
 
 // setup
-void		cpuInit(void);
-void 		cpuReset(uint16_t npc, uint8_t na);	// move program counter into new start position
+void		cpuInit();
+void 		cpuSetProgramCounter(uint16_t pc, uint8_t a);
 
+// clocking 
+void		cpuClock();
 
-// simulate next clock cycle 
-void		cpuClock(void);
-
-
-// hack used for digi handling only
-uint8_t 	cpuIsInNMI();
-
-// PSID crap
+// PSID only crap
 uint8_t		cpuIsValidPcPSID();
-void		cpuResetToPSID(uint16_t npc);
+void		cpuSetProgramCounterPSID(uint16_t pc);
 void		cpuIrqFlagPSID(uint8_t on);
 
-// debug only
+#ifdef DEBUG
 uint16_t	cpuGetPC();
 uint8_t		cpuGetSP();
+#endif
+
 #endif

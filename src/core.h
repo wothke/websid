@@ -15,19 +15,24 @@
 
 class Core {
 public:
-	// load the C64 program data into the emulator (just the binary without the .sid file header)
-	static void loadSongBinary(uint8_t *src, uint16_t dest_addr, uint16_t len, uint8_t basic_mode);
+	// load the C64 program data into the emulator (just the binary 
+	// without the .sid file header)
+	static void loadSongBinary(uint8_t *src, uint16_t dest_addr, uint16_t len, 
+								uint8_t basic_mode);
 
 	// then the emulation can be initiated
-	static void startupSong(uint32_t sample_rate, uint8_t is_rsid, uint8_t is_timer_driven_psid, 
-							uint8_t ntsc_mode, uint8_t compatibility, uint8_t basic_mode, 
-							uint16_t *init_addr, uint16_t load_end_addr, uint16_t play_addr, uint8_t actual_subsong);
+	static void startupTune(uint32_t sample_rate, uint8_t selected_track, uint8_t is_rsid, uint8_t is_timer_driven_psid, 
+							uint8_t is_ntsc, uint8_t compatibility, uint8_t basic_mode, 
+							uint16_t free_space, uint16_t *init_addr, uint16_t load_end_addr, 
+							uint16_t play_addr);
 
-	// run the emulator for the duration of one C64 screen refresh and return the respective audio output
-	static uint8_t runOneFrame(uint8_t is_single_sid, uint8_t speed, int16_t * synth_buffer, 
+	// run the emulator for the duration of one C64 screen refresh 
+	// and return the respective audio output
+	static uint8_t runOneFrame(uint8_t is_simple_sid_mode, uint8_t speed, int16_t * synth_buffer, 
 								int16_t **synth_trace_bufs, uint16_t samples_per_call);
 	
 	static void callKernalROMReset();
+	
 #ifdef TEST
 	static void rsidRunTest();
 #endif

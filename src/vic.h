@@ -17,18 +17,15 @@ void		vicReset(uint8_t is_rsid, uint8_t ntsc_mode);
 void		vicSetModel(uint8_t ntsc_mode);
 void 		vicSetDefaultsPSID(uint8_t timerDrivenPSID);
 
-// simulate next clock cycle
+// clocking
 void		vicClock();
 
 // CPU interactions
 uint8_t		vicStunCPU();	// 0: no stun; 1: allow "bus write"; 2: stun
 uint8_t		vicIRQ();
 
-
 // static configuration information
-double		vicFPS();	// frames per second
-uint16_t	vicLinesPerScreen();
-uint32_t	vicCyclesPerScreen();
+double		vicFramesPerSecond();
 
 // memory access interface (for memory.c)
 void		vicWriteMem(uint16_t addr, uint8_t value);

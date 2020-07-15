@@ -11,9 +11,6 @@ typedef unsigned short uint16_t;
 typedef signed long int32_t;
 typedef unsigned long uint32_t;
 
-// debug: trace what is happending on ADSR level
-//#define DBG_TRACE_ADSR	0	// ID of voice to trace
-
 
 /*
 * diagnostic information for GUI use
@@ -29,6 +26,7 @@ typedef enum {
 	DigiPWMTest=5		// new test-bit based PWM; e.g. Wonderland_XII-Digi_part_1.sid, GhostOrGoblin.sid, etc
 } DigiType;
 
+#define MAX_SIDS 10					// might eventually need to be increased 
 
 
 #endif

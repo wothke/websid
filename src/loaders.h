@@ -13,12 +13,11 @@
 extern "C" {
 #include "base.h"
 }
-#include "sid.h"	
 
 /**
 * Abstract "music file" loader.
 *
-* <p>note: most of the stuff here is kept static to allow for more compiler optimizations.
+* note: most of the stuff here is kept static to allow for more compiler optimizations.
 * Only one instance can be used at a time, i.e. the shared state information is defined by
 * whatever instance has been used last (see "load" API).
 */
@@ -32,7 +31,8 @@ public:
 	/**
 	* Loads a music file into the emulator.
 	*/
-	virtual uint32_t load(uint8_t *in_buffer, uint32_t in_buf_size, char *filename, void *basic_ROM, void *char_ROM, void *kernal_ROM) = 0;
+	virtual uint32_t load(uint8_t *in_buffer, uint32_t in_buf_size, char *filename, 
+							void *basic_ROM, void *char_ROM, void *kernal_ROM) = 0;
 
 	/**
 	* Select a specific track in a previsouly loaded song (see "load" API).
@@ -44,43 +44,24 @@ public:
 	*/
 	virtual uint8_t isTrackEnd() { return 0; };	// by default false
 	
-	// various accessors for music file specific settings
-	
-	static uint16_t getFreeSpace();
-	
-	static uint8_t getSidVersion();
-	static uint8_t isRSID();
-	static uint8_t isPSID();
-
-	static uint16_t getSidPlayAddr();
-	
-	static uint8_t getNTSCMode();
-
-	static uint8_t* getTargetChannels();
-	static uint8_t get2ndOutputChanIdx();
-	
-	static char** getInfoStrings();
-	
-	static uint8_t*  getSID6581s();
-	static uint8_t isSID6581();
-	
-	static uint16_t* getSIDAddresses();
-
+	// various accessors for music file specific meta information		
+	static uint8_t isExtendedSidFile();
+	static uint8_t isRSID();	
+	static uint8_t getCompatibility();
+	static uint8_t getNTSCMode();	
+	static char**  getInfoStrings();
 	static uint8_t getCurrentSongSpeed();
-	
-	/**
-	* Manually override original "SID model" setting from music file.
-	*/
-	static uint8_t setSID6581(uint8_t is6581);
-	
-	/**
-	* Manually override original "video mode" setting from music file.
-	*/
-	static void setNTSCMode(uint8_t is_ntsc);
+		
 protected:
 	FileLoader();
 	
 	static uint8_t getValidatedTrack(uint8_t selected_track);
+	
+	/**
+	* Configure the SID chips used in the current emulation.
+	*/
+	static void configureSids(uint16_t flags, uint8_t *addr_list);
+	static uint16_t getSidAddr(uint8_t center_byte);
 
 	void init();
 	
@@ -88,8 +69,10 @@ protected:
 
 	static void setRsidMode(uint8_t is_rsid);
 
-	static uint16_t getSidAddr(uint8_t center_byte);
-	static void configureSids(uint16_t flags, uint8_t *addr_list);
+	/**
+	* Manually override original "video mode" setting from music file.
+	*/
+	static void setNTSCMode(uint8_t is_ntsc);
 };
 
 #endif
