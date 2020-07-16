@@ -31,4 +31,8 @@ double		vicFramesPerSecond();
 void		vicWriteMem(uint16_t addr, uint8_t value);
 uint8_t		vicReadMem(uint16_t addr);
 
+
+// hack used to replace default "badline" handling
+void		vicSetStunImpl(uint8_t (*f)(uint8_t x, uint16_t y, uint8_t cpr));
+
 #endif

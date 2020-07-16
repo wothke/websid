@@ -49,7 +49,37 @@ static uint16_t _lines_per_screen;
 static uint8_t _x;	// in cycles
 static uint16_t _y;	// in rasters
 
+
+static uint8_t _badline_den;
+
 static uint32_t _raster_latch;	// optimization: D012 + D011-bit 8 combined
+
+static uint8_t (*_stunFunc)(uint8_t x, uint16_t y, uint8_t cpr);
+
+// default impl
+static uint8_t intBadlineStun(uint8_t x, uint16_t y, uint8_t cpr) {
+	if (_badline_den) {	
+		// optimization?: the _y-pos and "& 0x7" checks could be cached
+		// - avoiding re-checks on each cycle - but at a cost for the 
+		// vicClock() logic; better keep the extra cost limited to 
+		// those few songs that use it
+		
+		if ((y >= 0x30) && (y <= 0xf7) && ((memReadIO(0xd011) & 0x7) == (y & 0x7))) {
+			if ((x >= 11) && (x <= 53)) {
+				if ((x >= 14)) {
+					return 2;	// stun completely
+				} else {
+					return 1;	// stun on read
+				}
+			}
+		}
+	}
+	return 0;
+}
+
+void vicSetStunImpl(uint8_t (*f)(uint8_t x, uint16_t y, uint8_t cpr)) {
+	_stunFunc= f;
+}
 
 double vicFramesPerSecond() {
 	return _fps;
@@ -85,6 +115,7 @@ void vicSetModel(uint8_t ntsc_mode) {
 	_y= _lines_per_screen-1;
 	
 	// clocks per frame: NTSC: 17095 - PAL: 19656		
+	_stunFunc= &intBadlineStun;
 }
 
 static void checkIRQ() {
@@ -108,6 +139,8 @@ static void checkIRQ() {
 void vicClock() {
 	if (!_x && !_y) {	// special case: in line 0 it is cycle 1		
 		checkIRQ();
+		
+		_badline_den= memReadIO(0xd011) & 0x10;	// default for new frame
 	}
 	_x+= 1;	
 	
@@ -153,7 +186,8 @@ uint8_t vicIRQ() {
  "badline" there is a 3 cycle "stun" period (during which more or less
  cycles are lost depending on the current OP) before the bus is
  completely blocked for the CPU. For more details see "Missing Cycles"
- by Pasi 'Albert' Ojala
+ by Pasi 'Albert' Ojala & "The MOS 6567/6569 video controller (VIC-II)
+ and its application in the Commodore 64" by Christian Bauer.
 
  Few songs actually depend on respective sprite timing and it isn't
  implemented here: The limited benefits do not seem to be worth the 
@@ -161,19 +195,7 @@ uint8_t vicIRQ() {
  depend on it: Vicious_SID_2-15638Hz.sid, Fantasmolytic_tune_2).
 */
 uint8_t vicStunCPU() {
-	const uint8_t ctrl= memReadIO(0xd011);
-	if (ctrl & 0x10) {	// display enabled
-		if ((_y >= 0x30) && (_y <= 0xf7) && ((ctrl & 0x7) == (_y & 0x7))) {
-			if ((_x >= 11) && (_x <= 53)) {
-				if ((_x >= 14)) {
-					return 2;	// stun completely
-				} else {
-					return 1;	// stun on read
-				}
-			}
-		}
-	}	
-	return 0;
+	return _stunFunc(_x, _y, _cycles_per_raster);		
 }
 
 static void cacheRasterLatch() {
@@ -199,6 +221,8 @@ void vicReset(uint8_t is_rsid, uint8_t ntsc_mode) {
 		memWriteIO(0xd011, 0x1B);
 		memWriteIO(0xd012, 0x0); 	// raster must be below 0x100
 	}
+	_badline_den= 1;	// see d011-defaults above
+	
 	cacheRasterLatch();
 }
 
@@ -228,8 +252,7 @@ static void writeD019(uint8_t value) {
 	
 	// "The bit 7 in the latch $d019 reflects the inverted state of
 	// the IRQ output of the VIC.", i.e. if the source conditions
-	// clear, so does the overall output. XXX when is this status
-	// updated?
+	// clear, so does the overall output.
 	
 	// test-case: some songs only clear the "RASTER" but not the "IRQ"
 	// flag (e.g. Ozone.sid)
@@ -238,7 +261,6 @@ static void writeD019(uint8_t value) {
 	// "expects" the IRQ to be immediately retriggered.. what's the
 	// difference in this long running IRQ handler? XXX some special
 	// case does not seem to be handled correctly yet!
-
 	
 	uint8_t v=  memReadIO(0xd019);
 	v = v&(~value);					// clear (source) flags directly
@@ -263,7 +285,21 @@ static void writeD01A(uint8_t value) {
 
 void vicWriteMem(uint16_t addr, uint8_t value) {
 	switch (addr) {
-		case 0xd011:
+		case 0xd011: {
+			const uint8_t new_den= value & 0x10;
+			
+			// badlineCondition: "..if the DEN bit was set during an
+			// arbitrary cycle of raster line $30 [for at least one cycle]"
+			
+			if (_y < 0x2f) {			// our 1st line is 0
+				_badline_den= new_den;
+			
+			} else if (_y == 0x2f) {
+				// theoretically the "flag" could still be cleared in the
+				// very 1st cycle of the line (ignore this special case)
+				_badline_den|= new_den;
+			}
+		}
 		case 0xd012:
 			memWriteIO(addr, value);
 			cacheRasterLatch();

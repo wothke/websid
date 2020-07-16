@@ -85,7 +85,6 @@
 
 // todo: remove failed optimization experiments
 //#define OPT_INLINE
-//#define OPT_CLASS2
 
 #ifdef TEST
 uint8_t test_running= 0;
@@ -295,28 +294,6 @@ uint8_t cpuIsValidPcPSID() {
 #define acc 12
 #define rel 13
 
-#ifdef OPT_CLASS2
-// note: respective page boundary logic seems to be irrelevant and 
-// performance measurements did not show any reproducible improvement
-// .. the test showed however that Chrome's current WASM impl is 2x 
-// slower than FF's! what a POS!
-
-// enum of all MOS6510 operations
-enum {
-	// sort ops to optimize below isClass2() test
-
-	adc, and, cmp, eor, lae, lax, lda, ldx, ldy, nop, ora, sbc, // 0..11
-	
-	     alr, anc,      ane, arr, asl, bcc, bcs, beq, bit, bmi, bne, bpl, brk, bvc, 
-    bvs, clc, cld, cli, clv,      cpx, cpy, dcp, dec, dex, dey,      inc, inx, iny, 
-	isb, jam, jmp, jsr,                          lsr, lxa,           pha, php, pla, 
-	plp, rla, rol, ror, rra, rti, rts, sax,      sbx, sec, sed, sei, sha, shs, shx, 
-	shy, slo, sre, sta, stx, sty, tax, tay, tsx, txa, txs, tya,
-	sti, stn, nul	// pseudo OPs (replacing unusable JAM OPs)
-};
-#define isClass2(cmd) (cmd < 12)
-
-#else 
 // enum of all MOS6510 operations
 enum {
 	adc, alr, anc, and, ane, arr, asl, bcc, bcs, beq, bit, bmi, bne, bpl, brk, bvc, 
@@ -326,27 +303,6 @@ enum {
 	shy, slo, sre, sta, stx, sty, tax, tay, tsx, txa, txs, tya,
 	sti, stn, nul	// pseudo OPs (replacing unusable JAM OPs)
 };
-
-static uint16_t isClass2(int32_t cmd) {
-	switch (cmd) {
-		case adc:
-		case and:
-		case cmp:
-		case eor:
-		case lae:
-		case lax:
-		case lda:
-		case ldx:
-		case ldy:
-		case nop:
-		case ora:
-		case sbc:
-			return 1;
-		default:
-			return 0;
-	}
-}
-#endif
 
 // artificial OPs patched in the positions of unsable JAM ops to ease impl:
 
@@ -588,32 +544,62 @@ static void setaddr(int32_t mode, uint8_t val) {
 
 static int8_t _next_instruction_cycles;	// number of cycles that will be used by the next instruction; fixme - ugly global var
 
-static void addPageBoundaryReadCycle(uint8_t opc, int32_t mode) {
-    static uint16_t ad,ad2;  // avoid reallocation
-    switch(mode)
-    {
-        case abx:
-        case aby:			
-            ad=memGet(_pc++);
-            ad|=memGet(_pc++)<<8;
-            ad2=ad +(mode==abx?_x:_y);
+#define ABS_INDEXED_ADDR(ad, ad2, reg) \
+	ad= memGet(_pc++); \
+	ad|= memGet(_pc++)<<8; \
+	ad2= ad + reg
+	
+#define CHECK_BOUNDARY_CROSSED(opc, ad, ad2) \
+	if ((ad2&0xff00)!=(ad&0xff00)) { \
+		_next_instruction_cycles++; \
+	}
+	
+#define INDIRECT_INDEXED_ADDR(ad, ad2) \
+	ad= memGet(_pc++); \
+	ad2= memGet(ad); \
+	ad2|= memGet((ad+1)&0xff)<<8; \
+	ad= ad2 + _y;
 
-			if (isClass2(_opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00))) {
-				// page boundary crossed
-				_next_instruction_cycles++;
-			}
+
+static void addPageBoundaryReadCycle(uint8_t opc, int32_t mode) {
+	
+	// only relevant/called in abx/aby/idy mode and depending 
+	// on the operation some of these modes may not exist, e.g.
+	// NOP: only exists in "abx" variant
+	// LDX: only "aby"
+	// LDY: only "abx"	
+	
+    static uint16_t ad, ad2;  // avoid reallocation
+    switch(mode) {
+        case abx:
+			ABS_INDEXED_ADDR(ad, ad2, _x);
+			CHECK_BOUNDARY_CROSSED(opc, ad, ad2)
+			break;
+        case aby:		
+			ABS_INDEXED_ADDR(ad, ad2, _y);
+			CHECK_BOUNDARY_CROSSED(opc, ad, ad2)
 			break;
         case idy:
 			// indirect indexed, e.g. LDA ($20),Y
-            ad=memGet(_pc++);
-            ad2=memGet(ad);
-            ad2|=memGet((ad+1)&0xff)<<8;
-            ad=ad2+_y;
-			
-			if (isClass2(_opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00)))	{
-				// page boundary crossed
-				_next_instruction_cycles++;
-			}
+			INDIRECT_INDEXED_ADDR(ad, ad2);
+			CHECK_BOUNDARY_CROSSED(opc, ad, ad2)
+			break;
+    }  
+}
+
+static void addPageBoundaryReadCycle2(uint8_t opc, int32_t mode) {
+	// see synertek_programming_manual.pdf
+	// ORA/AND: +1 only for "abx" and "aby" but NOT "idy"!
+	
+    static uint16_t ad, ad2;  // avoid reallocation
+    switch(mode) {
+        case abx:
+			ABS_INDEXED_ADDR(ad, ad2, _x);
+			CHECK_BOUNDARY_CROSSED(opc, ad, ad2)
+			break;
+        case aby:		
+			ABS_INDEXED_ADDR(ad, ad2, _y);
+			CHECK_BOUNDARY_CROSSED(opc, ad, ad2)
 			break;
     }  
 }
@@ -633,26 +619,6 @@ static void addBranchOpCycles(uint8_t opc, int32_t flag) {
 		// + 2 if branch occurs to different page
     	_next_instruction_cycles+= diff; 
 	}
-}
-
-static void addPageBoundaryWriteCycle(uint8_t opc, int32_t mode) {
-	// add additional execution cycle caused by crossed page boundary
-    static uint16_t ad,ad2;  // avoid reallocation
-    switch(mode) {
-        case abx:
-        case aby:
-            ad=memGet(_pc++);
-            ad|=memGet(_pc++)<<8;				
-            ad2=ad +(mode==abx?_x:_y);
-
-			if (isClass2(_opcodes[opc]) && ((ad2&0xff00)!=(ad&0xff00))) {
-				// page boundary crossed
-				_next_instruction_cycles++;
-			}				
-            break;
-		 default:
-            break;
-    }
 }
 
 static void prefetchOP( int16_t *opcode, int8_t *cycles) {
@@ -678,15 +644,34 @@ static void prefetchOP( int16_t *opcode, int8_t *cycles) {
 	_next_instruction_cycles= _opbase_frame_cycles[opc];
     
 	// calc adjustments 
-	switch (_opcodes[opc]) {	// XXX FIXME cleanup below groups.. sort opcodes for faster check?
-        case adc: 
-		case alr:
-        case anc:
-        case and:
-        case arr:
-        case asl:
-			addPageBoundaryReadCycle(opc, mode);
+	switch (_opcodes[opc]) {
+
+		// ops that are subject to +1 cycle on page crossing - according to:
+		// 1) synertek_programming_manual
+		// 2) MOS6510UnintendedOpcodes
+		// 3) "Extra Instructions Of The 65XX Series CPU"
+
+		// problem: most of the above docs are obviously incomplete and 
+		// they might even be wrong
+		
+		case adc:
+		case cmp:
+		case eor:
+		case lax:	// see 2,3: only aby,idy exist
+		case lda:
+		case ldx:
+		case ldy:
+		case nop:	// see 2: only abx exits
+		case sbc:
+ 			addPageBoundaryReadCycle(opc, mode);
             break;
+
+        case and:
+        case ora:
+		case lae:	// see 2,3: only aby exists
+			addPageBoundaryReadCycle2(opc, mode);
+            break;
+			
         case bcc:
             addBranchOpCycles(opc, !(_p&FLAG_C));
             break;
@@ -711,115 +696,9 @@ static void prefetchOP( int16_t *opcode, int8_t *cycles) {
         case bvs:
             addBranchOpCycles(opc, _p&FLAG_V);
             break;
-        case bit:
-			addPageBoundaryReadCycle(opc, mode);
-            break;
-        case ane:
-        case brk:
-        case clc:
-        case cld:
-        case cli:
-        case clv:
-            break;
-			
-        case cmp:
-        case cpx:
-        case cpy:
-        case dcp:
-        case dec:
-			addPageBoundaryReadCycle(opc, mode);
-            break;
-			
-        case dex:
-        case dey:
-            break;
-			
-        case eor:
-        case inc:
-			addPageBoundaryReadCycle(opc, mode);
-            break;
-			
-        case inx:
-        case iny:
-            break;
-			
-        case isb:
-			addPageBoundaryReadCycle(opc, mode);
-			break;
-			
-		case jam:
-        case jmp:
-        case jsr:
-            break;
-			
-		case lax:
-		case lae:
-		case lxa:
-        case lda:
-        case ldx:
-        case ldy:
-        case lsr:      
-        case nop:
-        case ora:
- 			addPageBoundaryReadCycle(opc, mode);
-            break;
-			
-        case pha:
-        case php:
-        case pla:
-        case plp:
-            break;
-			
-        case rla:
-        case rol:
-        case ror:
-        case rra:
-			addPageBoundaryReadCycle(opc, mode);
-            break;
-			
-        case rti:
-        case rts:		
-            break;
-        case sbc:
-        case sax:
-		case sbx:
-			addPageBoundaryReadCycle(opc, mode);
-			break;
-			
-        case sec:
-        case sed:
-        case sei:
-            break;
-			
-        case sha:
-        case slo:
-        case sre:
-        case shx:
-        case shy:
-			addPageBoundaryReadCycle(opc, mode);
-            break;
-			
-        case sta:
-        case stx:
-        case sty:
-            addPageBoundaryWriteCycle(opc,mode);
-            break;
-			
-        case tax:
-        case tay:
-        case tsx:
-        case txa:
-        case txs:
-        case tya:
-            break; 
-			
-/* hard to think of a good reason why anybody would ever use this..
-		case shs:	// 	TAS						
-			addPageBoundaryReadCycle(opc, mode);
-            break;
-*/						
+
 		default:			
-			addPageBoundaryReadCycle(opc, mode);
+			break;
     }
 	
 	_pc= _orig_pc;
