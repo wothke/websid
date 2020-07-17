@@ -644,6 +644,10 @@ void SID::reset(uint16_t addr, uint32_t sample_rate, uint8_t is_6581, uint32_t c
 	Envelope::resetConfiguration(sample_rate);
 	
 	_digi->reset(clock_rate, is_rsid, compatibility);
+		
+	// turn on full volume
+	memWriteIO(getBaseAddr()+0x18, 0xf);
+	poke(0x18, 0xf);
 }
 
 uint8_t SID::isModel6581() {
@@ -1022,11 +1026,7 @@ void SID::resetAll(uint32_t sample_rate, uint32_t clock_rate, uint8_t is_rsid,
 	for (uint8_t i= 0; i<_used_sids; i++) {
 		SID &sid= _sids[i];
 		sid.reset(_sid_addr[i], sample_rate, _sid_is_6581[i], clock_rate, is_rsid, compatibility, _sid_target_chan[i]);	// stereo only used for my extended sid-file format
-		
-		// turn on full volume
-		memWriteIO(sid.getBaseAddr()+0x18, 0xf);
-		sid.poke(0x18, 0xf);
-	
+			
 		if (i) {	// 1st entry is always the regular default SID
 			memset((void*)(_mem2sid+_sid_addr[i]-0xd400), i, 0x1f);
 		}

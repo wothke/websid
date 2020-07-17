@@ -272,7 +272,7 @@ const static uint8_t _irq_end_handler_FEBC[6] ={0x68,0xa8,0x68,0xaa,0x68,0x40};
 
 const static uint8_t _delay_handler_EEB3[8] ={0x8a,0xa2,0xb8,0xca,0xd0,0xfd,0xaa,0x60};	// used by Random_Ninja.sid
 
-const static uint8_t _driverPSID[33] = {	// see sidplayer.c: driver_size
+const static uint8_t _driverPSID[33] = {
 	// PSID main
 	0x4c,0x00,0x00,		// JMP endless loop
 	

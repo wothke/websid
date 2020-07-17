@@ -55,6 +55,7 @@ protected:
 	*/
 	uint8_t getSR();	
 private:
+	void syncADR();
 	uint8_t triggerLFSR_Threshold(uint16_t threshold, uint16_t *end);
 	uint8_t handleExponentialDelay();
 	

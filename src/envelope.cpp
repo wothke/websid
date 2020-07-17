@@ -75,6 +75,17 @@ Envelope::Envelope(SID *sid, uint8_t voice) {
 	_sid= sid;
 	_voice= voice;
 	_state= (void*) malloc(sizeof(struct EnvelopeState));
+	
+	syncADR();
+}
+
+void Envelope::syncADR() {
+	// synchronize cache with ADSR register content
+	// testcase: Bella_Ciao.sid
+	EnvelopeState* state= getState(this);
+	state->attack  = __counter_period[state->ad >> 4];
+	state->decay   = __counter_period[state->ad & 0xf];
+	state->release = __counter_period[state->sr & 0xf];
 }
 
 uint8_t Envelope::getAD() {
@@ -150,6 +161,8 @@ uint8_t Envelope::getOutput() {
 void Envelope::reset() {
 	struct EnvelopeState *state= getState(this);
 	memset((uint8_t*)state, 0, sizeof(EnvelopeState));
+	
+	syncADR();
 	
 	state->envphase= Release;
 	state->zero_lock= 1;	
