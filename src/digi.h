@@ -121,7 +121,7 @@ private:
 	PulseDetectState _pulse_detect_state[3];
 	uint32_t _pulse_detect_ts[3];
 	uint8_t _pulse_detect_delayed_sample[3];
-	uint8_t _pulse_detect_mode[3];	// 2= Pulse width LO/ 3= Pulse width HI
+//	uint8_t _pulse_detect_mode[3];	// 2= Pulse width LO/ 3= Pulse width HI
 	
 	// swallow's PWM
 	uint16_t _swallow_pwm[3];

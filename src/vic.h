@@ -34,5 +34,6 @@ uint8_t		vicReadMem(uint16_t addr);
 
 // hack used to replace default "badline" handling
 void		vicSetStunImpl(uint8_t (*f)(uint8_t x, uint16_t y, uint8_t cpr));
+uint8_t		(*vicGetStunImpl(void))(uint8_t, uint16_t, uint8_t);
 
 #endif

@@ -80,6 +80,9 @@ static uint8_t intBadlineStun(uint8_t x, uint16_t y, uint8_t cpr) {
 void vicSetStunImpl(uint8_t (*f)(uint8_t x, uint16_t y, uint8_t cpr)) {
 	_stunFunc= f;
 }
+uint8_t (*vicGetStunImpl(void))(uint8_t, uint16_t, uint8_t) { // crappy C syntax
+	return _stunFunc;
+}
 
 double vicFramesPerSecond() {
 	return _fps;
@@ -115,7 +118,6 @@ void vicSetModel(uint8_t ntsc_mode) {
 	_y= _lines_per_screen-1;
 	
 	// clocks per frame: NTSC: 17095 - PAL: 19656		
-	_stunFunc= &intBadlineStun;
 }
 
 static void checkIRQ() {
@@ -203,6 +205,7 @@ static void cacheRasterLatch() {
 }
 
 void vicReset(uint8_t is_rsid, uint8_t ntsc_mode) {
+	_stunFunc= &intBadlineStun;
 	
 	vicSetModel(ntsc_mode); 
 	

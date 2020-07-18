@@ -23,10 +23,21 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 		this._basicROM= this.base64DecodeROM(basicROM, this._ROM_SIZE);
 		this._charROM= this.base64DecodeROM(charROM, this._CHAR_ROM_SIZE);
 		this._kernalROM= this.base64DecodeROM(kernalROM, this._ROM_SIZE);
+		
+		this._digiShownLabel= "";
+		this._digiShownRate= 0;
+		
+		this.resetDigiMeta();
 	}; 
 	// TinyRSid's sample buffer contains 2-byte (signed short) sample data 
 	// for 1 channel
 	extend(EmsHEAP16BackendAdapter, $this, {
+		resetDigiMeta: function() {
+			this._digiTypes= {};
+			this._digiRate= 0;
+			this._digiBatches= 0;
+			this._digiEmuCalls= 0;
+		},
 		enableScope: function(enable) {
 			this._scopeEnabled= enable;
 		},		
@@ -56,11 +67,47 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 			text+= (j?(line+"\n"):"")+"}\n";
 			console.log(text);
 		},
+		updateDigiMeta: function() {
+			// get a "not so jumpy" status describing digi output
+			
+			var dTypeStr= this.getExtAsciiString(this.Module.ccall('getDigiTypeDesc', 'number'));
+			var dRate= this.Module.ccall('getDigiRate', 'number');
+			// "computeAudioSamples" correspond to 50/60Hz, i.e. to show some
+			// status for at least half a second, labels should only be updated every
+			// 25/30 calls..
+
+			if (!isNaN(dRate) && dRate) {
+				this._digiBatches++;
+				this._digiRate+= dRate;
+				this._digiTypes[dTypeStr]= 1;	// collect labels
+			}
+			
+			this._digiEmuCalls++;
+			if (this._digiEmuCalls == 20) {
+				this._digiShownLabel= "";
+				
+				if (!this._digiBatches) {
+					this._digiShownRate= 0;
+				} else {
+					this._digiShownRate= Math.round(this._digiRate/this._digiBatches);
+					
+					const arr = Object.keys(this._digiTypes).sort();
+					for (const key of arr) {
+						if (key.length && (key != "NONE"))
+							this._digiShownLabel+= (this._digiShownLabel.length ? "&"+key : key);
+					}
+				}
+				this.resetDigiMeta();
+			}
+		},
 		computeAudioSamples: function() {
 			var len= this.Module.ccall('computeAudioSamples', 'number');
-			if (len <= 0) {			
+			if (len <= 0) {
+				this.resetDigiMeta();
 				return 1; // >0 means "end song"
-			}		
+			}
+			this.updateDigiMeta();
+			
 			return 0;	
 		},
 		getPathAndFilename: function(filename) {
@@ -112,6 +159,8 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 			if (typeof options.track == 'undefined') {
 				options.track= -1;
 			}
+			this.resetDigiMeta();
+		
 			return this.Module.ccall('playTune', 'number', ['number', 'number'], [options.track, traceSID]);
 		},
 		teardown: function() {
@@ -225,10 +274,10 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 			return this.Module.ccall('getDigiType', 'number');
 		},
 		getDigiTypeDesc: function() {
-			return this.getExtAsciiString(this.Module.ccall('getDigiTypeDesc', 'number'));
+			return this._digiShownLabel;
 		},
 		getDigiRate: function() {
-			return this.Module.ccall('getDigiRate', 'number');
+			return this._digiShownRate;
 		},
 		enableVoice: function(sidIdx, voice, on) {
 			this.Module.ccall('enableVoice', 'number', ['number', 'number', 'number'], [sidIdx, voice, on]);

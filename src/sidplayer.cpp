@@ -74,10 +74,6 @@ static uint32_t 	_number_of_samples_to_render = 0;
 static uint8_t	 	_sound_started;
 static uint8_t	 	_skip_silence_loop;
 
-static int8_t 		_digi_diagnostic;
-static int16_t 		_digiPreviousRate;
-static int16_t 		_digi_average_rate;
-
 static uint32_t		_sample_rate;
 
 static uint32_t		_trace_sid= 0;
@@ -217,24 +213,7 @@ extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 			
 				Core::runOneFrame(is_simple_sid_mode, speed, _synth_buffer,
 									_synth_trace_buffers, _chunk_size);
-				
-				DigiType t= SID::getGlobalDigiType();
-				if (t) {
-					uint16_t rate= SID::getGlobalDigiRate();
-					
-					if (rate > 10) {
-						_digi_diagnostic= t;
-						_digi_average_rate = (_digiPreviousRate + rate) >> 1;	// average out frame overflow issues
-						_digiPreviousRate= rate;
-					} else {
-						_digi_diagnostic= DigiNone;
-						_digiPreviousRate= _digi_average_rate = 0;
-					}
-				} else {
-					_digi_diagnostic= DigiNone;
-					_digiPreviousRate= _digi_average_rate = 0;
-				}
-								
+												
 				if (!_sound_started) {
 					if (SID::isAudible()) {
 						_sound_started= 1;
@@ -311,9 +290,7 @@ extern "C" uint32_t playTune(uint32_t selected_track, uint32_t trace_sid)  __att
 extern "C" uint32_t EMSCRIPTEN_KEEPALIVE playTune(uint32_t selected_track, uint32_t trace_sid) {
 	_ready_to_play= 0;
 	_trace_sid= trace_sid; 
-			
-	_digi_diagnostic= _digi_average_rate= _digiPreviousRate= 0;
-	
+				
 	_sound_started= 0;
 		
 	// note: crappy BASIC songs like Baroque_Music_64_BASIC take 100sec before
@@ -426,17 +403,19 @@ extern "C" uint16_t EMSCRIPTEN_KEEPALIVE getRAM(uint16_t addr) {
 
 extern "C" uint16_t getGlobalDigiType() __attribute__((noinline));
 extern "C" uint16_t EMSCRIPTEN_KEEPALIVE getGlobalDigiType() {
-	return (_digi_diagnostic > 0) ? _digi_diagnostic : 0;
+	return SID::getGlobalDigiType();
 }
 
 extern "C" const char * getGlobalDigiTypeDesc() __attribute__((noinline));
 extern "C" const char * EMSCRIPTEN_KEEPALIVE getGlobalDigiTypeDesc() {
-	return (_digi_diagnostic > 0) ? SID::getGlobalDigiTypeDesc() : "";
+	uint16_t t= SID::getGlobalDigiType();
+	return (t > 0) ? SID::getGlobalDigiTypeDesc() : "";
 }
 
 extern "C" uint16_t getGlobalDigiRate() __attribute__((noinline));
 extern "C" uint16_t EMSCRIPTEN_KEEPALIVE getGlobalDigiRate() {
-	return (_digi_diagnostic > 0) ? _digi_average_rate : 0;
+	uint16_t t= SID::getGlobalDigiType();
+	return (t > 0) ? SID::getGlobalDigiRate() : 0;
 }
 
 extern "C" int getNumberTraceStreams() __attribute__((noinline));

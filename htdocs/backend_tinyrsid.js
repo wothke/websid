@@ -35,8 +35,8 @@ if(k.memory){b=k.memory;var c=a.buffer;b.byteLength<c.byteLength&&z("the new buf
 b);x(b)})}if("object"!==typeof WebAssembly)return z("no native wasm support detected"),!1;if(!(a.wasmMemory instanceof WebAssembly.Memory))return z("no native wasm Memory in use"),!1;b.memory=a.wasmMemory;f.global={NaN:NaN,Infinity:Infinity};f["global.Math"]=Math;f.env=b;V++;a.monitorRunDependencies&&a.monitorRunDependencies(V);if(a.instantiateWasm)try{return a.instantiateWasm(f,d)}catch(pa){return z("Module.instantiateWasm callback failed with error: "+pa),!1}a.wasmBinary||"function"!==typeof WebAssembly.instantiateStreaming||
 Y(g)||"function"!==typeof fetch?h(e):WebAssembly.instantiateStreaming(fetch(g,{credentials:"same-origin"}),f).then(e,function(b){z("wasm streaming compile failed: "+b);z("falling back to ArrayBuffer instantiation");h(e)});return{}}var d="tinyrsid.wast",g="tinyrsid.wasm",h="tinyrsid.temp.asm.js";Y(d)||(d=u(d));Y(g)||(g=u(g));Y(h)||(h=u(h));var f={global:null,env:null,asm2wasm:aa,parent:a},k=null;a.asmPreload=a.asm;var H=a.reallocBuffer;a.reallocBuffer=function(b){if("asmjs"===qa)var c=H(b);else a:{var d=
 a.usingWasm?65536:16777216;0<b%d&&(b+=d-b%d);d=a.buffer.byteLength;if(a.usingWasm)try{c=-1!==a.wasmMemory.grow((b-d)/65536)?a.buffer=a.wasmMemory.buffer:null;break a}catch(va){c=null;break a}c=void 0}return c};var qa="";a.asm=function(b,c){if(!c.table){b=a.wasmTableSize;void 0===b&&(b=1024);var d=a.wasmMaxTableSize;c.table="object"===typeof WebAssembly&&"function"===typeof WebAssembly.Table?void 0!==d?new WebAssembly.Table({initial:b,maximum:d,element:"anyfunc"}):new WebAssembly.Table({initial:b,
-element:"anyfunc"}):Array(b);a.wasmTable=c.table}c.memoryBase||(c.memoryBase=a.STATIC_BASE);c.tableBase||(c.tableBase=0);c=e(c);assert(c,"no binaryen method succeeded.");return c}})();var ma=[function(){console.log("info cannot be retrieved  from corrupt .mus file")},function(){console.log("FATAL ERROR: no free memory for driver")},function(){console.log("ERROR: PSID INIT hangs")},function(b){console.log("BRK from:        $"+b.toString(16))}];L=1024;M=L+309616;ha.push({f:function(){na()}});
-a.STATIC_BASE=L;a.STATIC_BUMP=309616;M+=16;function ra(b){return Math.pow(2,b)}var sa=M;M=M+4+15&-16;R=sa;N=O=A(M);P=N+T;Q=A(P);K[R>>2]=Q;a.wasmTableSize=13;a.wasmMaxTableSize=13;a.b={};
+element:"anyfunc"}):Array(b);a.wasmTable=c.table}c.memoryBase||(c.memoryBase=a.STATIC_BASE);c.tableBase||(c.tableBase=0);c=e(c);assert(c,"no binaryen method succeeded.");return c}})();var ma=[function(){console.log("info cannot be retrieved  from corrupt .mus file")},function(){console.log("FATAL ERROR: no free memory for driver")},function(){console.log("ERROR: PSID INIT hangs")},function(b){console.log("BRK from:        $"+b.toString(16))}];L=1024;M=L+309600;ha.push({f:function(){na()}});
+a.STATIC_BASE=L;a.STATIC_BUMP=309600;M+=16;function ra(b){return Math.pow(2,b)}var sa=M;M=M+4+15&-16;R=sa;N=O=A(M);P=N+T;Q=A(P);K[R>>2]=Q;a.wasmTableSize=17;a.wasmMaxTableSize=17;a.b={};
 a.c={abort:x,enlargeMemory:function(){ea()},getTotalMemory:function(){return S},abortOnCannotGrowMemory:ea,___setErrNo:function(b){a.___errno_location&&(K[a.___errno_location()>>2]=b);return b},_emscripten_asm_const_i:function(b){return ma[b]()},_emscripten_asm_const_ii:function(b,c){return ma[b](c)},_emscripten_memcpy_big:function(b,c,e){G.set(G.subarray(c,c+e),b);return b},_llvm_exp2_f64:function(){return ra.apply(null,arguments)},DYNAMICTOP_PTR:R,STACKTOP:O};var ta=a.asm(a.b,a.c,buffer);
 a.asm=ta;var na=a.__GLOBAL__sub_I_sid_cpp=function(){return a.asm.__GLOBAL__sub_I_sid_cpp.apply(null,arguments)};a._computeAudioSamples=function(){return a.asm._computeAudioSamples.apply(null,arguments)};a._enableVoice=function(){return a.asm._enableVoice.apply(null,arguments)};a._enableVoices=function(){return a.asm._enableVoices.apply(null,arguments)};a._envIsNTSC=function(){return a.asm._envIsNTSC.apply(null,arguments)};a._envIsSID6581=function(){return a.asm._envIsSID6581.apply(null,arguments)};
 a._envSetNTSC=function(){return a.asm._envSetNTSC.apply(null,arguments)};a._envSetSID6581=function(){return a.asm._envSetSID6581.apply(null,arguments)};a._free=function(){return a.asm._free.apply(null,arguments)};a._getBufferVoice1=function(){return a.asm._getBufferVoice1.apply(null,arguments)};a._getBufferVoice2=function(){return a.asm._getBufferVoice2.apply(null,arguments)};a._getBufferVoice3=function(){return a.asm._getBufferVoice3.apply(null,arguments)};
@@ -76,10 +76,21 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 		this._basicROM= this.base64DecodeROM(basicROM, this._ROM_SIZE);
 		this._charROM= this.base64DecodeROM(charROM, this._CHAR_ROM_SIZE);
 		this._kernalROM= this.base64DecodeROM(kernalROM, this._ROM_SIZE);
+		
+		this._digiShownLabel= "";
+		this._digiShownRate= 0;
+		
+		this.resetDigiMeta();
 	}; 
 	// TinyRSid's sample buffer contains 2-byte (signed short) sample data 
 	// for 1 channel
 	extend(EmsHEAP16BackendAdapter, $this, {
+		resetDigiMeta: function() {
+			this._digiTypes= {};
+			this._digiRate= 0;
+			this._digiBatches= 0;
+			this._digiEmuCalls= 0;
+		},
 		enableScope: function(enable) {
 			this._scopeEnabled= enable;
 		},		
@@ -109,11 +120,47 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 			text+= (j?(line+"\n"):"")+"}\n";
 			console.log(text);
 		},
+		updateDigiMeta: function() {
+			// get a "not so jumpy" status describing digi output
+			
+			var dTypeStr= this.getExtAsciiString(this.Module.ccall('getDigiTypeDesc', 'number'));
+			var dRate= this.Module.ccall('getDigiRate', 'number');
+			// "computeAudioSamples" correspond to 50/60Hz, i.e. to show some
+			// status for at least half a second, labels should only be updated every
+			// 25/30 calls..
+
+			if (!isNaN(dRate) && dRate) {
+				this._digiBatches++;
+				this._digiRate+= dRate;
+				this._digiTypes[dTypeStr]= 1;	// collect labels
+			}
+			
+			this._digiEmuCalls++;
+			if (this._digiEmuCalls == 20) {
+				this._digiShownLabel= "";
+				
+				if (!this._digiBatches) {
+					this._digiShownRate= 0;
+				} else {
+					this._digiShownRate= Math.round(this._digiRate/this._digiBatches);
+					
+					const arr = Object.keys(this._digiTypes).sort();
+					for (const key of arr) {
+						if (key.length && (key != "NONE"))
+							this._digiShownLabel+= (this._digiShownLabel.length ? "&"+key : key);
+					}
+				}
+				this.resetDigiMeta();
+			}
+		},
 		computeAudioSamples: function() {
 			var len= this.Module.ccall('computeAudioSamples', 'number');
-			if (len <= 0) {			
+			if (len <= 0) {
+				this.resetDigiMeta();
 				return 1; // >0 means "end song"
-			}		
+			}
+			this.updateDigiMeta();
+			
 			return 0;	
 		},
 		getPathAndFilename: function(filename) {
@@ -165,6 +212,8 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 			if (typeof options.track == 'undefined') {
 				options.track= -1;
 			}
+			this.resetDigiMeta();
+		
 			return this.Module.ccall('playTune', 'number', ['number', 'number'], [options.track, traceSID]);
 		},
 		teardown: function() {
@@ -278,10 +327,10 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 			return this.Module.ccall('getDigiType', 'number');
 		},
 		getDigiTypeDesc: function() {
-			return this.getExtAsciiString(this.Module.ccall('getDigiTypeDesc', 'number'));
+			return this._digiShownLabel;
 		},
 		getDigiRate: function() {
-			return this.Module.ccall('getDigiRate', 'number');
+			return this._digiShownRate;
 		},
 		enableVoice: function(sidIdx, voice, on) {
 			this.Module.ccall('enableVoice', 'number', ['number', 'number', 'number'], [sidIdx, voice, on]);

@@ -15,6 +15,8 @@
 #include "memory.h"
 #include "vic.h"
 
+static uint8_t (*_defaultStunFunc)(uint8_t x, uint16_t y, uint8_t cpr);
+
 /*
 * Immigrant_Song.sid: hardcore badline timing
 */
@@ -142,7 +144,7 @@ Utopia_tune_6.sid).
 - very few songs actually depend on sprite-bad-cycles (and those that do use 
 a limited set of sprite-configurations) => until there is a signicicant 
 amount of songs that would actually benefit it isn't worth the trouble to 
-add a generic implementation 
+add a generic implementation
 */
 static uint8_t swallowStun(uint8_t x, uint16_t y, uint8_t cpr) {
 	// timing with all 8 sprites active on the line:
@@ -186,6 +188,46 @@ static void patchSwallowIfNeeded(uint16_t init_addr) {
 	}
 }
 
+static uint8_t weAreDemoStun(uint8_t x, uint16_t y, uint8_t cpr) {
+	// "we are demo" uses a total of 8 sprites that are statically
+	// positioned on different lines of the screen.. the used grouping causes
+	// bad-cycles at different positions of the scanline..
+	
+	// known limitation: at the boundary lines between the blocks the "line-break"
+	// would need to be handled differently (see "line-break" at cycle 58)
+
+	if (memReadIO(0xd015) == 0xff) {
+		// flaw: for line 67 sprite 2 would need to akready have been read
+		// in line 66, etc (see other boundary lines)
+		if (y >= 67 && y < 88) {
+			// sprites 2,3,4; i.e. cycles 62,63//1,2//3,4
+			if (x<=4)
+				return 2;
+			else if (x >= (62-3)) return (x >= 62) ? 2 : 1;
+
+			} else if (y >= 88 && y < 123) {
+			// sprites 5,6,7; i.e. cycles 5,6//7,8//9,10
+			if (x >= (5-3) && x < 11) return (x >= 5) ? 2 : 1;
+
+		} else if (y >= 123 && y < 165){
+			// sprites 0,1; i.e. cycles 58,59//60,61
+			if (x >= (58-3) && x < 62) return (x >= 58) ? 2 : 1;
+		}
+	}
+	return  _defaultStunFunc(x, y, cpr); // use original badline impl
+}
+
+static void patchWeAreDemoIfNeeded(uint16_t init_addr) {
+	// We_Are_Demo_tune_2.sid: another example for sprite related
+	// bad-cycles.
+	
+	uint8_t pattern[] = {0x8E,0x18,0xD4,0x79,0x00,0x09,0x85,0xE1};
+	if ((init_addr == 0x0c60) && (memMatch(0x0B10, pattern, 8))) {
+		_defaultStunFunc= vicGetStunImpl();
+		vicSetStunImpl(&weAreDemoStun);
+	}
+}
+
 void hackIfNeeded(uint16_t init_addr) {
 	patchThatsAllFolksIfNeeded(init_addr);
 	
@@ -194,6 +236,8 @@ void hackIfNeeded(uint16_t init_addr) {
 	patchUtopia6IfNeeded(init_addr);
 	
 	patchSwallowIfNeeded(init_addr);
+	
+	patchWeAreDemoIfNeeded(init_addr);
 }
 
 

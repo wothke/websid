@@ -97,7 +97,7 @@ void DigiDetector::routeDigiSignal(Filter *filter, int32_t *digi_out,
 				break;
 			case DigiMahoneyD418:
 				// special handling for Mahoney's D418 approach
-				(*outo)+= (*digi_out);
+				(*outo)+= (*digi_out) * 2;	// make it louder
 				break;
 			default:
 				// all the other digi techniques
@@ -115,10 +115,14 @@ DigiType DigiDetector::getType() {
 const char* _typeDesc[7] = {
 	"NONE",
 	"D418",
-	"8-BIT",
+	"M418",	// Mahoney's D418... something between 6-7 bits
 	"FM",
 	"PWM",
-	"PWM T",
+#ifdef DEBUG
+	"PWMT",
+#else
+	"PWM",		// no point in using separate label for TEST-bit version
+#endif
 };
 
 const char * DigiDetector::getTypeDesc() {
@@ -362,10 +366,18 @@ uint8_t DigiDetector::handlePulseModulationDigi(uint8_t voice, uint8_t reg, uint
 			case 0x41:	// PULSE/GATE
 				if (((_pulse_detect_state[voice] == PulseConfirm) || (_pulse_detect_state[voice] == PulseConfirm2)) 
 						&& isWithinPulseDetectTimeout(voice)) {
-					uint8_t sample= (_pulse_detect_mode[voice] == 2) ? 
-									_pulse_detect_delayed_sample[voice] : (_pulse_detect_delayed_sample[voice] << 4) & 0xff;
+					
+			// 		I did not find any testcase for the "3" case
+			//		uint8_t sample= (_pulse_detect_mode[voice] == 2) ?
+			//						_pulse_detect_delayed_sample[voice] : 	// Wonderland_XII-Digi_part_1
+			//						(_pulse_detect_delayed_sample[voice] << 4) & 0xff;
 
-					_sid->setMute(voice, 1);	// avoid wheezing base signals
+					uint8_t sample= _pulse_detect_delayed_sample[voice];
+
+					// as opposed to the FM case, wheezing base signals are no problem 
+					// in this scenario
+					// XXX FIXME seems to be obsolete?
+//					_sid->setMute(voice, 1);	// avoid wheezing base signals
 					
 					_pulse_detect_state[voice] = PulseIdle;	// just to reduce future comparisons
 					return recordPulseSample(voice, sample);								
@@ -374,7 +386,7 @@ uint8_t DigiDetector::handlePulseModulationDigi(uint8_t voice, uint8_t reg, uint
 				}
 				break;
 		}
-	} else if ((reg == 2) || (reg == 3)) {	// PULSE width 
+	} else if (reg == 2/* || (reg == 3)*/) {	// PULSE width 
 		PulseDetectState followState;
 		if ((_pulse_detect_state[voice] == PulsePrep2) && isWithinPulseDetectTimeout(voice)) {
 			followState= PulseConfirm2;	// variant 2
@@ -385,7 +397,7 @@ uint8_t DigiDetector::handlePulseModulationDigi(uint8_t voice, uint8_t reg, uint
 		_pulse_detect_state[voice] = followState;	// this may be the start of a digi playback
 		_pulse_detect_ts[voice]= sysCycles();
 		_pulse_detect_delayed_sample[voice]= value;
-		_pulse_detect_mode[voice]= reg;
+//		_pulse_detect_mode[voice]= reg;
 	}
 	return 0;	// other "detectors" may still take their turn
 }
@@ -710,7 +722,7 @@ void DigiDetector::reset(uint32_t clock_rate, uint8_t is_rsid, uint8_t compatibi
 		_freq_detect_delayed_sample[i]= 0;
 		
 		_pulse_detect_state[i]= PulseIdle;
-		_pulse_detect_mode[i]= 0;
+//		_pulse_detect_mode[i]= 0;
 		_pulse_detect_ts[i]= 0;
 		_pulse_detect_delayed_sample[i]= 0;
 		
