@@ -64,6 +64,86 @@ static void patchUtopia6IfNeeded(uint16_t init_addr) {
 	}
 }
 
+
+/*
+findings regarding sprites-bad-cycles handling:
+
+- sprite size: 24x21 pixels
+- PAL: visible area within the border is 200 lines high. screen has 312
+lines. vblank takes around 30 scanlines, i.e. total of around 282 visible
+scanlines.. supposing that sprites start at 0 then the maximum reachable by
+an Y-expanded sprite would be 255+42=> 297, i.e. the complete visible screen
+can be covered with sprites but there are some lines during vblank where
+sprites will have no effect
+
+
+summary of background infos from "VIC by Christian Bauer":
+
+per shown sprite and raster the VIC may perform 4 bus accesses: "psss" ("p" is 
+the "sprite data pointer"  and "s" is "sprite data") these accesses occur
+in 4 consecutive "half-cycles" the 1st and 3rd of which are handled during the
+phase always allocated to the VIC and only the 2nd and 4th are performed in the
+phase normally allocated to the CPU.. i.e. they cause bad-cyles for the CPU)
+
+"..p-accesses are done in every raster line and not only when the belonging
+sprite is just displayed" => doesn't matter to the CPU since they are performed
+in the half-cycle phase dedicated to the VIC anyway
+
+"..s-accesses are done in every raster line in which the sprite is visible
+(for the sprites 0-2, it is always in the line before.." each sprite has a
+hard-coded cycle-position when this access is performed (e.g. for sprite 3
+it is cycles 0/1).
+
+"In the first phases of cycle 55 and 56 (PAL only!), the VIC checks for every
+sprite if the corresponding MxE bit [i.e. "sprite enable"] in register $d015 is
+set and the Y coordinate of the sprite (odd registers $d001-$d00f) match the
+lower 8 bits of RASTER".. this spec seems to be INCORRECT! what about the
+handling of the (extended) height of the sprite? respective "sprite data"
+needs to be read for every line where it is supposed to be displayed!
+
+if "sprite-data" needs to be read the bus is blocked for CPU-reads 3 cycles
+earlier (if there are at least 4 cycle "gaps" due to 2 or more sprites that
+are NOT enabled, then this may repeat!, example: enabled 0,3,6 => then a
+3-cycle CPU-read stun would be used before EACH of these "sprite data"
+accesses)
+
+=> assumption: sprite enabling is checked/setup once at cycle 55/56
+(unfortunately the respective explanations in Bauer's text are ambiguous)
+
+"In the first phase of cycle 58... display of the sprite is turned on"
+=> how does this relate to what "happend" in cycles 55/56? supposing sprite 0
+enable it turned ON in cycle 57.. the required 3-cycle CPU-read stun would
+NOT have been triggered so there is NO WAY the VIC could steal the necessary
+"sprite data" read cycles in cyles 58/59!
+
+conclusions:
+
+- assuming that respective sprite enabling can be "statically" updated once 
+per scanline (e.g. at cycle 56), the following would still need to be 
+implemented (in worst case the timing of VIC register changes might need to 
+be tracked - including sprite y-coords and y-expansion status?):
+
+  * different handling for sprites 0-2 and 3-7 (properly map the setting to 
+    the 2 scanlines that it affects)
+  * calculate sprites that are visible on a specific scanlines (which 
+    makes for quite a few extra comparisons) 
+  * rules for keeping bus blocked (e.g. if a disabled sprite is between 
+    two enabled ones, etc) and for prepending 3-cycle "CPU-read stun" 
+	must be checked in each cycle (might be done with a precalculated 
+    256x63 lookup table, so the extra runtime costs might be tolerable)
+
+- the specifications in the available docs leave certain details rather sketchy
+and there is a considerable risk that a respective impl would still be incorrect,
+i.e. songs that really depend on cycle exact delay-timing would still fail (e.g.
+a "off by one" may accumulate and cause "badline avoidance" scemes to 
+catastrophically fail.. completely destroying the song's timing - see 
+Utopia_tune_6.sid).
+
+- very few songs actually depend on sprite-bad-cycles (and those that do use 
+a limited set of sprite-configurations) => until there is a signicicant 
+amount of songs that would actually benefit it isn't worth the trouble to 
+add a generic implementation 
+*/
 static uint8_t swallowStun(uint8_t x, uint16_t y, uint8_t cpr) {
 	// timing with all 8 sprites active on the line:
 	// sprites 3-7 use 10 cycles starting at cycle 0
