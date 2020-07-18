@@ -752,7 +752,6 @@ uint8_t DigiDetector::getD418Sample( uint8_t value) {
 }
 
 uint8_t DigiDetector::detectSample(uint16_t addr, uint8_t value) {
-	return 0;
 	if (SID::isExtMultiSidMode()) return 0;	// optimization for multi-SID
 	
 	// mask out alternative addresses of d400 SID (see 5-Channel_Digi-Tune)..
