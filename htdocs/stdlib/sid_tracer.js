@@ -491,6 +491,7 @@ SidWiz.prototype = {
 
 /*
 * Example for basic use/rendering of streamed "add-on" data.
+* FIXME XXX: altsync=true may be a performance issue (if all output is 0)
 */
 VoiceDisplay = function(divId, getDataFunc, altsync) {
 	this.WIDTH= 512;

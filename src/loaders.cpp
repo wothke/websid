@@ -517,6 +517,8 @@ uint32_t MusFileLoader::load(uint8_t *input_file_buffer, uint32_t in_buf_size, c
 							void *basic_ROM, void *char_ROM, void *kernal_ROM) {
 	
 	init();
+
+	memResetKernelROM((uint8_t *)kernal_ROM);
 	
 	setRsidMode(1);
 	memResetRAM(FileLoader::getNTSCMode(), !FileLoader::isRSID());
@@ -578,7 +580,7 @@ static uint16_t loadSIDFromMemory(void *sid_data, uint16_t *load_addr, uint16_t 
 		*load_addr = pdata[data_file_offset];
 		*load_addr|= pdata[data_file_offset+1]<<8;
 		
-		data_file_offset +=2;
+		data_file_offset += 2;
 	}
 	if (*init_addr == 0) {
 		*init_addr= *load_addr;	// 0 implies that init routine is at load_addr
@@ -590,10 +592,10 @@ static uint16_t loadSIDFromMemory(void *sid_data, uint16_t *load_addr, uint16_t 
     *speed|= pdata[0x14]<<8;
     *speed|= pdata[0x15];
     
-	*load_end_addr= *load_addr+file_size-data_file_offset;
+	*load_end_addr= *load_addr + file_size-data_file_offset;
 	
-	int32_t size= file_size-data_file_offset;
-	if (size < 0 || size >0xffff) {
+	int32_t size= file_size - data_file_offset;
+	if (size < 0 || size > 0xffff) {
 		return 0;		// illegal sid file
 	}
 	

@@ -10,7 +10,7 @@
  This software is licensed under a CC BY-NC-SA 
  (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
-SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernalROM) { 
+SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernalROM, nextFrameCB) { 
 		$this.base.call(this, backend_SID.Module, 2);	// use stereo (for the benefit of multi-SID songs)
 		this.playerSampleRate;
 		
@@ -19,6 +19,8 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 		this._chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 		this._ROM_SIZE= 0x2000;
 		this._CHAR_ROM_SIZE= 0x1000;
+		
+		this._nextFrameCB= (typeof nextFrameCB == 'undefined') ? this.nopCB : nextFrameCB;
 		
 		this._basicROM= this.base64DecodeROM(basicROM, this._ROM_SIZE);
 		this._charROM= this.base64DecodeROM(charROM, this._CHAR_ROM_SIZE);
@@ -32,6 +34,8 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 	// TinyRSid's sample buffer contains 2-byte (signed short) sample data 
 	// for 1 channel
 	extend(EmsHEAP16BackendAdapter, $this, {
+		nopCB: function() {
+		},
 		resetDigiMeta: function() {
 			this._digiTypes= {};
 			this._digiRate= 0;
@@ -101,6 +105,8 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 			}
 		},
 		computeAudioSamples: function() {
+			this._nextFrameCB();	// used for "interactive mode"
+			
 			var len= this.Module.ccall('computeAudioSamples', 'number');
 			if (len <= 0) {
 				this.resetDigiMeta();
@@ -266,6 +272,9 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 		},
 		getRAM: function(offset) {
 			return this.Module.ccall('getRAM', 'number', ['number'], [offset]);
+		},
+		setRegisterSID: function(offset, value) {
+			this.Module.ccall('setRegisterSID', 'number', ['number', 'number'], [offset, value]);
 		},
 		/**
 		* Diagnostics digi-samples (if any).

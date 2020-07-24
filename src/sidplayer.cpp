@@ -36,7 +36,9 @@ extern "C" {
 #include "core.h"
 #include "memory.h"
 }
-#include "sid.h"	
+#include "sid.h"
+extern "C" void 	sidWriteMem(uint16_t addr, uint8_t value);
+
 #include "loaders.h"	
 
 
@@ -394,6 +396,11 @@ extern "C" uint8_t EMSCRIPTEN_KEEPALIVE envIsNTSC() {
 extern "C" uint16_t getRegisterSID(uint16_t reg) __attribute__((noinline));
 extern "C" uint16_t EMSCRIPTEN_KEEPALIVE getRegisterSID(uint16_t reg) {
 	return  memReadIO(0xd400 + reg);
+}
+
+extern "C" void setRegisterSID(uint16_t reg, uint8_t value) __attribute__((noinline));
+extern "C" void EMSCRIPTEN_KEEPALIVE setRegisterSID(uint16_t reg, uint8_t value) {
+	sidWriteMem(0xd400 + reg, value);
 }
 
 extern "C" uint16_t getRAM(uint16_t addr) __attribute__((noinline));
