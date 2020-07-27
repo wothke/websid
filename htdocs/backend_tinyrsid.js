@@ -158,7 +158,7 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 			}
 		},
 		computeAudioSamples: function() {
-			this._nextFrameCB();	// used for "interactive mode"
+			this._nextFrameCB(this);	// used for "interactive mode"
 			
 			var len= this.Module.ccall('computeAudioSamples', 'number');
 			if (len <= 0) {
