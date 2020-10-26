@@ -34,13 +34,59 @@
 
 
 typedef enum {
-    Attack=0,
-    Decay=1,
-    Sustain=2,
-    Release=3,
+    Attack = 0,
+    Decay = 1,
+    Sustain = 2,
+    Release = 3,
 } EnvelopePhase;
 
+// in regular SID, 15-bit LFSR is clocked each cycle and it is a 
+// shift-register and not a counter.. see http://blog.kevtris.org/?p=13 
+// for more correct modelling. (the current counter based impl seems to be 
+// equivalent but is based on resid's older analysis)
 
+const uint16_t LFSR_LIMIT = 0x8000;
+
+// The ATTACK rate (0 to 0xF) determines how rapidly the output of a voice
+// rises from zero to peak amplitude when the envelope generator is gated
+// (time in ms). The respective gradient is used whether the attack is
+// actually started from 0 or from some higher level. (note: decay/release 
+// times are 3x slower - implemented via additional exponential_counter)
+
+const uint16_t COUNTER_PERIOD[16] = {
+	// attack-times (in ms) that the below counter periods correspond to:
+	//	2, 8, 16, 24, 38, 56, 68, 80, 100, 240, 500, 800, 1000, 3000, 5000, 8000
+	
+	// note: an earlier impl tried to calculate the below counter-periods 
+	// directly from the attack-times (e.g. "attack/1000*1000000/256") and 
+	// eventhough the results are very similar, Commodore seems to have used some 
+	// strange rounding for some of the values that they hardcoded in the 
+	// respective SID table - to avoid potential issues the hardcoded list is
+	// therefore used here
+	
+	9, 32, 63, 95, 149, 220, 267, 313, 392, 977, 1954, 3126, 3907, 11720, 19532, 31251		  
+};
+
+const uint8_t EXPONENTIAL_DELAYS[256] = {
+	 1, 30, 30, 30, 30, 30, 30, 16, 16, 16, 16, 16, 16, 16, 16,  8,
+	 8,  8,  8,  8,  8,  8,  8,  8,  8,  8,  8,  4,  4,  4,  4,  4,
+	 4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,
+	 4,  4,  4,  4,  4,  4,  4,  2,  2,  2,  2,  2,  2,  2,  2,  2,
+	 2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,
+	 2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  1,  1,
+	 1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
+	 1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
+	 1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
+	 1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
+	 1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
+	 1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
+	 1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
+	 1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
+	 1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
+	 1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1
+};
+
+	
 // keep state in a separate struct to avoid exposure in the header file..
 struct EnvelopeState {
  		// raw register content
@@ -62,19 +108,14 @@ struct EnvelopeState {
 };
 
 // this should rather be static - but "friend" wouldn't work then
-struct EnvelopeState* getState(Envelope *e) {	
+struct EnvelopeState* getState(Envelope* e) {	
 	return (struct EnvelopeState*)e->_state;
 }
 
-// what garbage language needs this... (to avoid "unresolved symbols")
-uint16_t Envelope::__limit_LFSR;
-uint16_t Envelope::__counter_period[16];
-uint8_t Envelope::__exponential_delays[256];
-
-Envelope::Envelope(SID *sid, uint8_t voice) {
-	_sid= sid;
-	_voice= voice;
-	_state= (void*) malloc(sizeof(struct EnvelopeState));
+Envelope::Envelope(SID* sid, uint8_t voice) {
+	_sid = sid;
+	_voice = voice;
+	_state = (void*) malloc(sizeof(struct EnvelopeState));
 	
 	syncADR();
 }
@@ -83,9 +124,9 @@ void Envelope::syncADR() {
 	// synchronize cache with ADSR register content
 	// testcase: Bella_Ciao.sid
 	EnvelopeState* state= getState(this);
-	state->attack  = __counter_period[state->ad >> 4];
-	state->decay   = __counter_period[state->ad & 0xf];
-	state->release = __counter_period[state->sr & 0xf];
+	state->attack  = COUNTER_PERIOD[state->ad >> 4];
+	state->decay   = COUNTER_PERIOD[state->ad & 0xf];
+	state->release = COUNTER_PERIOD[state->sr & 0xf];
 }
 
 uint8_t Envelope::getAD() {
@@ -95,16 +136,25 @@ uint8_t Envelope::getSR() {
 	return getState(this)->sr;
 }
 
+#ifdef PSID_DEBUG_ADSR
+#include <stdio.h>
+
+void Envelope::debug() {
+	EnvelopeState* state = getState(this);
+	fprintf(stderr, "%02X%02X (LFSR %d)", state->ad & 0xff, state->sr & 0xff, state->current_LFSR);
+}
+#endif
+
 void Envelope::poke(uint8_t reg, uint8_t val) {
 	// thanks to the cycle-by-cycle emulation the below interactions are perfectly
 	// in sync with SID (and a post-mortem workarounds are no longer required)
 
 	switch (reg) {
         case 0x4: {
-			struct EnvelopeState *state= getState(this);
+			struct EnvelopeState* state= getState(this);
 
-			uint8_t old_gate= _sid->getWave(_voice)&0x1;
-			uint8_t new_gate= val & 0x01;
+			uint8_t old_gate = _sid->getWave(_voice) & 0x1;
+			uint8_t new_gate = val & 0x01;
 						
 			if (!old_gate && new_gate) {
 				/* 
@@ -112,8 +162,8 @@ void Envelope::poke(uint8_t reg, uint8_t val) {
 				reached zero amplitude), another ATTACK cycle will begin, starting
 				from whatever amplitude had been reached.
 				*/
-				state->envphase= Attack;				
-				state->zero_lock= 0;
+				state->envphase = Attack;				
+				state->zero_lock = 0;
 				
 			} else if (old_gate && !new_gate) {
 				/* 
@@ -122,7 +172,7 @@ void Envelope::poke(uint8_t reg, uint8_t val) {
 				from whatever amplitude had been reached
 				see http://www.sidmusic.org/sid/sidtech2.html
 				*/
-				state->envphase= Release;
+				state->envphase = Release;
 			} else {
 				/* 
 				repeating the existing GATE status does NOT change a
@@ -132,116 +182,68 @@ void Envelope::poke(uint8_t reg, uint8_t val) {
 			break;
 		}
         case 0x5: {		// set AD		
-			struct EnvelopeState *state= getState(this);
+			struct EnvelopeState* state = getState(this);
 			state->ad = val;
 			
 			// convenience: threshold to be reached before incrementing volume
-			state->attack  = __counter_period[state->ad >> 4];
-			state->decay   = __counter_period[state->ad & 0xf];
+			state->attack = COUNTER_PERIOD[state->ad >> 4];
+			state->decay  = COUNTER_PERIOD[state->ad & 0xf];
 			break;
 		}
         case 0x6: {		// set SR
-			struct EnvelopeState *state= getState(this);
+			struct EnvelopeState* state= getState(this);
 			state->sr = val;
 
 			// convenience
-			uint8_t sustain= state->sr >> 4;
+			uint8_t sustain = state->sr >> 4;
 			state->sustain = (sustain << 4) | sustain;
-			state->release = __counter_period[state->sr & 0xf];
+			state->release = COUNTER_PERIOD[state->sr & 0xf];
 			break;	
 		}
 	};
 }
 
 uint8_t Envelope::getOutput() {
-	struct EnvelopeState *state= getState(this);
+	struct EnvelopeState* state = getState(this);
 	return state->envelope_output;
 }
 
 void Envelope::reset() {
-	struct EnvelopeState *state= getState(this);
+	struct EnvelopeState* state = getState(this);
 	memset((uint8_t*)state, 0, sizeof(EnvelopeState));
 	
 	syncADR();
 	
-	state->envphase= Release;
-	state->zero_lock= 1;	
+	state->envphase = Release;
+	state->zero_lock = 1;	
 }
 
-void Envelope::resetConfiguration(uint32_t sample_rate) {
-	
-	// The ATTACK rate determines how rapidly the output of a voice
-	// rises from zero to peak amplitude when the envelope generator
-	// is gated (time/cycle in ms). The respective gradient is used
-	// whether the attack is actually started from 0 or from some
-	// higher level. The terms "attack time", "decay time" and "release
-	// time" are actually very misleading here, since all they translate
-	// into are actually some fixed gradients, and the actual decay
-	// or release may complete much sooner, e.g. depending on the
-	// selected "sustain" level. (note: decay/release times are 3x
-	// slower - implemented via exponential_counter)
-
-	const uint16_t attack_times[16]  =	{
-		2, 8, 16, 24, 38, 56, 68, 80, 100, 240, 500, 800, 1000, 3000, 5000, 8000
-	};
-	
-	// in regular SID, 15-bit LFSR is clocked each cycle and it is a 
-	// shift-register and not a counter.. see http://blog.kevtris.org/?p=13 
-	// for more correct modelling. (the current impl seems to be equivalent)
-
-	__limit_LFSR= 0x8000;	// original counter was 15-bit
-	
-	uint16_t i;
-	for (i=0; i<16; i++) {
-		// counter must reach respective threshold before envelope value
-		// is incremented/decremented
-		// note: attack times are in millis & there are 255 steps for envelope..
-		
-		// would be more logical if actual system clock was used here.. but
-		// probably CBM did not care to create separate NTSC/PAL SID versions
-		// and the respective limits are just hard coded.. see Egypt.sid
-		__counter_period[i]= floor(((double)1000000/1000)/255 * attack_times[i]) + 1;
-	}
-	
-	// lookup table for decay rates
-	uint8_t from[] =  {93, 54, 26, 14,  6,  0};
-	uint8_t val[] =   { 1,  2,  4,  8, 16, 30};
-	for (i= 0; i<256; i++) {
-		uint8_t q= 1;
-		for (uint8_t j= 0; j<6; j++) {
-			if (i>from[j]) {
-				q= val[j];
-				break;
-			}
-		}
-		__exponential_delays[i]= q;
-	}
-}
-uint8_t Envelope::triggerLFSR_Threshold(uint16_t threshold, uint16_t *end) {
+uint8_t Envelope::triggerLFSR_Threshold(uint16_t threshold, uint16_t* end) {
 	// check if LFSR threshold was reached
 	if (threshold == (*end)) {
-		(*end)= 0; // reset counter
+		(*end) = 0; // reset counter
 		return 1;
 	}
 	return 0;
 }
+
 uint8_t Envelope::handleExponentialDelay() {
-	struct EnvelopeState *state= getState(this);
+	struct EnvelopeState* state = getState(this);
 	
-	state->exponential_counter+= 1;
+	state->exponential_counter += 1;
 	
-	uint8_t result= (state->exponential_counter >= __exponential_delays[state->envelope_output]);
+	uint8_t result = (state->exponential_counter >= EXPONENTIAL_DELAYS[state->envelope_output]);
 	if (result) {
-		state->exponential_counter= 0;	// reset to start next round
+		state->exponential_counter = 0;	// reset to start next round
 	}
 	return result;
 }
 
 void Envelope::clockEnvelope() {
-	struct EnvelopeState *state= getState(this);
+	struct EnvelopeState* state = getState(this);
 			
-	if (++state->current_LFSR >= __limit_LFSR) {
-		state->current_LFSR= 0;
+	if (++state->current_LFSR >= LFSR_LIMIT) {
+		state->current_LFSR = 0;
 	}
 	
 	uint8_t previous_envelope_output = state->envelope_output;
@@ -249,12 +251,12 @@ void Envelope::clockEnvelope() {
 	switch (state->envphase) {
 		case Attack: {                          // Phase 0 : Attack
 			if (triggerLFSR_Threshold(state->attack, &state->current_LFSR) && !state->zero_lock) {	
-				// inc volume when threshold is reached						
-				if (state->envelope_output < 0xff) {	// see Alien.sid, Friday_the_13th, Dawn.sid
+				// inc volume when threshold is reached
 				
-					// release->attack combo can flip 0xff to 0x0 (e.g. Acke.sid - voice3)
-					state->envelope_output= (state->envelope_output + 1) & 0xff;	// increase volume					
-				}							
+				// release->attack combo can flip 0xff to 0x0: testcase: Acke.sid - voice3 (depends on zero-lock to activate)
+				// more testcases: Alien.sid, Friday_the_13th, Dawn.sid
+				
+				state->envelope_output = (state->envelope_output + 1) & 0xff;	// increase volume					
 			
 				state->exponential_counter = 0;
 
@@ -269,7 +271,7 @@ void Envelope::clockEnvelope() {
 					&& handleExponentialDelay() && !state->zero_lock) { 	// dec volume when threshold is reached
 				
 					if (state->envelope_output != state->sustain) {
-						state->envelope_output= (state->envelope_output - 1) & 0xff;	// decrease volume
+						state->envelope_output = (state->envelope_output - 1) & 0xff;	// decrease volume
 						
 					} else {
 						state->envphase = Sustain;
@@ -294,8 +296,8 @@ void Envelope::clockEnvelope() {
 			if (triggerLFSR_Threshold(state->release, &state->current_LFSR) 
 				&& handleExponentialDelay() && !state->zero_lock) { 		// dec volume when threshold is reached
 
-				// FIXME: is potential "flip" used by any songs?
-				state->envelope_output= (state->envelope_output - 1) & 0xff;	// decrease volume
+				// testcase: Move_Me_Like_A_Movie.sid
+				state->envelope_output = (state->envelope_output - 1) & 0xff;	// decrease volume
 			}
 			break;
 		}
@@ -304,7 +306,6 @@ void Envelope::clockEnvelope() {
 		state->zero_lock = 1;	// new "attack" phase must be started to unlock
 	}
 }
-
 
 /*
 Notes regarding ADSR-bug:

@@ -27,8 +27,6 @@ extern uint8_t	vicReadMem(uint16_t addr);
 extern void		vicWriteMem(uint16_t addr, uint8_t value);
 
 
-
-
 static uint8_t _memory[MEMORY_SIZE];
 
 #define BASIC_SIZE 0x2000
@@ -58,20 +56,20 @@ void memRestoreSnapshot() {
 }
 
 
-uint8_t memMatch(uint16_t addr, uint8_t *pattern, uint8_t len) {
+uint8_t memMatch(uint16_t addr, uint8_t* pattern, uint8_t len) {
 	return !memcmp(&(_memory[addr]), pattern, len);
 }
 
 static void setMemBank(uint8_t b) {
 	// note: processor port related functionality (see addr 0x0) is NOT implemented
-	_memory[0x0001]= b;
+	_memory[0x0001] = b;
 }
 
 void memSetDefaultBanksPSID(uint8_t is_rsid, uint16_t init_addr, 
 							uint16_t load_end_addr) {
 								
 	// default memory config: basic ROM, IO area & kernal ROM visible
-	uint8_t mem_bank_setting= 0x37;
+	uint8_t mem_bank_setting = 0x37;
 	
 	if (!is_rsid) {
 		// problem: some PSID init routines want to initialize
@@ -80,7 +78,7 @@ void memSetDefaultBanksPSID(uint8_t is_rsid, uint16_t init_addr,
 		// memory banks accordingly :(
 
 		if ((init_addr >= 0xd000) && (init_addr < 0xe000)) {
-			mem_bank_setting= 0x34;	// default memory config: all RAM
+			mem_bank_setting = 0x34;	// default memory config: all RAM
 			
 		} else if ((init_addr >= 0xe000)) {
 			// PSIDv2 songs like IK_plus.sid, Pandora.sid use
@@ -88,17 +86,17 @@ void memSetDefaultBanksPSID(uint8_t is_rsid, uint16_t init_addr,
 			// so obviously here we must use a default like this:
 			
 			// default memory config: IO area visible, RAM $a000-b000 + $e000-$ffff
-			mem_bank_setting= 0x35;
+			mem_bank_setting = 0x35;
 			
 		} else if (load_end_addr >= 0xa000) {
-			mem_bank_setting= 0x36;
+			mem_bank_setting = 0x36;
 		} else {
 			// normally the kernal ROM should be visible: e.g. 
 			// A-Maz-Ing.sid uses kernal ROM routines & vectors 
 			// without setting $01!
 			
 			// default memory config: basic ROM, IO area & kernal ROM visible			
-			mem_bank_setting= 0x37;
+			mem_bank_setting = 0x37;
 		}
 	}
 	setMemBank(mem_bank_setting);
@@ -147,36 +145,35 @@ static uint8_t isCharRomVisible() {
 * @return 0 if RAM/ROM is visible; 1 if IO area is visible
 */ 
 static uint8_t isIoAreaVisible() {
-	uint8_t bits= _memory[0x0001] & 0x7;	
+	uint8_t bits = _memory[0x0001] & 0x7;	
 	return ((bits & 0x4) != 0) && (bits != 0x4);
 }
 
 uint8_t memReadIO(uint16_t addr) {
 	// mirrored regions not implemented for reads.. nobody
 	// seems to use this (unlike write access to SID)
-	return _io_area[addr-0xd000];
+	return _io_area[addr - 0xd000];
 }
 
 void memWriteIO(uint16_t addr, uint8_t value) {
-	_io_area[addr - 0xd000]= value;
+	_io_area[addr - 0xd000] = value;
 }
 
 uint8_t memReadRAM(uint16_t addr) {
 	return _memory[addr];
 }
 void memWriteRAM(uint16_t addr, uint8_t value) {
-	 _memory[addr]= value;
+	 _memory[addr] = value;
 }
 
-void memCopyToRAM(uint8_t *src, uint16_t dest_addr, uint32_t len) {
+void memCopyToRAM(uint8_t* src, uint16_t dest_addr, uint32_t len) {
 	memcpy(&_memory[dest_addr], src, len);		
 }
-void memCopyFromRAM(uint8_t *dest, uint16_t src_addr, uint32_t len) {
+void memCopyFromRAM(uint8_t* dest, uint16_t src_addr, uint32_t len) {
 	memcpy(dest, &_memory[src_addr], len);
 }
 
-uint8_t memGet(uint16_t addr)
-{	
+uint8_t memGet(uint16_t addr) {
 	if ((addr < 0xa000) || ((addr >= 0xc000) && (addr < 0xd000))) {
 		// make this the "normal", i.e. least expensive path
 		return  _memory[addr];
@@ -199,7 +196,7 @@ uint8_t memGet(uint16_t addr)
 			
 		} else {
 			// normal RAM access
-			return  _memory[addr];
+			return _memory[addr];
 		}
 	} else if ((addr >= 0xa000) && (addr < 0xc000)) {	// handle basic ROM
 		if (isBasicRomVisible()) {
@@ -207,7 +204,7 @@ uint8_t memGet(uint16_t addr)
 			
 		} else {
 			// normal RAM access
-			return  _memory[addr];
+			return _memory[addr];
 		}
 	} else {											// handle kernal ROM
 		if (isKernalRomVisible()) {
@@ -215,7 +212,7 @@ uint8_t memGet(uint16_t addr)
 			
 		} else {
 			// normal RAM access
-			return  _memory[addr];
+			return _memory[addr];
 		}
 	}
 }
@@ -227,7 +224,7 @@ void memSet(uint16_t addr, uint8_t value) {
 
 	if ((addr >= 0xd000) && (addr < 0xe000)) {	// handle I/O area 
 		if (isIoAreaVisible()) {
-			if ((addr >= 0xd000) && (addr < 0xd400)) {			// vic stuff
+			if ((addr >= 0xd000) && (addr < 0xd400)) {				// vic stuff
 				vicWriteMem(addr, value);
 				return;
 				
@@ -236,41 +233,41 @@ void memSet(uint16_t addr, uint8_t value) {
 				sidWriteMem(addr, value);
 				return;
 				
-			} else if ((addr >= 0xdc00) && (addr < 0xde00)) {			// CIA timers
+			} else if ((addr >= 0xdc00) && (addr < 0xde00)) {		// CIA timers
 				ciaWriteMem(addr, value);
 				
 				// make sure at least timer latches can be retrieved from RAM..
-				_memory[addr]=value;	
+				_memory[addr] = value;	
 				return;
 			}
 			  
-			_io_area[addr - 0xd000]= value;
+			_io_area[addr - 0xd000] = value;
 		} else {
 			// normal RAM access
-			_memory[addr]=value;
+			_memory[addr] = value;
 		}
 	} else {
 		// normal RAM or kernal ROM (even if the ROM is visible, 
 		// writes always go to the RAM) example: Vikings.sid copied 
 		// player data to BASIC ROM area while BASIC ROM is turned on..
 		
-		_memory[addr]=value;
+		_memory[addr] = value;
 	}
 }
 
 #ifdef TEST
-const static uint8_t _irq_handler_test_FF48[19] ={0x48,0x8A,0x48,0x98,0x48,0xBA,0xBD,0x04,0x01,0x29,0x10,0xf0,0x03,0x6c,0x16,0x03,0x6C,0x14,0x03};	// test actually uses BRK
-const static uint8_t _irq_restore_vectors_FD15[27] ={0xa2,0x30,0xa0,0xfd,0x18,0x86,0xc3,0x84,0xc4,0xa0,0x1f,0xb9,0x14,0x03,0xb0,0x02,0xb1,0xc3,0x91,0xc3,0x99,0x14,0x03,0x88,0x10,0xf1,0x60};
-const static uint8_t _init_io_FDA3[86] ={0xA9,0x7F,0x8D,0x0D,0xDC,0x8D,0x0D,0xDD,0x8D,0x00,0xDC,0xA9,0x08,0x8D,0x0E,0xDC,0x8D,0x0E,0xDD,0x8D,0x0F,0xDC,0x8D,0x0F,0xDD,0xA2,0x00,0x8E,0x03,0xDC,0x8E,0x03,0xDD,0x8E,0x18,0xD4,0xCA,0x8E,0x02,0xDC,0xA9,0x07,0x8D,0x00,0xDD,0xA9,0x3F,0x8D,0x02,0xDD,0xA9,0xE7,0x85,0x01,0xA9,0x2F,0x85,0x00,0xAD,0xA6,0x02,0xF0,0x0A,0xA9,0x25,0x8D,0x04,0xDC,0xA9,0x40,0x4C,0xF3,0xFD,0xA9,0x95,0x8D,0x04,0xDC,0xA9,0x42,0x8D,0x05,0xDC,0x4C,0x6E,0xFF};
-const static uint8_t _schedule_ta_FF6E[18] ={0xA9,0x81,0x8D,0x0D,0xDC,0xAD,0x0E,0xDC,0x29,0x80,0x09,0x11,0x8D,0x0E,0xDC,0x4C,0x8E,0xEE};
-const static uint8_t _serial_clock_hi_EE8E[9] ={0xAD,0x00,0xDD,0x09,0x10,0x8D,0x00,0xDD,0x60};
+const static uint8_t _irq_handler_test_FF48[19] = {0x48,0x8A,0x48,0x98,0x48,0xBA,0xBD,0x04,0x01,0x29,0x10,0xf0,0x03,0x6c,0x16,0x03,0x6C,0x14,0x03};	// test actually uses BRK
+const static uint8_t _irq_restore_vectors_FD15[27] = {0xa2,0x30,0xa0,0xfd,0x18,0x86,0xc3,0x84,0xc4,0xa0,0x1f,0xb9,0x14,0x03,0xb0,0x02,0xb1,0xc3,0x91,0xc3,0x99,0x14,0x03,0x88,0x10,0xf1,0x60};
+const static uint8_t _init_io_FDA3[86] = {0xA9,0x7F,0x8D,0x0D,0xDC,0x8D,0x0D,0xDD,0x8D,0x00,0xDC,0xA9,0x08,0x8D,0x0E,0xDC,0x8D,0x0E,0xDD,0x8D,0x0F,0xDC,0x8D,0x0F,0xDD,0xA2,0x00,0x8E,0x03,0xDC,0x8E,0x03,0xDD,0x8E,0x18,0xD4,0xCA,0x8E,0x02,0xDC,0xA9,0x07,0x8D,0x00,0xDD,0xA9,0x3F,0x8D,0x02,0xDD,0xA9,0xE7,0x85,0x01,0xA9,0x2F,0x85,0x00,0xAD,0xA6,0x02,0xF0,0x0A,0xA9,0x25,0x8D,0x04,0xDC,0xA9,0x40,0x4C,0xF3,0xFD,0xA9,0x95,0x8D,0x04,0xDC,0xA9,0x42,0x8D,0x05,0xDC,0x4C,0x6E,0xFF};
+const static uint8_t _schedule_ta_FF6E[18] = {0xA9,0x81,0x8D,0x0D,0xDC,0xAD,0x0E,0xDC,0x29,0x80,0x09,0x11,0x8D,0x0E,0xDC,0x4C,0x8E,0xEE};
+const static uint8_t _serial_clock_hi_EE8E[9] = {0xAD,0x00,0xDD,0x09,0x10,0x8D,0x00,0xDD,0x60};
 #endif
-const static uint8_t _irq_handler_FF48[19] ={0x48,0x8A,0x48,0x98,0x48,0xBA,0xBD,0x04,0x01,0x29,0x10,0xF0,0x03,0xEA,0xEA,0xEA,0x6C,0x14,0x03};	// disabled BRK branch
-const static uint8_t _irq_handler_EA7B[12] ={0xE6,0xA2,0xEA, 0xAD,0x0D,0xDC,0x68,0xA8,0x68,0xAA,0x68,0x40};	// added "INC $a2" (i.e. "TOD" frame count); Double_Falcon.sid depends on the extra NOP
-const static uint8_t _nmi_handler_FE43[5] ={0x78,0x6c,0x18,0x03,0x40};
-const static uint8_t _irq_end_handler_FEBC[6] ={0x68,0xa8,0x68,0xaa,0x68,0x40};
+const static uint8_t _irq_handler_FF48[19] = {0x48,0x8A,0x48,0x98,0x48,0xBA,0xBD,0x04,0x01,0x29,0x10,0xF0,0x03,0xEA,0xEA,0xEA,0x6C,0x14,0x03};	// disabled BRK branch
+const static uint8_t _irq_handler_EA7B[12] = {0xE6,0xA2,0xEA, 0xAD,0x0D,0xDC,0x68,0xA8,0x68,0xAA,0x68,0x40};	// added "INC $a2" (i.e. "TOD" frame count); Double_Falcon.sid depends on the extra NOP
+const static uint8_t _nmi_handler_FE43[5] = {0x78,0x6c,0x18,0x03,0x40};
+const static uint8_t _irq_end_handler_FEBC[6] = {0x68,0xa8,0x68,0xaa,0x68,0x40};
 
-const static uint8_t _delay_handler_EEB3[8] ={0x8a,0xa2,0xb8,0xca,0xd0,0xfd,0xaa,0x60};	// used by Random_Ninja.sid
+const static uint8_t _delay_handler_EEB3[8] = {0x8a,0xa2,0xb8,0xca,0xd0,0xfd,0xaa,0x60};	// used by Random_Ninja.sid
 
 const static uint8_t _driverPSID[33] = {
 	// PSID main
@@ -317,15 +314,15 @@ void memInitTest() {
     memcpy(&_kernal_rom[0x1f6e], _schedule_ta_FF6E, 18);			// $ff6e scheduling TA
     memcpy(&_kernal_rom[0x0e8e], _serial_clock_hi_EE8E, 9);		// $ee8e set serial clock line high
 
-	_kernal_rom[0x1ffe]= 0x48;
-	_kernal_rom[0x1fff]= 0xff;
+	_kernal_rom[0x1ffe] = 0x48;
+	_kernal_rom[0x1fff] = 0xff;
 	
 	memResetRAM(0);
 //    memset(&_memory[0], 0x0, MEMORY_SIZE);
 
-	_memory[0xa003]= 0x80;
-	_memory[0x01fe]= 0xff;
-	_memory[0x01ff]= 0x7f;
+	_memory[0xa003] = 0x80;
+	_memory[0x01fe] = 0xff;
+	_memory[0x01ff] = 0x7f;
 
 	// put trap instructions at $FFD2 (PRINT), $E16F (LOAD), $FFE4 (KEY), $8000 and $A474	(EXIT)
 	// => memset 0 took care of those
@@ -336,7 +333,7 @@ void memInitTest() {
 }
 #endif
 
-void memResetBasicROM(uint8_t *rom) {
+void memResetBasicROM(uint8_t* rom) {
 	if (rom) {
 		// optional: for those that bring their own ROM
 		memcpy(_basic_rom, rom, BASIC_SIZE);
@@ -345,14 +342,14 @@ void memResetBasicROM(uint8_t *rom) {
 	}
 }
 
-void memResetCharROM(uint8_t *rom) {
+void memResetCharROM(uint8_t* rom) {
 	if (rom) {
 		// optional: for those that bring their own ROM
 		memcpy(_char_rom, rom, IO_AREA_SIZE);
 	}
 }
 
-void memResetKernelROM(uint8_t *rom) {
+void memResetKernelROM(uint8_t* rom) {
 	if (rom) {
 		// optional: for those that bring their own ROM (precondition for BASIC songs)
 		memcpy(_kernal_rom, rom, KERNAL_SIZE);
@@ -362,7 +359,7 @@ void memResetKernelROM(uint8_t *rom) {
 			// e3bf initialization of basic
 			// e422 print BASIC startup messages
 		
-		_kernal_rom[0x039a]= 0x60;	// abort "BASIC start up messages" so as not to enter BASIC idle-loop 
+		_kernal_rom[0x039a] = 0x60;	// abort "BASIC start up messages" so as not to enter BASIC idle-loop 
 		
 	} else {
 		// we dont have the complete rom but in order to ensure consistent
@@ -382,16 +379,16 @@ void memResetKernelROM(uint8_t *rom) {
 		memcpy(&_kernal_rom[0x1e43], _nmi_handler_FE43, 5);	// $fe43 nmi handler
 		memcpy(&_kernal_rom[0x1ebc], _irq_end_handler_FEBC, 6);	// $febc irq return sequence (e.g. used by Contact_Us_tune_2)
 		
-		_kernal_rom[0x1ffe]= 0x48;
-		_kernal_rom[0x1fff]= 0xff;
+		_kernal_rom[0x1ffe] = 0x48;
+		_kernal_rom[0x1fff] = 0xff;
 		
-		_kernal_rom[0x1ffa]= 0x43;	// standard NMI vectors (this will point into the void at: 0318/19)
-		_kernal_rom[0x1ffb]= 0xfe;
+		_kernal_rom[0x1ffa] = 0x43;	// standard NMI vectors (this will point into the void at: 0318/19)
+		_kernal_rom[0x1ffb] = 0xfe;
 	}
 }
 
 void memSetupBASIC(uint16_t len) {
-	uint16_t basic_end= 0x801+ len;
+	uint16_t basic_end = 0x801 + len;
 	
 	// after loading the program this actually points to whatever "LOAD" has loaded
 	memWriteRAM(0x002d, basic_end & 0xff);	// bullshit doc: "Pointer to beginning of variable area. (End of program plus 1.)"
@@ -414,7 +411,7 @@ void memSetupBASIC(uint16_t len) {
 	memWriteRAM(0x007a, 0x00);				// Pointer to current byte in BASIC program or direct command.
 	memWriteRAM(0x007b, 0x08);
 	
-	memWriteRAM(0x002b, memReadRAM(0x007a)+1);	// Pointer to beginning of BASIC area - Default: $0801
+	memWriteRAM(0x002b, memReadRAM(0x007a) + 1);	// Pointer to beginning of BASIC area - Default: $0801
 	memWriteRAM(0x002c, memReadRAM(0x007b));
 	
 	// note: some BASIC songs use the TI variable.. which is automatically updated via
@@ -423,7 +420,7 @@ void memSetupBASIC(uint16_t len) {
 
 uint16_t memPsidMain(uint16_t free_space, uint16_t play_addr) {
 	memResetBanksPSID(play_addr);
-	uint8_t bank= memReadRAM(0x1); // test-case: Madonna_Mix.sid
+	uint8_t bank = memReadRAM(0x1); // test-case: Madonna_Mix.sid
 	
 	if (!free_space) {					
 		EM_ASM_({ console.log("FATAL ERROR: no free memory for driver");});
@@ -432,26 +429,26 @@ uint16_t memPsidMain(uint16_t free_space, uint16_t play_addr) {
 	    memcpy(&_memory[free_space], _driverPSID, 33);
 
 		// set JMP addr for endless loop
-		_memory[free_space+1]= free_space & 0xff;	
-		_memory[free_space+2]= free_space >> 8;
+		_memory[free_space + 1] = free_space & 0xff;	
+		_memory[free_space + 2] = free_space >> 8;
 
 		if (play_addr) {
 			// register IRQ handler
-			uint16_t handler= free_space +3;
-			uint16_t handler314= handler +5;	// skip initial register php sequence already part of the default handler
+			uint16_t handler = free_space + 3;
+			uint16_t handler314 = handler + 5;	// skip initial register php sequence already part of the default handler
 						
-			_memory[0x0314]= handler314 & 0xff;
-			_memory[0x0315]= handler314 >> 8;
+			_memory[0x0314] = handler314 & 0xff;
+			_memory[0x0315] = handler314 >> 8;
 
-			_memory[0xFFFE]= handler & 0xff;
-			_memory[0xFFFF]= handler >> 8;
+			_memory[0xFFFE] = handler & 0xff;
+			_memory[0xFFFF] = handler >> 8;
 			
 			// patch-in the bank setting
-			_memory[free_space+12]= bank;
+			_memory[free_space + 12] = bank;
 
 			// patch-in the playAddress
-			_memory[free_space+16]= play_addr & 0xff;
-			_memory[free_space+17]= play_addr >> 8;			
+			_memory[free_space + 16] = play_addr & 0xff;
+			_memory[free_space + 17] = play_addr >> 8;			
 		} else {
 			// just use the endless loop for main
 		}
@@ -474,33 +471,33 @@ void memRsidMain(uint16_t free_space, uint16_t *init_addr) {
 	if (!free_space) {					
 		return;	// no free space anywhere.. that shit better not RTS!
 	} else {
-		uint16_t loopAddr= free_space+3;
+		uint16_t loopAddr = free_space + 3;
 		
-		_memory[free_space]= 0x20;	// JSR
-		_memory[free_space+1]= (*init_addr) & 0xff;
-		_memory[free_space+2]= (*init_addr) >> 8;
-		_memory[free_space+3]= 0x4c;	// JMP
-		_memory[free_space+4]= loopAddr & 0xff;
-		_memory[free_space+5]= loopAddr >> 8;
+		_memory[free_space] = 0x20;	// JSR
+		_memory[free_space + 1] = (*init_addr) & 0xff;
+		_memory[free_space + 2] = (*init_addr) >> 8;
+		_memory[free_space + 3] = 0x4c;	// JMP
+		_memory[free_space + 4] = loopAddr & 0xff;
+		_memory[free_space + 5] = loopAddr >> 8;
 		
-		(*init_addr)= free_space;
+		(*init_addr) = free_space;
 	}
 }
 
 void memResetRAM(uint8_t is_ntsc, uint8_t is_psid) {
     memset(&_memory[0], 0x0, MEMORY_SIZE);
 
-	_memory[0x0314]= 0x31;		// standard IRQ vector
-	_memory[0x0315]= 0xea;
+	_memory[0x0314] = 0x31;		// standard IRQ vector
+	_memory[0x0315] = 0xea;
 		
 	// Vager_3.sid
-	_memory[0x0091]= 0xff;		// "stop" key not pressed
+	_memory[0x0091] = 0xff;		// "stop" key not pressed
 
 	// Master_Blaster_intro.sid actually checks this:
-	_memory[0x00c5]= _memory[0x00cb]= 0x40;		// no key pressed 
+	_memory[0x00c5] = _memory[0x00cb] = 0x40;		// no key pressed 
 	
 	// Dill_Pickles.sid depends on this
-	 _memory[0x0000]= 0x2f;		//default: processor port data direction register
+	 _memory[0x0000] = 0x2f;		//default: processor port data direction register
 	
 	// for our PSID friends who don't know how to properly use memory banks lets mirror the kernal ROM into RAM
 	if (is_psid) {
@@ -511,8 +508,9 @@ void memResetRAM(uint8_t is_ntsc, uint8_t is_psid) {
 	// without the added timer tweaks mentioned in that spec? (the MUS player is 
 	// actually checking this - but also setting it)
 	// (https://www.hvsc.c64.org/download/C64Music/DOCUMENTS/SID_file_format.txt)
-	_memory[0x02a6]= (!is_ntsc) & 0x1;	
+	_memory[0x02a6] = (!is_ntsc) & 0x1;	
 }
+
 void memResetIO() {
     memset(&_io_area[0], 0x0, IO_AREA_SIZE);
 }

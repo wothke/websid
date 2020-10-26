@@ -22,13 +22,8 @@ extern "C" {
 class Envelope {
 protected:
 	friend class SID;
-	Envelope(class SID *sid, uint8_t voice);
-	
-	/**
-	* Static configuration.
-	*/
-	static void resetConfiguration(uint32_t sample_rate);
-	
+	Envelope(class SID* sid, uint8_t voice);
+		
 	/**
 	* Reinitialize a specific instance to reuse it.
 	*/
@@ -53,23 +48,21 @@ protected:
 	/**
 	* Gets the raw SR register.
 	*/
-	uint8_t getSR();	
+	uint8_t getSR();
+#ifdef PSID_DEBUG_ADSR
+	void debug();
+#endif	
 private:
 	void syncADR();
-	uint8_t triggerLFSR_Threshold(uint16_t threshold, uint16_t *end);
+	uint8_t triggerLFSR_Threshold(uint16_t threshold, uint16_t* end);
 	uint8_t handleExponentialDelay();
 	
 private:
 	friend struct EnvelopeState* getState(Envelope *e);
 
-	void *_state;	// don't want this header file cluttered with all the implementation details..
+	void* _state;	// don't want this header file cluttered with all the implementation details..
 	class SID* _sid;
 	uint8_t _voice;
-
-	static uint16_t __limit_LFSR; // 15-bit like original
-	static uint16_t __counter_period[16];
-	static uint8_t __exponential_delays[256];
 };
-
 
 #endif

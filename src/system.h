@@ -27,7 +27,7 @@ uint8_t		sysClockTest();
 #endif
 uint32_t	sysGetClockRate(uint8_t is_ntsc);
 
-// hack used for digi handling only (fixme: might no longer be needed)
+// hack used for digi handling only (todo: check if these might no longer be needed)
 void	 	sysSetNMIMarker(uint8_t m);
 uint8_t 	sysCheckNMIMarker();
 

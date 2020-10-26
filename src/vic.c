@@ -92,7 +92,7 @@ void vicSetModel(uint8_t ntsc_mode) {
 	// emulation only supports new PAL & NTSC model (none of 
 	// the special models)
 		
-	_x= _y= 0;
+	_x = _y = 0;
 	
 	// note: clocking is derived from the targetted video standard.
 	// 14.31818MHz (NTSC) respectively of 17.734475MHz (PAL) -
@@ -103,19 +103,19 @@ void vicSetModel(uint8_t ntsc_mode) {
 	
 	if(ntsc_mode) {
 		// NTSC
-		_fps= 59.8260895;
-		_cycles_per_raster= 65;
+		_fps = 59.8260895;
+		_cycles_per_raster = 65;
 		_lines_per_screen = 263;	// with  520 pixels
 	} else {
 		// PAL
-		_fps= 50.124542;
-		_cycles_per_raster= 63;	
+		_fps = 50.124542;
+		_cycles_per_raster = 63;	
 		_lines_per_screen = 312;	// with 504 pixels
 	}
 
 	// init to very end so that next clock will create a raster 0 IRQ...
-	_x= _cycles_per_raster-1;
-	_y= _lines_per_screen-1;
+	_x = _cycles_per_raster - 1;
+	_y = _lines_per_screen - 1;
 	
 	// clocks per frame: NTSC: 17095 - PAL: 19656		
 }
@@ -127,9 +127,9 @@ static void checkIRQ() {
 	if (_y == _raster_latch) {
 		// always signal (test case: Wally Beben songs that use 
 		// CIA 1 timer for IRQ but check for this flag)
-		uint8_t latch= memReadIO(0xd019) | 0x1;
+		uint8_t latch = memReadIO(0xd019) | 0x1;
 		
-		uint8_t interrupt_enable= memReadIO(0xd01a) & 0x1;
+		uint8_t interrupt_enable = memReadIO(0xd01a) & 0x1;
 		if (interrupt_enable) {
 			latch |= 0x80;	// signal VIC interrupt
 		}
@@ -142,16 +142,16 @@ void vicClock() {
 	if (!_x && !_y) {	// special case: in line 0 it is cycle 1		
 		checkIRQ();
 		
-		_badline_den= memReadIO(0xd011) & 0x10;	// default for new frame
+		_badline_den = memReadIO(0xd011) & 0x10;	// default for new frame
 	}
-	_x+= 1;	
+	_x += 1;	
 	
 	if (_x >= _cycles_per_raster) {
-		_x= 0;
-		_y+= 1;
+		_x = 0;
+		_y += 1;
 
 		if (_y >= _lines_per_screen) {
-			_y= 0;			
+			_y = 0;			
 		}
 				
 		if (_y) checkIRQ();	// normal case: check in cycle 0				
@@ -201,11 +201,11 @@ uint8_t vicStunCPU() {
 }
 
 static void cacheRasterLatch() {
-	_raster_latch= memReadIO(0xd012) + (((uint16_t)memReadIO(0xd011)&0x80)<<1);
+	_raster_latch = memReadIO(0xd012) + (((uint16_t)memReadIO(0xd011) & 0x80) << 1);
 }
 
 void vicReset(uint8_t is_rsid, uint8_t ntsc_mode) {
-	_stunFunc= &intBadlineStun;
+	_stunFunc = &intBadlineStun;
 	
 	vicSetModel(ntsc_mode); 
 	
@@ -224,7 +224,7 @@ void vicReset(uint8_t is_rsid, uint8_t ntsc_mode) {
 		memWriteIO(0xd011, 0x1B);
 		memWriteIO(0xd012, 0x0); 	// raster must be below 0x100
 	}
-	_badline_den= 1;	// see d011-defaults above
+	_badline_den = 1;	// see d011-defaults above
 	
 	cacheRasterLatch();
 }
@@ -265,8 +265,8 @@ static void writeD019(uint8_t value) {
 	// difference in this long running IRQ handler? XXX some special
 	// case does not seem to be handled correctly yet!
 	
-	uint8_t v=  memReadIO(0xd019);
-	v = v&(~value);					// clear (source) flags directly
+	uint8_t v =  memReadIO(0xd019);
+	v = v & (~value);					// clear (source) flags directly
 	
 	if (!(v & 0xf)) {
 		v &= 0x7f; 	// all sources are gone: IRQ flag should also be cleared
@@ -279,7 +279,7 @@ static void writeD01A(uint8_t value) {
 		
 	if (value & 0x1) {
 		// check if RASTER condition has already fired previously
-		uint8_t d= memReadIO(0xd019);
+		uint8_t d = memReadIO(0xd019);
 		if (d & 0x1) {
 			memWriteIO(0xd019, d | 0x80); 	// signal VIC interrupt
 		}
@@ -289,18 +289,18 @@ static void writeD01A(uint8_t value) {
 void vicWriteMem(uint16_t addr, uint8_t value) {
 	switch (addr) {
 		case 0xd011: {
-			const uint8_t new_den= value & 0x10;
+			const uint8_t new_den = value & 0x10;
 			
 			// badlineCondition: "..if the DEN bit was set during an
 			// arbitrary cycle of raster line $30 [for at least one cycle]"
 			
 			if (_y < 0x2f) {			// our 1st line is 0
-				_badline_den= new_den;
+				_badline_den = new_den;
 			
 			} else if (_y == 0x2f) {
 				// theoretically the "flag" could still be cleared in the
 				// very 1st cycle of the line (ignore this special case)
-				_badline_den|= new_den;
+				_badline_den |= new_den;
 			}
 		}
 		case 0xd012:

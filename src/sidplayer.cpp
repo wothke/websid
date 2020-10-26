@@ -52,10 +52,10 @@ static FileLoader*	_loader;
 // more direct feedback to WebAudio side:
 #define BUFLEN 96000/50	
 
-static uint32_t 	_soundBufferLen= BUFLEN;
+static uint32_t 	_soundBufferLen = BUFLEN;
 
 #define CHANNELS 2
-static int16_t 		_soundBuffer[BUFLEN*CHANNELS];
+static int16_t 		_soundBuffer[BUFLEN * CHANNELS];
 
 // max 10 sids*4 voices (1 digi channel)
 #define MAX_VOICES 			40					
@@ -65,8 +65,8 @@ static int16_t 		_soundBuffer[BUFLEN*CHANNELS];
 static int16_t* 	_scope_buffers[MAX_SCOPE_BUFFERS];	
 
 // these buffers are "per frame" i.e. 1 screen refresh, e.g. 822 samples
-static int16_t * 	_synth_buffer= 0;
-static int16_t ** 	_synth_trace_buffers= 0;
+static int16_t* 	_synth_buffer = 0;
+static int16_t** 	_synth_trace_buffers = 0;
 
 static uint16_t 	_chunk_size; 	// number of samples per call
 
@@ -78,8 +78,8 @@ static uint8_t	 	_skip_silence_loop;
 
 static uint32_t		_sample_rate;
 
-static uint32_t		_trace_sid= 0;
-static uint8_t		_ready_to_play= 0;
+static uint32_t		_trace_sid = 0;
+static uint8_t		_ready_to_play = 0;
 
 
 static void resetTimings(uint8_t is_ntsc) {
@@ -87,16 +87,16 @@ static void resetTimings(uint8_t is_ntsc) {
 
 	uint32_t clock_rate= 	sysGetClockRate(is_ntsc);
 	uint8_t is_rsid=		FileLoader::isRSID();
-	uint8_t compatibility=	FileLoader::getCompatibility();
+	uint8_t is_compatible=	FileLoader::getCompatibility();
 	
-	SID::resetAll(_sample_rate, clock_rate, is_rsid, compatibility);
+	SID::resetAll(_sample_rate, clock_rate, is_rsid, is_compatible);
 }
 
 static void resetScopeBuffers() {
 	if (_scope_buffers[0] == 0) {
 		// alloc once
 		for (int i= 0; i<MAX_SCOPE_BUFFERS; i++) {
-			_scope_buffers[i]= (int16_t*) calloc(sizeof(int16_t), BUFLEN);
+			_scope_buffers[i] = (int16_t*) calloc(sizeof(int16_t), BUFLEN);
 		}
 	} else {
 		for (int i= 0; i<MAX_SCOPE_BUFFERS; i++) {
@@ -110,7 +110,7 @@ static void resetSynthBuffer(uint16_t size) {
 	if (_synth_buffer) free(_synth_buffer);
 
 	_synth_buffer= (int16_t*)malloc(sizeof(int16_t)*
-						(size*CHANNELS + 1));
+						(size * CHANNELS + 1));
 }
 
 static void discardSynthTraceBuffers() {
@@ -119,11 +119,11 @@ static void discardSynthTraceBuffers() {
 		for (int i= 0; i<MAX_VOICES; i++) {
 			if (_synth_trace_buffers[i]) {
 				free(_synth_trace_buffers[i]);
-				_synth_trace_buffers[i]= 0; 
+				_synth_trace_buffers[i] = 0; 
 			}
 		}
 		free(_synth_trace_buffers);
-		_synth_trace_buffers= 0;
+		_synth_trace_buffers = 0;
 	}	
 }
 
@@ -133,11 +133,10 @@ static void allocSynthTraceBuffers(uint16_t size) {
 	
 	if (_trace_sid) {	
 		if (!_synth_trace_buffers) {
-			_synth_trace_buffers= (int16_t**)calloc(sizeof(int16_t*), MAX_VOICES);
+			_synth_trace_buffers = (int16_t**)calloc(sizeof(int16_t*), MAX_VOICES);
 		}
 		for (int i= 0; i<MAX_VOICES; i++) {
-			_synth_trace_buffers[i]= (int16_t*)calloc(sizeof(int16_t),
-										size + 1);			
+			_synth_trace_buffers[i] = (int16_t*)calloc(sizeof(int16_t), size + 1);			
 		}		
 		
 	} else {
@@ -145,11 +144,11 @@ static void allocSynthTraceBuffers(uint16_t size) {
 			for (int i= 0; i<MAX_VOICES; i++) {
 				if (_synth_trace_buffers[i]) {
 					free(_synth_trace_buffers[i]); 
-					_synth_trace_buffers[i]= 0;
+					_synth_trace_buffers[i] = 0;
 				}
 			}		
 			free(_synth_trace_buffers); 
-			_synth_trace_buffers= 0; // disables respective SID rendering
+			_synth_trace_buffers = 0; // disables respective SID rendering
 		}
 	}
 }
@@ -166,7 +165,7 @@ static void resetAudioBuffers() {
 	// NTSC: 735*60=44100		800*60=48000  
 	// PAL: 882*50=44100		960*50=48000
 	
-	_chunk_size= _sample_rate/vicFramesPerSecond();
+	_chunk_size = _sample_rate / vicFramesPerSecond();
 
 	resetScopeBuffers();
 	resetSynthBuffer(_chunk_size);	
@@ -194,21 +193,21 @@ extern "C" int32_t computeAudioSamples()  __attribute__((noinline));
 extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 	if(!_ready_to_play) return 0;
 	
-	uint8_t is_simple_sid_mode=	!FileLoader::isExtendedSidFile();
-	int sid_voices=				SID::getNumberUsedChips()*4;
-	uint8_t speed=				FileLoader::getCurrentSongSpeed();
+	uint8_t is_simple_sid_mode =	!FileLoader::isExtendedSidFile();
+	int sid_voices =				SID::getNumberUsedChips() * 4;
+	uint8_t speed =					FileLoader::getCurrentSongSpeed();
 
 #ifdef TEST
 	return 0;
 #endif
-	_number_of_samples_rendered= 0;
+	_number_of_samples_rendered = 0;
 			
-	uint32_t sample_buffer_idx= 0;
+	uint32_t sample_buffer_idx = 0;
 	
 	while (_number_of_samples_rendered < _chunk_size) {
 		if (_number_of_samples_to_render == 0) {
 			_number_of_samples_to_render = _chunk_size;
-			sample_buffer_idx=0;
+			sample_buffer_idx = 0;
 			
 			// limit "skipping" so as not to make the browser unresponsive
 			for (uint16_t i= 0; i<_skip_silence_loop; i++) { 
@@ -218,7 +217,7 @@ extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 												
 				if (!_sound_started) {
 					if (SID::isAudible()) {
-						_sound_started= 1;
+						_sound_started = 1;
 						break;
 					}
 				} else {
@@ -232,7 +231,7 @@ extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 			
 			memcpy(	&_soundBuffer[_number_of_samples_rendered],
 					&_synth_buffer[sample_buffer_idx], 
-					sizeof(int16_t)*available_space*CHANNELS);
+					sizeof(int16_t) * available_space * CHANNELS);
 				
 			// In addition to the actual sample data played by WebAudio, buffers
 			// containing raw voice data are also created here. These are 1:1 in
@@ -246,7 +245,7 @@ extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 					if (is_simple_sid_mode || (sid_voices % 4) != 3) {	// no digi 
 						memcpy(	&(_scope_buffers[i][_number_of_samples_rendered]), 
 								&(_synth_trace_buffers[i][sample_buffer_idx]), 
-								sizeof(int16_t)*available_space);
+								sizeof(int16_t) * available_space);
 					}
 				}
 			}
@@ -256,7 +255,7 @@ extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 		} else {
 			memcpy(	&_soundBuffer[_number_of_samples_rendered],
 					&_synth_buffer[sample_buffer_idx], 
-					sizeof(int16_t)*CHANNELS*_number_of_samples_to_render);
+					sizeof(int16_t) * CHANNELS * _number_of_samples_to_render);
 
 			if (_trace_sid) {
 				// do the same for the respecive voice traces
@@ -264,7 +263,7 @@ extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 					if (is_simple_sid_mode || (sid_voices % 4) != 3) {	// no digi 
 						memcpy(	&(_scope_buffers[i][_number_of_samples_rendered]),
 								&(_synth_trace_buffers[i][sample_buffer_idx]),
-								sizeof(int16_t)*_number_of_samples_to_render);
+								sizeof(int16_t) * _number_of_samples_to_render);
 					}
 				}
 			}
@@ -277,7 +276,7 @@ extern "C" int32_t EMSCRIPTEN_KEEPALIVE computeAudioSamples() {
 		return -1;
 	}
 	
-	return (_number_of_samples_rendered);
+	return _number_of_samples_rendered;
 }
 
 
@@ -290,10 +289,10 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE enableVoice(uint8_t sid_idx, uint8_t vo
 
 extern "C" uint32_t playTune(uint32_t selected_track, uint32_t trace_sid)  __attribute__((noinline));
 extern "C" uint32_t EMSCRIPTEN_KEEPALIVE playTune(uint32_t selected_track, uint32_t trace_sid) {
-	_ready_to_play= 0;
-	_trace_sid= trace_sid; 
+	_ready_to_play = 0;
+	_trace_sid = trace_sid; 
 				
-	_sound_started= 0;
+	_sound_started = 0;
 		
 	// note: crappy BASIC songs like Baroque_Music_64_BASIC take 100sec before
 	// they even start playing.. unfortunately the emulation is NOT fast enough
@@ -307,35 +306,35 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE playTune(uint32_t selected_track, uint3
 	
 	// should keep the UI responsive; means that on a fast machine the above
 	// garbage song will still take 10 secs before it plays
-	_skip_silence_loop= 10;
+	_skip_silence_loop = 10;
 	
 	_loader->initTune(_sample_rate, selected_track);
 
 	resetAudioBuffers();
 
-	_ready_to_play= 1;
+	_ready_to_play = 1;
 
 	return 0;
 }
 
-extern "C" uint32_t loadSidFile(uint32_t is_mus, void *in_buffer, uint32_t in_buf_size,
-								uint32_t sample_rate, char *filename, void *basic_ROM,
-								void *char_ROM, void *kernal_ROM)  __attribute__((noinline));
-extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void *in_buffer, uint32_t in_buf_size,
-								uint32_t sample_rate, char *filename, void *basic_ROM,
-								void *char_ROM, void *kernal_ROM) {
+extern "C" uint32_t loadSidFile(uint32_t is_mus, void* in_buffer, uint32_t in_buf_size,
+								uint32_t sample_rate, char* filename, void* basic_ROM,
+								void* char_ROM, void* kernal_ROM)  __attribute__((noinline));
+extern "C" uint32_t EMSCRIPTEN_KEEPALIVE loadSidFile(uint32_t is_mus, void* in_buffer, uint32_t in_buf_size,
+								uint32_t sample_rate, char* filename, void* basic_ROM,
+								void* char_ROM, void* kernal_ROM) {
 	
-	_ready_to_play= 0;											// stop any emulator use
-    _sample_rate= sample_rate > 96000 ? 48000 : sample_rate; 	// see hardcoded BUFLEN
+	_ready_to_play = 0;											// stop any emulator use
+    _sample_rate = sample_rate > 96000 ? 48000 : sample_rate; 	// see hardcoded BUFLEN
 
-	_loader= FileLoader::getInstance(is_mus, in_buffer, in_buf_size);
+	_loader = FileLoader::getInstance(is_mus, in_buffer, in_buf_size);
 	
 	if (!_loader) return 1;	// error
 
-	uint32_t result= _loader->load((uint8_t *)in_buffer, in_buf_size, filename,
+	uint32_t result = _loader->load((uint8_t *)in_buffer, in_buf_size, filename,
 									basic_ROM, char_ROM, kernal_ROM);
 	if (!result) {
-		uint8_t is_ntsc= FileLoader::getNTSCMode();
+		uint8_t is_ntsc = FileLoader::getNTSCMode();
 		envSetNTSC(is_ntsc);
 	}
 	return result;
@@ -415,20 +414,20 @@ extern "C" uint16_t EMSCRIPTEN_KEEPALIVE getGlobalDigiType() {
 
 extern "C" const char * getGlobalDigiTypeDesc() __attribute__((noinline));
 extern "C" const char * EMSCRIPTEN_KEEPALIVE getGlobalDigiTypeDesc() {
-	uint16_t t= SID::getGlobalDigiType();
+	uint16_t t = SID::getGlobalDigiType();
 	return (t > 0) ? SID::getGlobalDigiTypeDesc() : "";
 }
 
 extern "C" uint16_t getGlobalDigiRate() __attribute__((noinline));
 extern "C" uint16_t EMSCRIPTEN_KEEPALIVE getGlobalDigiRate() {
-	uint16_t t= SID::getGlobalDigiType();
+	uint16_t t = SID::getGlobalDigiType();
 	return (t > 0) ? SID::getGlobalDigiRate() : 0;
 }
 
 extern "C" int getNumberTraceStreams() __attribute__((noinline));
 extern "C" int EMSCRIPTEN_KEEPALIVE getNumberTraceStreams() {
 	// always use additional stream for digi samples..
-	return SID::getNumberUsedChips()*4;
+	return SID::getNumberUsedChips() * 4;
 }
 extern "C" const char** getTraceStreams() __attribute__((noinline));
 extern "C" const char** EMSCRIPTEN_KEEPALIVE getTraceStreams() {
@@ -444,7 +443,7 @@ extern "C" const char** EMSCRIPTEN_KEEPALIVE getTraceStreams() {
 extern "C" uint32_t enableVoices(uint32_t mask)  __attribute__((noinline));
 extern "C" uint32_t EMSCRIPTEN_KEEPALIVE enableVoices(uint32_t mask) {
 	for(uint8_t i= 0; i<3; i++) {
-		SID::setMute(0, i, !(mask&0x1));
+		SID::setMute(0, i, !(mask & 0x1));
 		mask = mask >> 1;
 	}
 	

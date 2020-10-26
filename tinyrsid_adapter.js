@@ -248,10 +248,11 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 			return result;
 		},
 
+		// XXX FIXME UNUSED?
 		readFloatTrace: function(buffer, idx) {
 			return (this.Module.HEAP16[buffer+idx])/0x8000;
 		},
-		// perf optimization:
+		// perf optimization: XXX FIXME UNUSED?
 		getCopiedScopeStream: function(input, len, output) {
 			for(var i= 0; i<len; i++){
 				output[i]=  this.Module.HEAP16[input+i]; // will be scaled later anyway.. avoid the extra division here /0x8000;

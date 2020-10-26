@@ -44,7 +44,7 @@ static double _sample_cycles;
 
 
 static void resetDefaults(uint32_t sample_rate, uint8_t is_rsid, 
-							uint8_t is_ntsc, uint8_t compatibility) {
+							uint8_t is_ntsc, uint8_t is_compatible) {
 	sysReset();
 	cpuInit();
 	
@@ -54,7 +54,7 @@ static void resetDefaults(uint32_t sample_rate, uint8_t is_rsid,
 	vicReset(is_rsid, is_ntsc);
 	
 	uint32_t clock_rate= sysGetClockRate(is_ntsc);
-	SID::resetAll(sample_rate, clock_rate, is_rsid, compatibility);
+	SID::resetAll(sample_rate, clock_rate, is_rsid, is_compatible);
 	
 	_sample_cycles= 0;
 }
@@ -82,9 +82,9 @@ void Core::rsidRunTest() {
 }
 #endif
 
-void copyMonoSignal(int16_t *synth_buffer, uint16_t samples_per_call) {
-	for (int i = 0; i<samples_per_call; i++) {
-		synth_buffer[(i<<1) + 1]= synth_buffer[i<<1]; // single-SID songs are mono
+void copyMonoSignal(int16_t* synth_buffer, uint16_t samples_per_call) {
+	for (int i= 0; i<samples_per_call; i++) {
+		synth_buffer[(i << 1) + 1] = synth_buffer[i << 1]; // single-SID songs are mono
 	}
 }
 
@@ -103,8 +103,8 @@ void copyMonoSignal(int16_t *synth_buffer, uint16_t samples_per_call) {
 		synth_buffer[(i<<1)]= 0; \
 	}
 	
-void runEmulation(uint8_t is_simple_sid_mode, int16_t *synth_buffer, 
-					int16_t **synth_trace_bufs, uint16_t samples_per_call) {
+void runEmulation(uint8_t is_simple_sid_mode, int16_t* synth_buffer, 
+					int16_t** synth_trace_bufs, uint16_t samples_per_call) {
 						
 	double n= SID::getCyclesPerSample();
 
@@ -120,30 +120,30 @@ void runEmulation(uint8_t is_simple_sid_mode, int16_t *synth_buffer,
 	// in the SID::synthSample() and most of the time is spent in the earlier
 	// clock-by-clock emulation of the system components; 2 (5) vs 12 (21)
 	
-	double scale= SID::getScale();	// avoid recalc within loop
+	double scale = SID::getScale();	// avoid recalc within loop
 
 #ifdef TIMING_TRACE
-	EM_ASM_({ window['start']= performance.now();});
+	EM_ASM_({ window['start'] = performance.now(); });
 #endif	
 	if (is_simple_sid_mode) {
-		for (int i = 0; i<samples_per_call; i++) {
+		for (int i= 0; i<samples_per_call; i++) {
 			while(_sample_cycles < n) {
 				sysClockOpt();
 				_sample_cycles++;
 			}
-			_sample_cycles-= n;	// keep overflow
+			_sample_cycles -= n;	// keep overflow
 			
 			SYNTH_NORMAL(synth_buffer, synth_trace_bufs, scale, i);
 		}
 		copyMonoSignal(synth_buffer, samples_per_call);
 
 	} else {
-		for (int i = 0; i<samples_per_call; i++) {
+		for (int i= 0; i<samples_per_call; i++) {
 			while(_sample_cycles < n) {
 				sysClock();
 				_sample_cycles++;
 			}
-			_sample_cycles-= n;	// keep overflow
+			_sample_cycles -= n;	// keep overflow
 			
 			// optimization: use no filter for trace buffers & no digis 
 			// (my slow PC is really at the limit here as it is)
@@ -152,34 +152,34 @@ void runEmulation(uint8_t is_simple_sid_mode, int16_t *synth_buffer,
 	}
 #ifdef TIMING_TRACE
 	EM_ASM_({ 
-		window['start']= performance.now()-window['start'];
-		if (typeof window['count'] == 'undefined') { window['count']= 0; window['sum']= 0; }
+		window['start'] = performance.now() - window['start'];
+		if (typeof window['count'] == 'undefined') { window['count'] = 0; window['sum'] = 0; }
 		
-		window['sum']+= window['start'];
-		window['count']+= 1;
+		window['sum'] += window['start'];
+		window['count'] += 1;
 		
 		if (window['count'] == 1000) {
-			console.log("t: "+window['sum']/1000);
-			 window['count']= 0; 
-			 window['sum']= 0;
+			console.log("t: " + window['sum'] / 1000);
+			 window['count'] = 0; 
+			 window['sum'] = 0;
 		}			
 	});
 #endif
 }
 
-uint8_t Core::runOneFrame(uint8_t is_simple_sid_mode, uint8_t speed, int16_t *synth_buffer, 
-							int16_t **synth_trace_bufs, uint16_t samples_per_call) {
+uint8_t Core::runOneFrame(uint8_t is_simple_sid_mode, uint8_t speed, int16_t* synth_buffer, 
+							int16_t** synth_trace_bufs, uint16_t samples_per_call) {
 								
 	SID::resetGlobalStatistics();
 
 	ciaUpdateTOD(speed); // hack: TOD is rarely used so there is no point to do it more precisely
 	
 	runEmulation(is_simple_sid_mode, synth_buffer, synth_trace_bufs, samples_per_call);
-	
+		
 	return 0;
 }
 
-void Core::loadSongBinary(uint8_t *src, uint16_t dest_addr, uint16_t len, uint8_t basic_mode) {
+void Core::loadSongBinary(uint8_t* src, uint16_t dest_addr, uint16_t len, uint8_t basic_mode) {
 	memCopyToRAM(src, dest_addr, len);
 
 	if (basic_mode) {
@@ -207,12 +207,10 @@ void Core::callKernalROMReset() {
 	
 	// note: it might be a good idea to strip down the standard ROM impl 
 	// which unnecessarily wastes many cycles for useless RAM tests, etc
-	uint16_t rom_routine= 0xFCE2;	
+	uint16_t rom_routine = 0xFCE2;	
 	cpuSetProgramCounter(rom_routine, 0);
 	
 	runSubroutineTilEnd();
-	
-//	EM_ASM_({ console.log('C64 RESET completed');});
 	
 	// note: the used ROM might not match the song's settings (e.g. PAL/NTSC)
 	// and the respective memory snapshot that is taken on the above base may 
@@ -238,11 +236,11 @@ uint8_t runInitPSID(uint16_t init_addr, uint8_t selected_track) {
 
 void Core::startupTune(uint32_t sample_rate, uint8_t selected_track,
 						uint8_t is_rsid, uint8_t is_timer_driven_psid, uint8_t is_ntsc, 
-						uint8_t compatibility, uint8_t basic_mode, 
-						uint16_t free_space, uint16_t *init_addr, uint16_t load_end_addr, 
+						uint8_t is_compatible, uint8_t basic_mode, 
+						uint16_t free_space, uint16_t* init_addr, uint16_t load_end_addr, 
 						uint16_t play_addr) {
 	
-	resetDefaults(sample_rate, is_rsid, is_ntsc, compatibility);
+	resetDefaults(sample_rate, is_rsid, is_ntsc, is_compatible);
 	
 	memRestoreSnapshot();	// previous sub-tune run may have corrupted the RAM
 	hackIfNeeded((*init_addr));
@@ -253,7 +251,10 @@ void Core::startupTune(uint32_t sample_rate, uint8_t selected_track,
 		
 		if (!runInitPSID((*init_addr), selected_track)) return;
 		
-		uint16_t main= memPsidMain(free_space, play_addr);		
+		uint16_t main = memPsidMain(free_space, play_addr);	
+#ifdef PSID_DEBUG_ADSR
+		cpuPsidDebug(play_addr);
+#endif
 		cpuSetProgramCounterPSID(main);	// just install an endless loop for main
 			
 		ciaSetDefaultsPSID(is_timer_driven_psid);
@@ -266,4 +267,3 @@ void Core::startupTune(uint32_t sample_rate, uint8_t selected_track,
 		cpuSetProgramCounter((*init_addr), selected_track);
 	}
 }
-

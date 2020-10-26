@@ -26,13 +26,13 @@ public:
 	/**
 	* Main factory method used to get suitable loader.
 	*/
-	static FileLoader* getInstance(uint32_t is_mus, void *in_buffer, uint32_t in_buf_size);
+	static FileLoader* getInstance(uint32_t is_mus, void* in_buffer, uint32_t in_buf_size);
 			
 	/**
 	* Loads a music file into the emulator.
 	*/
-	virtual uint32_t load(uint8_t *in_buffer, uint32_t in_buf_size, char *filename, 
-							void *basic_ROM, void *char_ROM, void *kernal_ROM) = 0;
+	virtual uint32_t load(uint8_t* in_buffer, uint32_t in_buf_size, char* filename, 
+							void* basic_ROM, void* char_ROM, void* kernal_ROM) = 0;
 
 	/**
 	* Select a specific track in a previsouly loaded song (see "load" API).
@@ -60,8 +60,7 @@ protected:
 	/**
 	* Configure the SID chips used in the current emulation.
 	*/
-	static void configureSids(uint16_t flags, uint8_t *addr_list);
-	static uint16_t getSidAddr(uint8_t center_byte);
+	static void configureSids(uint16_t flags, uint8_t* addr_list);
 
 	void init();
 	

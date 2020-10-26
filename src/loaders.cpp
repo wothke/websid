@@ -40,39 +40,39 @@ extern "C" {
 /**
 * This is used for testcases only.
 */
-class TestFileLoader: public FileLoader {
+class TestFileLoader : public FileLoader {
 public:
 	TestFileLoader();
 	
-	virtual uint32_t load(uint8_t *in_buffer, uint32_t in_buf_size, char *filename,
-							void *basic_ROM, void *char_ROM, void *kernal_ROM);
+	virtual uint32_t load(uint8_t* in_buffer, uint32_t in_buf_size, char* filename,
+							void* basic_ROM, void* char_ROM, void* kernal_ROM);
 };
 #endif
 
 /**
 * This loads Compute! MUS player files.
 */
-class MusFileLoader: public FileLoader {
+class MusFileLoader : public FileLoader {
 public:
 	MusFileLoader();
 
-	virtual uint32_t load(uint8_t *in_buffer, uint32_t in_buf_size, char *filename,
-							void *basic_ROM, void *char_ROM, void *kernal_ROM);
+	virtual uint32_t load(uint8_t* in_buffer, uint32_t in_buf_size, char* filename,
+							void* basic_ROM, void* char_ROM, void* kernal_ROM);
 	
 	virtual uint8_t isTrackEnd();
 private:
-	static uint16_t loadComputeSidplayerData(uint8_t *mus_song_file, uint32_t mus_song_file_len);
+	static uint16_t loadComputeSidplayerData(uint8_t* mus_song_file, uint32_t mus_song_file_len);
 };
 
 /**
 * This loads SID format files.
 */
-class SidFileLoader: public FileLoader {
+class SidFileLoader : public FileLoader {
 public:
 	SidFileLoader();
 	
-	virtual uint32_t load(uint8_t *in_buffer, uint32_t in_buf_size, char *filename,
-							void *basic_ROM, void *char_ROM, void *kernal_ROM);
+	virtual uint32_t load(uint8_t* in_buffer, uint32_t in_buf_size, char* filename,
+							void* basic_ROM, void* char_ROM, void* kernal_ROM);
 };
 
 
@@ -84,7 +84,7 @@ static uint8_t	_is_rsid;
 
 static uint8_t 	_ntsc_mode= 0;
 
-static uint8_t 	_compatibility;
+static uint8_t 	_compatibility;	// i.e. song should play on a real C64
 static uint8_t 	_basic_prog;
 static uint16_t _free_space;
 
@@ -105,21 +105,21 @@ static void* _load_result[7];
 #define MAX_INFO_LEN 32
 #define MAX_INFO_LINES 5
 
-static 	char 	_song_name[MAX_INFO_LEN+1], 
-				_song_author[MAX_INFO_LEN+1], 
-				_song_copyright[MAX_INFO_LEN+1],
-				_song_info_trash[MAX_INFO_LEN+1];
+static 	char 	_song_name[MAX_INFO_LEN + 1], 
+				_song_author[MAX_INFO_LEN + 1], 
+				_song_copyright[MAX_INFO_LEN + 1],
+				_song_info_trash[MAX_INFO_LEN + 1];
 
 static char* _info_texts[MAX_INFO_LINES];
 
 static void resetInfoText() {
-	_info_texts[0]= _song_name;
-	_info_texts[1]= _song_author;
-	_info_texts[2]= _song_copyright;
+	_info_texts[0] = _song_name;
+	_info_texts[1] = _song_author;
+	_info_texts[2] = _song_copyright;
 	
 	// .mus files may have more lines with unstructured text... ignore 	
-	_info_texts[3]= _song_info_trash;
-	_info_texts[4]= _song_info_trash;
+	_info_texts[3] = _song_info_trash;
+	_info_texts[4] = _song_info_trash;
 
 	memset(_song_name, 0, MAX_INFO_LEN);
 	memset(_song_author, 0, MAX_INFO_LEN);
@@ -132,7 +132,6 @@ static void resetInfoText() {
 FileLoader::FileLoader() {
 }
 
-
 // respective loader singletons:
 #ifdef TEST
 static TestFileLoader	_test_loader;
@@ -141,7 +140,7 @@ static SidFileLoader	_sid_loader;
 static MusFileLoader	_mus_loader;
 
 
-FileLoader* FileLoader::getInstance(uint32_t is_mus, void *in_buffer, uint32_t in_buf_size) {
+FileLoader* FileLoader::getInstance(uint32_t is_mus, void* in_buffer, uint32_t in_buf_size) {
 #ifdef TEST
 	return &testLoader;
 #else
@@ -159,12 +158,12 @@ FileLoader* FileLoader::getInstance(uint32_t is_mus, void *in_buffer, uint32_t i
 }
 
 void FileLoader::init() {
-	_init_addr= 0;
-	_play_addr= 0;
-	_load_end_addr= 0;
-	_selected_track= 0;
-	_max_track= 0;	
-	_play_speed= 0;
+	_init_addr = 0;
+	_play_addr = 0;
+	_load_end_addr = 0;
+	_selected_track = 0;
+	_max_track = 0;	
+	_play_speed = 0;
 	
 	resetInfoText();
 }
@@ -175,7 +174,7 @@ uint8_t FileLoader::getValidatedTrack(uint8_t selected_track) {
 	return  (selected_track >= _max_track) ? _selected_track : selected_track;
 }
 void FileLoader::setRsidMode(uint8_t is_rsid) {
-	_is_rsid= is_rsid;
+	_is_rsid = is_rsid;
 }
 
 uint8_t FileLoader::isExtendedSidFile() {
@@ -191,13 +190,13 @@ uint8_t FileLoader::getCompatibility(){
 }
 
 void FileLoader::setNTSCMode(uint8_t is_ntsc) {
-	_ntsc_mode= is_ntsc;	
+	_ntsc_mode = is_ntsc;	
 }
 
 void FileLoader::initTune(uint32_t sample_rate, uint8_t selected_track) {
-	_selected_track= getValidatedTrack(selected_track);
+	_selected_track = getValidatedTrack(selected_track);
 	
-	uint8_t timerDrivenPSID= (!_is_rsid && (FileLoader::getCurrentSongSpeed() == 1));
+	uint8_t timerDrivenPSID = (!_is_rsid && (FileLoader::getCurrentSongSpeed() == 1));
 	
 	Core::startupTune(sample_rate, _selected_track, 
 					_is_rsid, timerDrivenPSID, _ntsc_mode, _compatibility, _basic_prog, 
@@ -205,21 +204,20 @@ void FileLoader::initTune(uint32_t sample_rate, uint8_t selected_track) {
 }
 
 void FileLoader::storeFileInfo() {
-	_load_result[0]= &_load_addr;
-	_load_result[1]= &_play_speed;
-	_load_result[2]= &_max_track;
-	_load_result[3]= &_selected_track;
-	_load_result[4]= _song_name;
-	_load_result[5]= _song_author;
-	_load_result[6]= _song_copyright;
+	_load_result[0] = &_load_addr;
+	_load_result[1] = &_play_speed;
+	_load_result[2] = &_max_track;
+	_load_result[3] = &_selected_track;
+	_load_result[4] = _song_name;
+	_load_result[5] = _song_author;
+	_load_result[6] = _song_copyright;
 }
 
 char** FileLoader::getInfoStrings() {
 	return (char**)_load_result;
 }
 
-static uint8_t get_bit(uint32_t val, uint8_t b)
-{
+static uint8_t get_bit(uint32_t val, uint8_t b) {
     return (uint8_t) ((val >> b) & 1);
 }
 
@@ -232,82 +230,9 @@ uint8_t FileLoader::getCurrentSongSpeed() {
 	return get_bit(_play_speed, _selected_track > 31 ? 31 : _selected_track); 
 }
 
-uint16_t FileLoader::getSidAddr(uint8_t center_byte) {
-	if (((center_byte >= 0x42) && (center_byte <= 0xFE)) && 
-		!((center_byte >= 0x80) && (center_byte <= 0xDF)) && 
-		!(center_byte & 0x1)) {
-
-		return ((uint16_t)0xD000) | (((uint16_t)center_byte)<<4);
-	}
-	return 0;
-}
-
-void FileLoader::configureSids(uint16_t flags, uint8_t *addr_list) {
-	// fixme: provide proper accessor instead of directy exposing SIDConfigurator struct here..
-	struct SIDConfigurator* cf= SID::getHWConfigurator();
-	
-	(*cf->second_chan_idx)= 0;
-	
-	cf->addr[0]= 0xd400;
-	cf->is_6581[0]= (flags>>4) & 0x3;
-	cf->is_6581[0]= !((cf->is_6581[0]>>1) & 0x1); 	// only use 8580 when bit is explicitly set
-	
-	if (!FileLoader::isExtendedSidFile()) {	// allow max of 3 SIDs
-		(*cf->ext_multi_sid_mode)= 0;
-	
-		cf->target_chan[0]= 0;	// no stereo support
-		
-		// standard PSID maxes out at 3 sids
-		cf->addr[1]= getSidAddr((addr_list && (_sid_file_version>2))?addr_list[0x0]:0);
-		cf->is_6581[1]= (flags>>6) & 0x3;
-		cf->is_6581[1]= !cf->is_6581[1] ? cf->is_6581[0] : !((cf->is_6581[1]>>1) & 0x1);
-		cf->target_chan[1]= 0;
-		
-		cf->addr[2]= getSidAddr((addr_list && (_sid_file_version>3))?addr_list[0x1]:0);
-		cf->is_6581[2]= (flags>>8) & 0x3;
-		cf->is_6581[2]= !cf->is_6581[2] ? cf->is_6581[0] : !((cf->is_6581[2]>>1) & 0x1);
-		cf->target_chan[2]= 0;
-		
-		cf->addr[3]= 0;
-		cf->is_6581[3]= 0;
-		cf->target_chan[3]= 0;
-		
-	} else {	// allow max of 10 SIDs
-		(*cf->ext_multi_sid_mode)= 1;
-		
-		cf->target_chan[0]= (flags>>6) & 0x1;
-		
-		uint8_t prev_chan= cf->target_chan[0];
-		
-		// is at even offset so there should be no alignment issue
-		uint16_t *addr_list2= (uint16_t*)addr_list;
-		
-		uint8_t i;
-		for (i= 0; i<(MAX_SIDS-1); i++) {
-			uint16_t flags2= addr_list2[i];	// bytes are flipped here
-			if (!flags2) break;
-			
-			cf->addr[1+i]= getSidAddr(flags2&0xff);
-			cf->is_6581[1+i]= (flags2>>12) & 0x3;
-			cf->target_chan[1+i]= (flags2>>14) & 0x1;
-
-			if (!(*cf->second_chan_idx)) {
-				if (prev_chan != cf->target_chan[1+i] ) {
-					(*cf->second_chan_idx)= i+1;	// 0 is the $d400 SID
-					
-					prev_chan= cf->target_chan[1+i];
-				}
-			}
-			
-			// default to whatever main SID is using
-			if (!cf->is_6581[1+i]) cf->is_6581[1+i]= cf->is_6581[0];
-		}
-		for (; i<(MAX_SIDS-1); i++) {	// mark as unused
-			cf->addr[1+i]= 0;
-			cf->is_6581[1+i]= 0;
-			cf->target_chan[1+i]= 0;
-		}
-	}
+void FileLoader::configureSids(uint16_t flags, uint8_t* addr_list) {
+	SIDConfigurator* cf = SID::getHWConfigurator();
+	cf->configure(FileLoader::isExtendedSidFile(), _sid_file_version, flags, addr_list);	
 }
 
 // ------------------  handling of unit tests  -------------------------------------------------------------------------
@@ -321,37 +246,36 @@ void TestFileLoader::init() {
 	FileLoader::init();	
 }
 
-static uint16_t loadTestFromMemory(void *buf, uint32_t buflen)
-{
-	uint8_t *pdata =(uint8_t*)buf;;
-    uint8_t data_file_offset= 0;	
+static uint16_t loadTestFromMemory(void *buf, uint32_t buflen) {
+	uint8_t *pdata = (uint8_t*)buf;;
+    uint8_t data_file_offset = 0;	
 	
 	uint16_t load_addr;
 	
 	// original C64 binary file format	
 	load_addr = pdata[0];
-	load_addr|= pdata[1]<<8;
+	load_addr |= pdata[1] << 8;
 
-	data_file_offset +=2;
+	data_file_offset += 2;
 	
-	int32_t size= buflen-2;
-	if (size < 0 || size >0xffff) {
+	int32_t size = buflen - 2;
+	if (size < 0 || size > 0xffff) {
 		return 0;		// illegal sid file
 	}	
 	Core::loadSongBinary(&pdata[2], load_addr, size, 0);
     return load_addr;	
 }
 
-uint32_t TestFileLoader::load(void *in_buffer, uint32_t in_buf_size, char *filename, 
-								void *basic_ROM, void *char_ROM, void *kernal_ROM) {
+uint32_t TestFileLoader::load(void* in_buffer, uint32_t in_buf_size, char* filename, 
+								void* basic_ROM, void* char_ROM, void* kernal_ROM) {
 
 	fprintf(stderr, "starting test %s\n", filename);
 
 	init();
 	
-	_sid_file_version= 2;
-	_basic_prog= 0;
-	_compatibility= 1;
+	_sid_file_version = 2;
+	_basic_prog = 0;
+	_compatibility = 1;
 
 	setRsidMode(1);
 	
@@ -361,7 +285,7 @@ uint32_t TestFileLoader::load(void *in_buffer, uint32_t in_buf_size, char *filen
 	
 	memInitTest();
 	
-	_init_addr= loadTestFromMemory(in_buffer, in_buf_size);
+	_init_addr = loadTestFromMemory(in_buffer, in_buf_size);
 	
 	if (_init_addr) {
 		if (_init_addr != 0x0801) {
@@ -388,27 +312,27 @@ uint32_t TestFileLoader::load(void *in_buffer, uint32_t in_buf_size, char *filen
 //#define MUS_VOICE_PTRS 0x2743
 #define MUS_PLAY_INDICATOR 0x269B
 
-const static uint16_t MUS_REL_DATA_START= MUS_DATA_START - MUS_BASE_ADDR;
-const static uint16_t MUS_MAX_SIZE= MUS_REL_DATA_START;
-const static uint16_t MUS_MAX_SONG_SIZE= 0xA000 - MUS_DATA_START;	// stop at BASIC ROM.. or how big are these songs?
+const static uint16_t MUS_REL_DATA_START = MUS_DATA_START - MUS_BASE_ADDR;
+const static uint16_t MUS_MAX_SIZE = MUS_REL_DATA_START;
+const static uint16_t MUS_MAX_SONG_SIZE = 0xA000 - MUS_DATA_START;	// stop at BASIC ROM.. or how big are these songs?
 
 	// buffer used to combine .mus and player
-static uint8_t*			_mus_mem_buffer= 0;								// represents memory at MUS_BASE_ADDR
-const static uint16_t	_mus_mem_buffer_size= 0xA000 - MUS_BASE_ADDR;
+static uint8_t*			_mus_mem_buffer = 0;							// represents memory at MUS_BASE_ADDR
+const static uint16_t	_mus_mem_buffer_size = 0xA000 - MUS_BASE_ADDR;
 
 
 static uint16_t musGetOffset(uint8_t* buf) {
 	return (((uint16_t)buf[1]) << 8) + buf[0];
 }
 
-static void musGetSizes(uint8_t *mus_song_file, uint16_t *v1len, uint16_t *v2len, 
-						uint16_t *v3len, uint16_t *track_data_len) {
+static void musGetSizes(uint8_t* mus_song_file, uint16_t* v1len, uint16_t* v2len, 
+						uint16_t* v3len, uint16_t* track_data_len) {
 							
-	(*v1len)= musGetOffset(mus_song_file+2);
-	(*v2len)= musGetOffset(mus_song_file+4);
-	(*v3len)= musGetOffset(mus_song_file+6);
+	(*v1len) = musGetOffset(mus_song_file + 2);
+	(*v2len) = musGetOffset(mus_song_file + 4);
+	(*v3len) = musGetOffset(mus_song_file + 6);
 
-	(*track_data_len)= MUS_HEAD+ (*v1len)+ (*v2len)+ (*v3len);
+	(*track_data_len) = MUS_HEAD + (*v1len) + (*v2len) + (*v3len);
 }	
 
 static uint8_t musIsTrackEnd(uint8_t voice) {
@@ -420,25 +344,25 @@ static uint8_t musIsTrackEnd(uint8_t voice) {
 	*/
 }
 
-static void musMapInfoTexts(uint8_t *mus_song_file, uint32_t mus_song_file_len, uint16_t track_data_len) {
+static void musMapInfoTexts(uint8_t* mus_song_file, uint32_t mus_song_file_len, uint16_t track_data_len) {
 	if (mus_song_file_len <= track_data_len) return;
 	
-	uint8_t *buffer= mus_song_file + track_data_len;
-	uint16_t max_info_len= mus_song_file_len - track_data_len;
+	uint8_t* buffer = mus_song_file + track_data_len;
+	uint16_t max_info_len = mus_song_file_len - track_data_len;
 
 	resetInfoText();
 		
 	uint8_t line = 0;
 	uint8_t current_len = 0;
 	for (uint8_t j= 0; j<max_info_len; j++) {	// iterate over all the remaining chars in the file 
-		uint8_t ch= buffer[j];	
+		uint8_t ch = buffer[j];	
 		
 		// remove C64 special chars.. don't have that font anyway 
 		if (!(ch == 0xd) && ((ch < 0x20) || (ch > 0x60))) continue; 
 		
 		if (current_len < MAX_INFO_LEN) {
 			char* dest = _info_texts[line];
-			dest[current_len++]= (ch == 0xd)? 0 : ch;
+			dest[current_len++] = (ch == 0xd) ? 0 : ch;
 			
 			// last one wins.. hopefully the 0 terminator..
 			if (MAX_INFO_LEN == current_len) current_len--; 
@@ -447,7 +371,7 @@ static void musMapInfoTexts(uint8_t *mus_song_file, uint32_t mus_song_file_len, 
 		}
 		if ((ch == 0xd) && (current_len > 0)) {	// remove empty lines
 			// start new line..
-			current_len= 0;
+			current_len = 0;
 			line++;
 			if (line >= MAX_INFO_LINES) break;
 		}
@@ -460,44 +384,44 @@ MusFileLoader::MusFileLoader() {
 // Compute!'s .mus files require an addtional player that must installed with the song file.
 uint16_t MusFileLoader::loadComputeSidplayerData(uint8_t *mus_song_file, uint32_t mus_song_file_len) {
 	// note: the player can also be used in RSID mode (but for some reason the timing is then much slower..)
-	_sid_file_version= 2;
-	_basic_prog= 0;
-	_compatibility= 1;
+	_sid_file_version = 2;
+	_basic_prog = 0;
+	_compatibility = 1;
 	FileLoader::setNTSCMode(1);// .mus stuff is mostly from the US..
 	
 	FileLoader::configureSids(0, 0); 	// just use one *old* SID at d400 
 	
-	_load_addr= MUS_BASE_ADDR;
-	_load_end_addr= 0x9fff;
+	_load_addr = MUS_BASE_ADDR;
+	_load_end_addr = 0x9fff;
 
-	_init_addr= MUS_BASE_ADDR;
-	_play_addr=  0x1a07;		// unused in RSID emulation
+	_init_addr = MUS_BASE_ADDR;
+	_play_addr = 0x1a07;		// unused in RSID emulation
 	
-	uint16_t pSize= COMPUTESIDPLAYER_LENGTH;
+	uint16_t pSize = COMPUTESIDPLAYER_LENGTH;
 	if((pSize > MUS_MAX_SIZE) || (mus_song_file_len > MUS_MAX_SONG_SIZE)) return 0; // ERROR
 	
 	// prepare temp input buffer
 	if (_mus_mem_buffer == 0) {
-		_mus_mem_buffer= (uint8_t*)malloc(_mus_mem_buffer_size);	// represents mem from MUS_BASE_ADDR to $9fff
+		_mus_mem_buffer = (uint8_t*)malloc(_mus_mem_buffer_size);	// represents mem from MUS_BASE_ADDR to $9fff
 	}
 	memcpy(_mus_mem_buffer, computeSidplayer, pSize);
 	
 	// patch: put INIT in endless loop rather than RTS (more convenient for RSID emulation)
-	_mus_mem_buffer[0x002e]=	0x4c;
-	_mus_mem_buffer[0x002f]=	0xde;
-	_mus_mem_buffer[0x030]=	0x17;
+	_mus_mem_buffer[0x002e] = 0x4c;
+	_mus_mem_buffer[0x002f] = 0xde;
+	_mus_mem_buffer[0x030] = 0x17;
 	
 
 	// patch/configure the MUS player
-	_mus_mem_buffer[0x17ca -MUS_BASE_ADDR]= (!_ntsc_mode) & 0x1;	// NTSC by default.. so this is not really needed
+	_mus_mem_buffer[0x17ca - MUS_BASE_ADDR]= (!_ntsc_mode) & 0x1;	// NTSC by default.. so this is not really needed
 		
 		
 	// patch "INIT" routine to load the MUS file from other address
-//	uint16_t addr= 	MUS_DATA_START+2;					// skip 2-bytes header, e.g. start at $2820 
-//	_mus_mem_buffer[0x17ef -MUS_BASE_ADDR]= addr & 0xff;
-//	_mus_mem_buffer[0x17f1 -MUS_BASE_ADDR]= addr >>8;
+//	uint16_t addr = MUS_DATA_START + 2;					// skip 2-bytes header, e.g. start at $2820 
+//	_mus_mem_buffer[0x17ef - MUS_BASE_ADDR] = addr & 0xff;
+//	_mus_mem_buffer[0x17f1 - MUS_BASE_ADDR] = addr >>8;
 	
-	memcpy(_mus_mem_buffer+MUS_REL_DATA_START, mus_song_file, mus_song_file_len);
+	memcpy(_mus_mem_buffer + MUS_REL_DATA_START, mus_song_file, mus_song_file_len);
 
 
 	uint16_t v1len, v2len, v3len, track_data_len;
@@ -512,13 +436,12 @@ uint16_t MusFileLoader::loadComputeSidplayerData(uint8_t *mus_song_file, uint32_
 	return 1;
 }
 
-
-uint32_t MusFileLoader::load(uint8_t *input_file_buffer, uint32_t in_buf_size, char *filename,
-							void *basic_ROM, void *char_ROM, void *kernal_ROM) {
+uint32_t MusFileLoader::load(uint8_t* input_file_buffer, uint32_t in_buf_size, char* filename,
+							void* basic_ROM, void* char_ROM, void* kernal_ROM) {
 	
 	init();
 
-	memResetKernelROM((uint8_t *)kernal_ROM);
+	memResetKernelROM((uint8_t*)kernal_ROM);
 	
 	setRsidMode(1);
 	memResetRAM(FileLoader::getNTSCMode(), !FileLoader::isRSID());
@@ -534,7 +457,6 @@ uint32_t MusFileLoader::load(uint8_t *input_file_buffer, uint32_t in_buf_size, c
 	return 0;
 }
 
-
 uint8_t MusFileLoader::isTrackEnd() {
 	return musIsTrackEnd(0);
 }
@@ -544,55 +466,54 @@ uint8_t MusFileLoader::isTrackEnd() {
 SidFileLoader::SidFileLoader() {
 }
 
-static uint16_t loadSIDFromMemory(void *sid_data, uint16_t *load_addr, uint16_t *load_end_addr,
-									uint16_t *init_addr, uint16_t *play_addr, uint8_t *subsongs,
-									uint8_t *startsong, uint32_t *speed, uint32_t file_size,
-									int32_t *load_size, uint8_t basic_mode) {
+static uint16_t loadSIDFromMemory(void* sid_data, uint16_t* load_addr, uint16_t* load_end_addr,
+									uint16_t* init_addr, uint16_t* play_addr, uint8_t* subsongs,
+									uint8_t* startsong, uint32_t* speed, uint32_t file_size,
+									int32_t* load_size, uint8_t basic_mode) {
 	
-    uint8_t *pdata= (uint8_t*)sid_data;;
-    uint8_t data_file_offset= pdata[7];
+    uint8_t *pdata = (uint8_t*)sid_data;;
+    uint8_t data_file_offset = pdata[7];
 
-    *load_addr = pdata[8]<<8;
-    *load_addr|= pdata[9];
+    *load_addr = pdata[8] << 8;
+    *load_addr |= pdata[9];
 
-    *init_addr = pdata[10]<<8;
-    *init_addr|= pdata[11];
+    *init_addr = pdata[10] << 8;
+    *init_addr |= pdata[11];
 	
-    *play_addr = pdata[12]<<8;
-    *play_addr|= pdata[13];
-
+    *play_addr = pdata[12] << 8;
+    *play_addr |= pdata[13];
 	
 	// "sid file format" stupidity: use of 16 bits just so that 
 	// counter can run from 1 to 256 instead of 0 to 255:
-	uint16_t tracks= pdata[0xf] | (((uint16_t)pdata[0xe])<<8);
-	if (tracks == 0) tracks= 1;
-	if (tracks > 0xff) tracks= 0xff;
+	uint16_t tracks = pdata[0xf] | (((uint16_t)pdata[0xe]) << 8);
+	if (tracks == 0) tracks = 1;
+	if (tracks > 0xff) tracks = 0xff;
     *subsongs = tracks & 0xff;
 
-	uint16_t start= pdata[0x11] | (((uint16_t)pdata[0x10])<<8);
-	if (!start) start= 1;
-	if (start > tracks) start= tracks;
+	uint16_t start = pdata[0x11] | (((uint16_t)pdata[0x10]) << 8);
+	if (!start) start = 1;
+	if (start > tracks) start = tracks;
     *startsong = (start & 0xff) - 1;	// start at index 0
 
 	if (*load_addr == 0) {
 		// original C64 binary file format
 		
 		*load_addr = pdata[data_file_offset];
-		*load_addr|= pdata[data_file_offset+1]<<8;
+		*load_addr |= pdata[data_file_offset + 1] << 8;
 		
 		data_file_offset += 2;
 	}
 	if (*init_addr == 0) {
-		*init_addr= *load_addr;	// 0 implies that init routine is at load_addr
+		*init_addr = *load_addr;	// 0 implies that init routine is at load_addr
 	}	
 	
 	// more "sid file format" sillyness: only 32 "speed" bits for possible 256 tracks
-    *speed = pdata[0x12]<<24;
-    *speed|= pdata[0x13]<<16;
-    *speed|= pdata[0x14]<<8;
-    *speed|= pdata[0x15];
+    *speed = pdata[0x12] << 24;
+    *speed |= pdata[0x13] << 16;
+    *speed |= pdata[0x14] << 8;
+    *speed |= pdata[0x15];
     
-	*load_end_addr= *load_addr + file_size-data_file_offset;
+	*load_end_addr = *load_addr + file_size - data_file_offset;
 	
 	int32_t size= file_size - data_file_offset;
 	if (size < 0 || size > 0xffff) {
@@ -602,38 +523,38 @@ static uint16_t loadSIDFromMemory(void *sid_data, uint16_t *load_addr, uint16_t 
 	// find a space to put the starter code: the number of hoops you have 
 	// to jump through just to find 6 free bytes is a bad joke..
 	
-	uint8_t start_page= pdata[0x78];
+	uint8_t start_page = pdata[0x78];
 	uint8_t driver_size = 33;	// see memory.c: _driverPSID
 	
-	_free_space= 0;
+	_free_space = 0;
 	if (start_page == 0xff) {
 		// no space available
 	} else if (start_page == 0x0) {
 		if (((*load_addr) + size) < (0xcfff - driver_size)) {
-			_free_space= 0xcfff - driver_size;
+			_free_space = 0xcfff - driver_size;
 		} else if ((*load_addr) >= (0x0400 + driver_size)) {
-			_free_space= (0x0400 + driver_size);
+			_free_space = (0x0400 + driver_size);
 		}
 	} else {
-		_free_space= ((uint16_t)start_page) << 8;
+		_free_space = ((uint16_t)start_page) << 8;
 	}
 	
 	Core::loadSongBinary(&pdata[data_file_offset], *load_addr, size, basic_mode);
-	*load_size= size;
+	*load_size = size;
 	
     return *load_addr;
 }
 
 static uint16_t parseSYS(uint16_t start, uint16_t end) {
 	// parse a simple "123 SYS3000" BASIC command
-	uint16_t result= 0;
-	uint8_t c= 0;
+	uint16_t result = 0;
+	uint8_t c = 0;
 	for (uint16_t i= start; i<=end; i++) {
-		c= memReadRAM(i);
+		c = memReadRAM(i);
 		if (!c) break;
 
 		if ((c >= 0x30) && (c <= 0x39) ) { 
-			result = result*10 + (c-0x30); 
+			result = result * 10 + (c - 0x30); 
 		} else if (result > 0) {
 			break;
 		}
@@ -641,10 +562,10 @@ static uint16_t parseSYS(uint16_t start, uint16_t end) {
 	return result;
 }	
 
-void startFromBasic(uint16_t *init_addr, uint8_t has_ROMs, int32_t load_size) {
+void startFromBasic(uint16_t* init_addr, uint8_t has_ROMs, int32_t load_size) {
 	if (has_ROMs) {
 		// suppose all the necessarry ROMs are available
-		(*init_addr)= 0xa7ae;	// BASIC "next statement"		
+		(*init_addr) = 0xa7ae;	// BASIC "next statement"		
 	} else {
 		// don't have C64 BASIC ROM. if BASIC program is just used to 
 		// jump to some address (SYS $....) then try to do that for 
@@ -653,7 +574,7 @@ void startFromBasic(uint16_t *init_addr, uint8_t has_ROMs, int32_t load_size) {
 		// extracts the SYS $.... address from trivial BASIC program amd patches (*initAddr) accordingly
 
 		if ((*init_addr) == 0x0801) {	// typical garbage: points to BASIC tokens..
-			uint16_t nextLine= memReadRAM(*init_addr) | ((memReadRAM((*init_addr)+1)) << 8);
+			uint16_t nextLine = memReadRAM(*init_addr) | ((memReadRAM((*init_addr) + 1)) << 8);
 			if (!memReadRAM(nextLine)) {
 				// one line program	(bad luck if additional REM etc lines are used..)
 				if (memReadRAM(((*init_addr) + 4)) == 0x9e) {	// command is SYS
@@ -664,22 +585,22 @@ void startFromBasic(uint16_t *init_addr, uint8_t has_ROMs, int32_t load_size) {
 	}
 }
 
-uint32_t SidFileLoader::load(uint8_t *input_file_buffer, uint32_t in_buf_size, char *filename,
-							void *basic_ROM, void *char_ROM, void *kernal_ROM) {
+uint32_t SidFileLoader::load(uint8_t* input_file_buffer, uint32_t in_buf_size, char* filename,
+							void* basic_ROM, void* char_ROM, void* kernal_ROM) {
 	
 	init();
 	
-	memResetKernelROM((uint8_t *)kernal_ROM);
+	memResetKernelROM((uint8_t*)kernal_ROM);
 	
 	setRsidMode((input_file_buffer[0x00] != 0x50) ? 1 : 0);
 	
 	// dummy env that still may be overridden by hard RESET used for BASIC progs
 	memResetRAM(FileLoader::getNTSCMode(), !FileLoader::isRSID());	
 	
-	_sid_file_version= input_file_buffer[0x05];
+	_sid_file_version = input_file_buffer[0x05];
 			
-	uint16_t flags= (_sid_file_version > 1) ? 
-					(((uint16_t)input_file_buffer[0x77]) | (((uint16_t)input_file_buffer[0x77])<<8)) : 0x0;
+	uint16_t flags = (_sid_file_version > 1) ? 
+					(((uint16_t)input_file_buffer[0x77]) | (((uint16_t)input_file_buffer[0x77]) << 8)) : 0x0;
 			
 	_basic_prog= (FileLoader::isRSID() && (flags & 0x2));	// a C64 BASIC program needs to be started..
 
@@ -694,17 +615,16 @@ uint32_t SidFileLoader::load(uint8_t *input_file_buffer, uint32_t in_buf_size, c
 	
 	if (FileLoader::isRSID()) memResetCharROM((uint8_t *)char_ROM);
 
-	_compatibility= ( (_sid_file_version & 0x2) &&  ((flags & 0x2) == 0));	
-	uint8_t ntsc_mode= (_sid_file_version >= 2) && (flags & 0x8); // NTSC bit
+	_compatibility = ( (_sid_file_version & 0x2) &&  ((flags & 0x2) == 0));
+	uint8_t ntsc_mode = (_sid_file_version >= 2) && (flags & 0x8); // NTSC bit
 	
 	FileLoader::configureSids(flags, &(input_file_buffer[0x7a]));
-		
-	uint8_t i;
-	for (i=0;i<32;i++) _song_name[i] = input_file_buffer[0x16+i];
-	for (i=0;i<32;i++) _song_author[i] = input_file_buffer[0x36+i]; 
-	for (i=0;i<32;i++) _song_copyright[i] = input_file_buffer[0x56+i];
+				
+	strncpy(_song_name,      (const char*)input_file_buffer + 0x16, 32);
+	strncpy(_song_author,    (const char*)input_file_buffer + 0x36, 32);
+	strncpy(_song_copyright, (const char*)input_file_buffer + 0x56, 32);
 
-	int32_t load_size= 0;
+	int32_t load_size = 0;
 	
 	// loading of song binary is the last step in the general memory initialization
 	if (!loadSIDFromMemory(input_file_buffer, &_load_addr, &_load_end_addr, &_init_addr, 
@@ -721,4 +641,3 @@ uint32_t SidFileLoader::load(uint8_t *input_file_buffer, uint32_t in_buf_size, c
 	storeFileInfo();
 	return 0;
 }
-

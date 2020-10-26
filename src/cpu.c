@@ -68,7 +68,7 @@
 * Terms of Use: This software is licensed under a CC BY-NC-SA 
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
-  
+
 #include <string.h>
 #include <stdio.h>
 
@@ -83,11 +83,8 @@
 
 #include "memory.h"
 
-// todo: remove failed optimization experiments
-//#define OPT_INLINE
-
 #ifdef TEST
-uint8_t test_running= 0;
+uint8_t test_running = 0;
 #endif
 
 // ----------- CPU state -----------
@@ -108,21 +105,14 @@ static uint8_t _s; 				// stack pointer
 static uint8_t _p;				// status register (see above flags)
 
 // compiler used by EMSCRIPTEN is actually too dumb to even use
-// "inline" for the below local function!
+// "inline" for the below local function! (however perf-test inlining
+// the code via a define did not show any relevant benefit..)
 
-#ifndef OPT_INLINE
 static void setflags(int32_t flag, int32_t cond) {
     if (cond) _p |= flag;
     else _p &= ~flag;
 }
-#else
-// testing with FF this does not seem to make any difference..
-// in Chome results fluctuate wildly so they cannot be compared at all
-#define setflags(flag, cond)\
-    if (cond) _p |= ((int32_t)flag);\
-    else _p &= ~((int32_t)flag);
 
-#endif
 // ---- interrupt handling ---
 
 // "Many references will claim that interrupts are polled during the last
@@ -145,7 +135,7 @@ static void setflags(int32_t flag, int32_t cond) {
 
 // line "detectors" run in ø2 phase and activate the respective internal
 // signal in next ø1, i.e. the next system clock cycle.
-static uint8_t _interrupt_lead_time= 2;
+static uint8_t _interrupt_lead_time = 2;
 
 // how the 6502's pipline affects the handling of the I-flag:
 
@@ -170,8 +160,8 @@ static uint8_t _interrupt_lead_time= 2;
 //   uint8_t _delayed_sei= 0;
 
 // ---- CIA handling ---
-static uint8_t _irq_committed= 0;	// CPU is committed to running the IRQ
-static uint32_t _irq_line_ts= 0;
+static uint8_t _irq_committed = 0;	// CPU is committed to running the IRQ
+static uint32_t _irq_line_ts = 0;
 
 // #define TRACE_IRQ_TIMING
 
@@ -191,8 +181,8 @@ void checkForIRQ(void) {
 		// test-case: Vicious_SID_2-Escos (needs FLAG_I check)
 	
 		if (!_irq_line_ts) {
-			_irq_committed= 1;			// there is no way back now
-			_irq_line_ts= sysCycles();	// ts when line was activated
+			_irq_committed = 1;			// there is no way back now
+			_irq_line_ts = sysCycles();	// ts when line was activated
 		}
 	} else {
 		if (!_irq_committed) _irq_line_ts = 0;	// IRQ flag really relevant here? (see mandatory check in pendingIRQ())
@@ -201,7 +191,7 @@ void checkForIRQ(void) {
 
 int8_t pendingIRQ(void) {
 	if (_irq_committed) {
-		uint32_t elapsed= sysCycles() - _irq_line_ts;
+		uint32_t elapsed = sysCycles() - _irq_line_ts;
 
 		// test-case: Vaakataso.sid, Vicious_SID_2-Carmina_Burana.sid
 		//            depend on the FLAG_I test probably compensates
@@ -215,9 +205,9 @@ int8_t pendingIRQ(void) {
 
 	// ---- NMI handling ---	
 	
-static uint8_t _nmi_committed= 0;		// CPU is committed to running the NMI
-static uint8_t _nmi_line= 0;			// state change detection
-static uint32_t _nmi_line_ts= 0;		// for scheduling
+static uint8_t _nmi_committed = 0;		// CPU is committed to running the NMI
+static uint8_t _nmi_line = 0;			// state change detection
+static uint32_t _nmi_line_ts = 0;		// for scheduling
 
 void checkForNMI(void) {
 	// when the CPU detects the "NMI line" activation it "commits" to
@@ -237,9 +227,9 @@ void checkForNMI(void) {
 	
 		if (!_nmi_line) {
 			
-			_nmi_committed= 1;			// there is no way back now
-			_nmi_line= 1;				// using 1 to model HW line "low" signal
-			_nmi_line_ts= sysCycles();
+			_nmi_committed = 1;			// there is no way back now
+			_nmi_line = 1;				// using 1 to model HW line "low" signal
+			_nmi_line_ts = sysCycles();
 			
 			// "If both an NMI and an IRQ are pending at the end of an
 			// instruction, the NMI will be handled and the pending
@@ -253,10 +243,10 @@ void checkForNMI(void) {
 			// NMI before previous one has been acknowledged
 		}
 	} else {
-		_nmi_line= 0;			// NMI has been acknowledged
+		_nmi_line = 0;			// NMI has been acknowledged
 		if (!_nmi_committed) {
 			// still needed until the committed NMI has been scheduled
-			_nmi_line_ts= 0; 	
+			_nmi_line_ts = 0; 	
 		}
 	}	
 }
@@ -264,7 +254,7 @@ void checkForNMI(void) {
 uint8_t pendingNMI () {
 
 	if (_nmi_committed) {
-		uint32_t elapsed= sysCycles() - _nmi_line_ts;
+		uint32_t elapsed = sysCycles() - _nmi_line_ts;
 		return elapsed >= _interrupt_lead_time;
 	}
 	return 0;
@@ -306,11 +296,11 @@ enum {
 
 // artificial OPs patched in the positions of unsable JAM ops to ease impl:
 
-static uint8_t start_irq_op= 0x02;	// "sti" pseudo OP for interrupt handling
-static uint8_t start_nmi_op= 0x12;	// "stn"  "
-static uint8_t null_op= 0x22;		// "nul" means "empty main"
+static uint8_t start_irq_op = 0x02;	// "sti" pseudo OP for interrupt handling
+static uint8_t start_nmi_op = 0x12;	// "stn"  "
+static uint8_t null_op = 0x22;		// "nul" means "empty main"
 
-static const int32_t _opcodes[256]  = {
+static const int32_t _opcodes[256] = {
 	brk,ora,sti,slo,nop,ora,asl,slo,php,ora,asl,anc,nop,ora,asl,slo,
 	bpl,ora,stn,slo,nop,ora,asl,slo,clc,ora,nop,slo,nop,ora,asl,slo,
 	jsr,and,nul,rla,bit,and,rol,rla,plp,and,rol,anc,bit,and,rol,rla,
@@ -329,7 +319,7 @@ static const int32_t _opcodes[256]  = {
 	beq,sbc,jam,isb,nop,sbc,inc,isb,sed,sbc,nop,isb,nop,sbc,inc,isb
 };
 
-static const int32_t _modes[256]  = {
+static const int32_t _modes[256] = {
 	imp,idx,abs,idx,zpg,zpg,zpg,zpg,imp,imm,acc,imm,abs,abs,abs,abs,
 	rel,idy,abs,idy,zpx,zpx,zpx,zpx,imp,aby,imp,aby,abx,abx,abx,abx,
 	abs,idx,imp,idx,zpg,zpg,zpg,zpg,imp,imm,acc,imm,abs,abs,abs,abs,
@@ -404,30 +394,30 @@ static uint8_t getH(int32_t mode) {
     static uint16_t ad,ad2;  // avoid reallocation
     switch(mode) {
         case abs:
-            return memGet(_pc+2);			
+            return memGet(_pc + 2);			
         case abx:
         case aby:			
-            ad=memGet(_pc+1);
-            ad|=memGet(_pc+2)<<8;
-            ad2=ad +(mode==abx?_x:_y);
+            ad = memGet(_pc + 1);
+            ad |= memGet(_pc + 2) << 8;
+            ad2 = ad + (mode == abx ? _x : _y);
             return ad2 >> 8;
         case zpg:
-			ad=memGet(_pc+1);
+			ad = memGet(_pc + 1);
             return ad >> 8;
         case idx:
 			// indexed indirect, e.g. LDA ($10,X)
-            ad=memGet(_pc+1);
-            ad+=_x;
-            ad2=memGet(ad&0xff);
+            ad = memGet(_pc + 1);
+            ad += _x;
+            ad2 = memGet(ad & 0xff);
             ad++;
-            ad2|=memGet(ad&0xff)<<8;
+            ad2 |= memGet(ad & 0xff) << 8;
             return ad2 >> 8;
         case idy:
 			// indirect indexed, e.g. LDA ($20),Y
-            ad=memGet(_pc+1);
-            ad2=memGet(ad);
-            ad2|=memGet((ad+1)&0xff)<<8;
-            ad=ad2+_y;			
+            ad = memGet(_pc + 1);
+            ad2 = memGet(ad);
+            ad2 |= memGet((ad + 1) & 0xff) << 8;
+            ad = ad2 + _y;			
             return ad >> 8;
     }  
     return 0;
@@ -445,40 +435,40 @@ static uint8_t getaddr(uint8_t opc, int32_t mode) {
         case imm:
             return memGet(_pc++);
         case abs:
-            ad=memGet(_pc++);
-            ad|=memGet(_pc++)<<8;			
+            ad = memGet(_pc++);
+            ad |= memGet(_pc++) << 8;			
             return memGet(ad);
         case abx:
         case aby:			
-            ad=memGet(_pc++);
-            ad|=memGet(_pc++)<<8;
-            ad2=ad +(mode==abx?_x:_y);
+            ad = memGet(_pc++);
+            ad |= memGet(_pc++) << 8;
+            ad2 = ad +(mode == abx ? _x : _y);
             return memGet(ad2);
         case zpg:
-			ad=memGet(_pc++);
+			ad = memGet(_pc++);
             return memGet(ad);
         case zpx:
-            ad=memGet(_pc++);
-            ad+=_x;
-            return memGet(ad&0xff);
+            ad = memGet(_pc++);
+            ad += _x;
+            return memGet(ad & 0xff);
         case zpy:
-            ad=memGet(_pc++);
-            ad+=_y;
-            return memGet(ad&0xff);
+            ad = memGet(_pc++);
+            ad += _y;
+            return memGet(ad & 0xff);
         case idx:
 			// indexed indirect, e.g. LDA ($10,X)
-            ad=memGet(_pc++);
-            ad+=_x;
-            ad2=memGet(ad&0xff);
+            ad = memGet(_pc++);
+            ad += _x;
+            ad2 = memGet(ad & 0xff);
             ad++;
-            ad2|=memGet(ad&0xff)<<8;
+            ad2 |= memGet(ad & 0xff) << 8;
             return memGet(ad2);
         case idy:
 			// indirect indexed, e.g. LDA ($20),Y
-            ad=memGet(_pc++);
-            ad2=memGet(ad);
-            ad2|=memGet((ad+1)&0xff)<<8;
-            ad=ad2+_y;			
+            ad = memGet(_pc++);
+            ad2 = memGet(ad);
+            ad2 |= memGet((ad + 1) & 0xff) << 8;
+            ad = ad2 + _y;			
             return memGet(ad);
         case acc:
             return _a;
@@ -498,67 +488,67 @@ static void setaddr(int32_t mode, uint8_t val) {
     static uint16_t ad,ad2;  // avoid reallocation
     switch(mode) {
         case abs:
-            ad=memGet(_pc-2);
-            ad|=memGet(_pc-1)<<8;
-            memSet(ad,val);
+            ad = memGet(_pc - 2);
+            ad |= memGet(_pc - 1) << 8;
+            memSet(ad, val);
             return;
         case abx:
         case aby:
-            ad=memGet(_pc-2);
-            ad|=memGet(_pc-1)<<8;
-	        ad2=ad +(mode==abx?_x:_y);
-            memSet(ad2,val);
+            ad = memGet(_pc - 2);
+            ad |= memGet(_pc - 1) << 8;
+	        ad2 = ad +(mode == abx ? _x : _y);
+            memSet(ad2, val);
             return;
         case idx:
 			// indexed indirect, e.g. LDA ($10,X)
-            ad=memGet(_pc-1);
-            ad+=_x;
-            ad2=memGet(ad&0xff);
+            ad = memGet(_pc - 1);
+            ad += _x;
+            ad2 = memGet(ad & 0xff);
             ad++;
-            ad2|=memGet(ad&0xff)<<8;
-			memSet(ad2,val);
+            ad2 |= memGet(ad & 0xff) << 8;
+			memSet(ad2, val);
             return;
         case idy:
 			// indirect indexed, e.g. LDA ($20),Y
-            ad=memGet(_pc-1);
-            ad2=memGet(ad);
-            ad2|=memGet((ad+1)&0xff)<<8;
-            ad=ad2+_y;			
-			memSet(ad,val);
+            ad = memGet(_pc - 1);
+            ad2 = memGet(ad);
+            ad2 |= memGet((ad + 1) & 0xff) << 8;
+            ad = ad2 + _y;
+			memSet(ad, val);
             return;
         case zpg:
-            ad=memGet(_pc-1);
-            memSet(ad,val);
+            ad = memGet(_pc - 1);
+            memSet(ad, val);
             return;
         case zpx:
         case zpy:
-            ad=memGet(_pc-1);
-	        ad+=(mode==zpx?_x:_y);
-            memSet(ad&0xff,val);
+            ad = memGet(_pc - 1);
+	        ad += (mode == zpx ? _x : _y);
+            memSet(ad & 0xff, val);
             return;
         case acc:
-            _a=val;
+            _a = val;
             return;
     }
 }
 
-static int8_t _next_instruction_cycles;	// number of cycles that will be used by the next instruction; fixme - ugly global var
+static int8_t _next_instruction_cycles;	// number of cycles that will be used by the next instruction
 
 #define ABS_INDEXED_ADDR(ad, ad2, reg) \
-	ad= memGet(_pc++); \
-	ad|= memGet(_pc++)<<8; \
-	ad2= ad + reg
+	ad = memGet(_pc++); \
+	ad |= memGet(_pc++) <<8; \
+	ad2 = ad + reg
 	
 #define CHECK_BOUNDARY_CROSSED(opc, ad, ad2) \
-	if ((ad2&0xff00)!=(ad&0xff00)) { \
+	if ((ad2 & 0xff00) != (ad & 0xff00)) { \
 		_next_instruction_cycles++; \
 	}
 	
 #define INDIRECT_INDEXED_ADDR(ad, ad2) \
-	ad= memGet(_pc++); \
-	ad2= memGet(ad); \
-	ad2|= memGet((ad+1)&0xff)<<8; \
-	ad= ad2 + _y;
+	ad = memGet(_pc++); \
+	ad2 = memGet(ad); \
+	ad2 |= memGet((ad + 1) & 0xff) << 8; \
+	ad = ad2 + _y;
 
 
 static void addPageBoundaryReadCycle(uint8_t opc, int32_t mode) {
@@ -607,41 +597,41 @@ static void addPageBoundaryReadCycle2(uint8_t opc, int32_t mode) {
 static void addBranchOpCycles(uint8_t opc, int32_t flag) {	
 	static uint16_t wval;	// avoid reallocation
 	
-    int8_t dist=(int8_t)getaddr(opc, imm);
-    wval=_pc+dist;
+    int8_t dist = (int8_t)getaddr(opc, imm);
+    wval =_pc + dist;
     if (flag) {
-		uint8_t diff= ((_pc&0x100) != (wval&0x100)) ? 2 : 1;
+		uint8_t diff = ((_pc & 0x100) != (wval & 0x100)) ? 2 : 1;
 		
 		if (diff == 1) {
-			_interrupt_lead_time= 4;	// before 1st cycle (of a 3 cycle OP)
+			_interrupt_lead_time = 4;	// before 1st cycle (of a 3 cycle OP)
 		}
 		// + 1 if branch occurs to same page / 
 		// + 2 if branch occurs to different page
-    	_next_instruction_cycles+= diff; 
+    	_next_instruction_cycles += diff; 
 	}
 }
 
-static void prefetchOP( int16_t *opcode, int8_t *cycles) {
+static void prefetchOP( int16_t* opcode, int8_t* cycles) {
 	/* see comment at var decl
 	if (_delayed_sei) {
 		setflags(FLAG_I,1);
-		_delayed_sei= 0;
+		_delayed_sei = 0;
 	}
 	if (_delayed_cli) {
 		setflags(FLAG_I,0);
-		_delayed_cli= 0;
+		_delayed_cli = 0;
 	}
 	*/
 		
-	uint16_t _orig_pc= _pc;	// _pc will be used/corrupted via getaddr anyway
+	uint16_t _orig_pc = _pc;	// _pc will be used/corrupted via getaddr anyway
 
-    uint8_t opc=memGet(_pc++);
-	*opcode= opc;
+    uint8_t opc = memGet(_pc++);
+	*opcode = opc;
 	
-    int32_t mode=_modes[opc];
+    int32_t mode = _modes[opc];
 	
 	// get base cycles
-	_next_instruction_cycles= _opbase_frame_cycles[opc];
+	_next_instruction_cycles = _opbase_frame_cycles[opc];
     
 	// calc adjustments 
 	switch (_opcodes[opc]) {
@@ -673,37 +663,37 @@ static void prefetchOP( int16_t *opcode, int8_t *cycles) {
             break;
 			
         case bcc:
-            addBranchOpCycles(opc, !(_p&FLAG_C));
+            addBranchOpCycles(opc, !(_p & FLAG_C));
             break;
         case bcs:
-            addBranchOpCycles(opc, _p&FLAG_C);
+            addBranchOpCycles(opc, _p & FLAG_C);
             break;
         case bne:
-            addBranchOpCycles(opc, !(_p&FLAG_Z));
+            addBranchOpCycles(opc, !(_p & FLAG_Z));
             break;
         case beq:
-            addBranchOpCycles(opc, _p&FLAG_Z);
+            addBranchOpCycles(opc, _p & FLAG_Z);
             break;
         case bpl:
-            addBranchOpCycles(opc, !(_p&FLAG_N));
+            addBranchOpCycles(opc, !(_p & FLAG_N));
             break;
         case bmi:
-            addBranchOpCycles(opc, _p&FLAG_N);
+            addBranchOpCycles(opc, _p & FLAG_N);
             break;
         case bvc:
-            addBranchOpCycles(opc, !(_p&FLAG_V));
+            addBranchOpCycles(opc, !(_p & FLAG_V));
             break;
         case bvs:
-            addBranchOpCycles(opc, _p&FLAG_V);
+            addBranchOpCycles(opc, _p & FLAG_V);
             break;
 
 		default:			
 			break;
     }
 	
-	_pc= _orig_pc;
+	_pc = _orig_pc;
 	
-	*cycles= _next_instruction_cycles;
+	*cycles = _next_instruction_cycles;
 }
 
 #ifdef DEBUG
@@ -716,71 +706,79 @@ uint8_t cpuGetSP() {
 }
 #endif
 
+#ifdef PSID_DEBUG_ADSR
+uint16_t _play_addr = 0;
+
+void cpuPsidDebug(uint16_t play_addr) {
+	_play_addr = play_addr;
+}
+#endif
+
 static void store(int32_t mode, uint8_t val) {
-    static uint16_t ad,ad2;  // avoid reallocation
+    static uint16_t ad, ad2;  // avoid reallocation
     switch(mode) {
         case abs:
-            ad=memGet(_pc++);
-            ad|=memGet(_pc++)<<8;
-            memSet(ad,val);
+            ad = memGet(_pc++);
+            ad |= memGet(_pc++) << 8;
+            memSet(ad, val);
             return;
         case abx:
         case aby:
-            ad=memGet(_pc++);
-            ad|=memGet(_pc++)<<8;				
-            ad2=ad +(mode==abx?_x:_y);
-            memSet(ad2,val);
+            ad = memGet(_pc++);
+            ad |= memGet(_pc++) << 8;				
+            ad2 = ad + (mode == abx ? _x : _y);
+            memSet(ad2, val);
             return;
         case zpg:
-            ad=memGet(_pc++);
-            memSet(ad,val);
+            ad = memGet(_pc++);
+            memSet(ad, val);
             return;
         case zpx:
-            ad=memGet(_pc++);
-            ad+=_x;
-            memSet(ad&0xff,val);
+            ad = memGet(_pc++);
+            ad += _x;
+            memSet(ad & 0xff, val);
             return;
         case zpy:
-            ad=memGet(_pc++);
-            ad+=_y;
-            memSet(ad&0xff,val);
+            ad = memGet(_pc++);
+            ad += _y;
+            memSet(ad & 0xff, val);
             return;
         case idx:
-            ad=memGet(_pc++);
-            ad+=_x;
-            ad2=memGet(ad&0xff);
+            ad = memGet(_pc++);
+            ad += _x;
+            ad2 = memGet(ad & 0xff);
             ad++;
-            ad2|=memGet(ad&0xff)<<8;
-            memSet(ad2,val);
+            ad2 |= memGet(ad & 0xff) << 8;
+            memSet(ad2, val);
             return;
         case idy:
-            ad=memGet(_pc++);
-            ad2=memGet(ad);
-            ad2|=memGet((ad+1)&0xff)<<8;
-            ad=ad2+_y;
-            memSet(ad,val);
+            ad = memGet(_pc++);
+            ad2 = memGet(ad);
+            ad2 |= memGet((ad + 1) & 0xff) << 8;
+            ad = ad2 + _y;
+            memSet(ad, val);
             return;
         case acc:
-            _a=val;
+            _a = val;
             return;
     }
 }
 
 static void push(uint8_t val) {
-    memSet(0x100+_s,val);	
-	_s= (_s-1)&0xff;			// real stack just wraps around...	
+    memSet(0x100 + _s, val);	
+	_s = (_s - 1) & 0xff;		// real stack just wraps around...	
 }
 
 static uint8_t pop(void) {
-	_s= (_s+1)&0xff;			// real stack just wraps around...	
-    return memGet(0x100+_s);	// pos is now the new first free element..
+	_s = (_s + 1) & 0xff;		// real stack just wraps around...	
+    return memGet(0x100 + _s);	// pos is now the new first free element..
 }
 
 static void branch(uint8_t opc, int32_t flag) {
-    int8_t dist=(int8_t)getaddr(opc, imm);
+    int8_t dist = (int8_t)getaddr(opc, imm);
 
     if (flag) {
-		_pc=_pc+dist; 
+		_pc += dist; 
 	}
 }
 
@@ -789,44 +787,53 @@ static int16_t _exe_instr_opcode;
 static int8_t _exe_instr_cycles;
 static int8_t _exe_instr_cycles_remain;
 
+#ifdef PSID_DEBUG_ADSR
+static uint16_t _frame_count;
+extern void sidDebug(int16_t frame_count);
+#endif
+
 void cpuInit() {		
 	// cpu status
-	_pc=_a= _x= _y= _s= _p= 0;
+	_pc = _a = _x = _y = _s = _p = 0;
 		
-	_exe_instr_cycles= _exe_instr_cycles_remain= 0;
+	_exe_instr_cycles = _exe_instr_cycles_remain = 0;
 	_exe_instr_opcode = -1;
 	
-	_irq_line_ts= _irq_committed= 0;
-	_nmi_line= _nmi_line_ts= _nmi_committed= 0;
+	_irq_line_ts = _irq_committed = 0;
+	_nmi_line = _nmi_line_ts = _nmi_committed = 0;
 
 	sysSetNMIMarker(0);
-//	_delayed_cli= _delayed_sei= 0;
+//	_delayed_cli = _delayed_sei = 0;
 
 #ifdef TEST
-	test_running= 1;
+	test_running = 1;
 
-	_s= 0x0; 	// this should be equivalent to the 0xfd that the tests expect:
+	_s = 0x0; 	// this should be equivalent to the 0xfd that the tests expect:
 	push(0);	// use as marker to know when to return
 	push(0);
 	push(0);	
 	
-	_p= 0x00;	// idiotic advice to set I-flag! (see "irq" tests)
-	_pc= 0x0801;
+	_p = 0x00;	// idiotic advice to set I-flag! (see "irq" tests)
+	_pc = 0x0801;
 	
+#endif
+
+#ifdef PSID_DEBUG_ADSR
+	_frame_count = 0;
 #endif
 }
 
 static void cpuRegReset() {
-    _a=_x=_y=0;
-    _p=0;
-    _s= 0xff; 
-    _pc= 0;
+    _a =_x =_y = 0;
+    _p = 0;
+    _s = 0xff; 
+    _pc = 0;
 }
 
 void cpuSetProgramCounter(uint16_t pc, uint8_t a) {
 	cpuRegReset();
-	_a=a;
-	_pc=pc;	
+	_a = a;
+	_pc = pc;	
 	
 	push(0);	// marker used to detect when "init" returns to non existing "main"
 	push(0);	
@@ -843,7 +850,7 @@ static void runNextOp(void) {
 	static uint8_t bval;	// avoid reallocation
 	static uint16_t wval;	// avoid reallocation
 
-	_interrupt_lead_time= 2;	// reset (special case for branch timing)
+	_interrupt_lead_time = 2;	// reset (special case for branch timing)
 
 	// note:  Read-Modify-Write instructions (ASL, LSR, ROL, ROR, INC,
 	// DEC, SLO, SRE, RLA, RRA, ISB, DCP) write the originally read
@@ -858,19 +865,24 @@ static void runNextOp(void) {
 	// later .. see "cia1tb123" test - where the command byte is
 	// updated by the timer - changing the OP while the instruction
 	// is already executed)
+
+#ifdef PSID_DEBUG_ADSR
+	if (_play_addr == _pc) {	// PSID play routine is about to be invoked..
+		sidDebug(_frame_count - 1);
+		_frame_count++;
+	}
+#endif
 	
-    uint8_t opc=memGet(_pc++);	// might be invalid by now
+    uint8_t opc = memGet(_pc++);	// might be invalid by now
 	
-	opc= _exe_instr_opcode;
+	opc = _exe_instr_opcode;
 	
-    int32_t cmd=_opcodes[opc];
-    int32_t mode=_modes[opc];
+    int32_t cmd = _opcodes[opc];
+    int32_t mode = _modes[opc];
 	
 	int32_t c;  // temp for "carry"
 	
-	// todo: perf-test if below "switch" handling can be manually sped-up
-    switch (cmd) {
-		
+    switch (cmd) {		
 		// ideally the most often used OPs should be retriveable
 		// most quickly.. but is is unclear what strategy the
 		// optimizer will actually be using to implement this (and
@@ -879,124 +891,125 @@ static void runNextOp(void) {
 		// let's just hope it is using some constant time access scheme.
 		
         case adc: {
-			uint8_t in1= _a;
-			uint8_t in2= getaddr(opc, mode);
+			uint8_t in1 = _a;
+			uint8_t in2 = getaddr(opc, mode);
 			
 			// note: The carry flag is used as the carry-in (bit 0) 
 			// for the operation, and the resulting carry-out (bit 8) 
 			// value is stored in the carry flag.
 			
-            wval=(uint16_t)in1+in2+((_p&FLAG_C)?1:0);	// "carry-in"
-            setflags(FLAG_C, wval&0x100);
-            _a=(uint8_t)wval;
+            wval = (uint16_t)in1 + in2 + ((_p & FLAG_C) ? 1 : 0);	// "carry-in"
+            setflags(FLAG_C, wval & 0x100);
+            _a = (uint8_t)wval;
             setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a&0x80);
+            setflags(FLAG_N, _a & 0x80);
 			
 			// calc overflow flag (http://www.righto.com/2012/12/the-6502-overflow-flag-explained.html)
 			// also see http://www.6502.org/tutorials/vflag.html
-			setflags(FLAG_V, (~(in1 ^ in2))&(in1 ^ _a)&0x80);
+			setflags(FLAG_V, (~(in1 ^ in2)) & (in1 ^ _a) & 0x80);
 			}
             break;
 		case alr: 		// aka ASR - Kukle.sid, Raveloop14_xm.sid (that song has other issues though)
 			//	ALR #{imm} = AND #{imm} + LSR
-            bval=getaddr(opc, mode);
-			_a= _a&bval;
+            bval = getaddr(opc, mode);
+			_a = _a & bval;
 
-            setflags(FLAG_C,_a&1);
-            _a>>=1;
+            setflags(FLAG_C, _a & 1);
+            _a >>= 1;
 			
             setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a&0x80);
+            setflags(FLAG_N, _a & 0x80);
 			break;
         case anc:	// Kukle.sid, Axelf.sid (Crowther), Whats_Your_Lame_Excuse.sid, Probing_the_Crack_with_a_Hook.sid
-            bval=getaddr(opc, mode);
-			_a= _a&bval;
+            bval = getaddr(opc, mode);
+			_a = _a & bval;
 			
 			// http://codebase64.org/doku.php?id=base:some_words_about_the_anc_opcode
-            setflags(FLAG_C, _a&0x80);
+            setflags(FLAG_C, _a & 0x80);
 			
 			// supposedly also sets these (http://www.oxyron.de/html/opcodes02.html)
             setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a&0x80);
+            setflags(FLAG_N, _a & 0x80);
             break;
         case and:
-            bval=getaddr(opc, mode);
-            _a&=bval;
+            bval = getaddr(opc, mode);
+            _a &= bval;
             setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a&0x80);
+            setflags(FLAG_N, _a & 0x80);
             break;
         case ane: {// aka XAA; another useless op that is only used in the tests
-	        bval=getaddr(opc, mode);
-			const uint8_t con= 0x0; 	// this is HW dependent.. i.e. this OP is bloody useless			
-			_a= (_a|con) & _x & bval;
+	        bval = getaddr(opc, mode);
+			const uint8_t con = 0x0; 	// this is HW dependent.. i.e. this OP is bloody useless			
+			_a = (_a | con) & _x & bval;
 			
             setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a&0x80);
-		} break; 
+            setflags(FLAG_N, _a & 0x80);
+			} 
+			break; 
         case arr: {		// Whats_Your_Lame_Excurse.sid uses this. sigh "the crappier the song...." & 
 						// Probing_the_Crack_with_a_Hook.sid
 									
 			// AND
-            bval=getaddr(opc, mode);
-            _a&=bval;
+            bval = getaddr(opc, mode);
+            _a &= bval;
 			
 			// set C+V based on this intermediate state of bits 6+7 (before ROR)
-			uint8_t bit7= !!(_a&0x80);
-			uint8_t bit6= !!(_a&0x40);
+			uint8_t bit7 = !!(_a & 0x80);
+			uint8_t bit6 = !!(_a & 0x40);
 
-            c= !!(_p&FLAG_C);
+            c = !!(_p & FLAG_C);
 			
-			setflags(FLAG_V, bit7^bit6);
+			setflags(FLAG_V, bit7 ^ bit6);
             setflags(FLAG_C, bit7);
 						
 			// ROR - C+V not affected here
-            _a>>= 1;
+            _a >>= 1;
 			
 			if (c) {
 				_a |= 0x80;	// exchange bit 7 with carry
 			}
-            setflags(FLAG_N,_a&0x80);
-            setflags(FLAG_Z,!_a);
+            setflags(FLAG_N, _a & 0x80);
+            setflags(FLAG_Z, !_a);
 			}			
             break;
         case asl:
-            wval=getaddr(opc, mode);
-            setaddr(mode,(uint8_t)wval);	// read-modify-write writes original 1st
-            wval<<=1;
-            setaddr(mode,(uint8_t)wval);
-            setflags(FLAG_Z,!(wval&0xff));
-            setflags(FLAG_N,wval&0x80);
-            setflags(FLAG_C,wval&0x100);
+            wval = getaddr(opc, mode);
+            setaddr(mode, (uint8_t)wval);	// read-modify-write writes original 1st
+            wval <<= 1;
+            setaddr(mode, (uint8_t)wval);
+            setflags(FLAG_Z, !(wval & 0xff));
+            setflags(FLAG_N, wval & 0x80);
+            setflags(FLAG_C, wval & 0x100);
             break;
         case bcc:
-            branch(opc, !(_p&FLAG_C));
+            branch(opc, !(_p & FLAG_C));
             break;
         case bcs:
-            branch(opc, _p&FLAG_C);
+            branch(opc, _p & FLAG_C);
             break;
         case bne:
-            branch(opc, !(_p&FLAG_Z));
+            branch(opc, !(_p & FLAG_Z));
             break;
         case beq:
-            branch(opc, _p&FLAG_Z);
+            branch(opc, _p & FLAG_Z);
             break;
         case bpl:
-            branch(opc, !(_p&FLAG_N));
+            branch(opc, !(_p & FLAG_N));
             break;
         case bmi:
-            branch(opc, _p&FLAG_N);
+            branch(opc, _p & FLAG_N);
             break;
         case bvc:
-            branch(opc, !(_p&FLAG_V));
+            branch(opc, !(_p & FLAG_V));
             break;
         case bvs:
-            branch(opc, _p&FLAG_V);
+            branch(opc, _p & FLAG_V);
             break;
         case bit:
-            bval=getaddr(opc, mode);
-            setflags(FLAG_Z,!(_a&bval));
-            setflags(FLAG_N,bval&0x80);
-            setflags(FLAG_V,bval&0x40);	// bit 6
+            bval = getaddr(opc, mode);
+            setflags(FLAG_Z, !(_a & bval));
+            setflags(FLAG_N, bval & 0x80);
+            setflags(FLAG_V, bval & 0x40);	// bit 6
             break;
         case brk:
 #ifdef TEST
@@ -1005,32 +1018,32 @@ static void runNextOp(void) {
 
 				EM_ASM_({ window['outputPETSCII'](($0));}, _a);	// easier to deal with this on JavaScript side (pervent optimizer renaming the func)
 
-				wval=pop();
-				wval|=pop()<<8;	// RTS to where it came from
-				_pc=wval+1;
+				wval = pop();
+				wval |= pop() << 8;	// RTS to where it came from
+				_pc = wval + 1;
 				break;
 			} else if (_pc == 0xE170) {	// load
 				// report the next test file (this means that this test was successful)
-				uint16_t adr= memReadRAM(0x00bb) | (memReadRAM(0x00bc) <<8);
-				uint8_t len= memReadRAM(0x00b7);
-				if (len > 31) len= 31;
+				uint16_t adr = memReadRAM(0x00bb) | (memReadRAM(0x00bc) << 8);
+				uint8_t len = memReadRAM(0x00b7);
+				if (len > 31) len = 31;
 				for (int i= 0; i<len; i++) {
-					_load_filename[i]= memReadRAM(adr++);
+					_load_filename[i] = memReadRAM(adr++);
 				}
-				_load_filename[len]= 0;
+				_load_filename[len] = 0;
 				
 				EM_ASM_({ window['loadFileError'](Pointer_stringify($0));}, _load_filename);	// easier to deal with this on JavaScript side (pervent optimizer renaming the func)
 
-				test_running= 0;
+				test_running = 0;
 				break;
 			} else if (_pc == 0xFFE5) {	// scan keyboard
-				_a= 3;			// always return this "key press"
-				wval=pop();
-				wval|=pop()<<8;
-				_pc=wval+1;
+				_a = 3;			// always return this "key press"
+				wval = pop();
+				wval |= pop() << 8;
+				_pc = wval + 1;
 				break;
 			} else if ((_pc == 0x8001) || (_pc == 0xA475)) {	// exit
-				test_running= 0;
+				test_running = 0;
 				break;
 			}	
 #endif
@@ -1038,210 +1051,210 @@ static void runNextOp(void) {
 
 			// _pc has already been incremented by 1 (see above) 
 			// (return address to be stored on the stack is original _pc+2 )
-			push((_pc+1)>>8);
-			push((_pc+1));
+			push((_pc + 1) >> 8);
+			push((_pc + 1));
 			push(_p | FLAG_B0 | FLAG_B1);	// only in the stack copy
 			
-			_pc=memGet(0xfffe);
-			_pc|=memGet(0xffff)<<8;		// somebody might finger the IRQ vector or the BRK vector at 0316/0317 to use this?
+			_pc = memGet(0xfffe);
+			_pc |= memGet(0xffff) << 8;		// somebody might finger the IRQ vector or the BRK vector at 0316/0317 to use this?
 			
-			setflags(FLAG_I,1);
+			setflags(FLAG_I, 1);
             break;
         case clc:
-            setflags(FLAG_C,0);
+            setflags(FLAG_C, 0);
             break;
         case cld:
-            setflags(FLAG_D,0);
+            setflags(FLAG_D, 0);
             break;
         case cli:
-            setflags(FLAG_I,0);
-//			_delayed_cli= 1;
+            setflags(FLAG_I, 0);
+//			_delayed_cli = 1;
             break;
         case clv:
-            setflags(FLAG_V,0);
+            setflags(FLAG_V, 0);
             break;
         case cmp:
-            bval=getaddr(opc, mode);
-            wval=(uint16_t)_a-bval;
-            setflags(FLAG_Z,!wval);		// _a == bval
-            setflags(FLAG_N,wval&0x80);	// _a < bval
-            setflags(FLAG_C,_a>=bval);
+            bval = getaddr(opc, mode);
+            wval = (uint16_t)_a - bval;
+            setflags(FLAG_Z, !wval);		// _a == bval
+            setflags(FLAG_N, wval & 0x80);	// _a < bval
+            setflags(FLAG_C, _a >= bval);
             break;
         case cpx:
-            bval=getaddr(opc, mode);
-            wval=(uint16_t)_x-bval;
-            setflags(FLAG_Z,!wval);
-            setflags(FLAG_N,wval&0x80);      
-            setflags(FLAG_C,_x>=bval);
+            bval = getaddr(opc, mode);
+            wval = (uint16_t)_x - bval;
+            setflags(FLAG_Z, !wval);
+            setflags(FLAG_N, wval & 0x80);      
+            setflags(FLAG_C, _x >= bval);
             break;
         case cpy:
-            bval=getaddr(opc,mode);
-            wval=(uint16_t)_y-bval;
-            setflags(FLAG_Z,!wval);
-            setflags(FLAG_N,wval&0x80);      
-            setflags(FLAG_C,_y>=bval);
+            bval = getaddr(opc, mode);
+            wval = (uint16_t)_y - bval;
+            setflags(FLAG_Z, !wval);
+            setflags(FLAG_N, wval & 0x80);      
+            setflags(FLAG_C, _y >= bval);
             break;
         case dcp:		// used by: Clique_Baby.sid, Musik_Run_Stop.sid
-            bval=getaddr(opc, mode);
-            setaddr(mode,bval);	// read-modify-write writes original 1st
+            bval = getaddr(opc, mode);
+            setaddr(mode, bval);	// read-modify-write writes original 1st
 			// dec
             bval--;
-            setaddr(mode,bval);
+            setaddr(mode, bval);
 			// cmp
-            wval=(uint16_t)_a-bval;
-            setflags(FLAG_Z,!wval);
-            setflags(FLAG_N,wval&0x80);
-            setflags(FLAG_C,_a>=bval);
+            wval = (uint16_t)_a - bval;
+            setflags(FLAG_Z, !wval);
+            setflags(FLAG_N, wval & 0x80);
+            setflags(FLAG_C, _a >= bval);
             break;
         case dec:
-            bval=getaddr(opc, mode);
-            setaddr(mode,bval);	// read-modify-write writes original 1st
+            bval = getaddr(opc, mode);
+            setaddr(mode, bval);	// read-modify-write writes original 1st
             bval--;
-            setaddr(mode,bval);
-            setflags(FLAG_Z,!bval);
-            setflags(FLAG_N,bval&0x80);
+            setaddr(mode, bval);
+            setflags(FLAG_Z, !bval);
+            setflags(FLAG_N, bval & 0x80);
             break;
         case dex:
             _x--;
-            setflags(FLAG_Z,!_x);
-            setflags(FLAG_N,_x&0x80);
+            setflags(FLAG_Z, !_x);
+            setflags(FLAG_N, _x & 0x80);
             break;
         case dey:
             _y--;
-            setflags(FLAG_Z,!_y);
-            setflags(FLAG_N,_y&0x80);
+            setflags(FLAG_Z, !_y);
+            setflags(FLAG_N, _y & 0x80);
             break;
         case eor:
-            bval=getaddr(opc, mode);
-            _a^=bval;
-            setflags(FLAG_Z,!_a);
-            setflags(FLAG_N,_a&0x80);
+            bval = getaddr(opc, mode);
+            _a ^= bval;
+            setflags(FLAG_Z, !_a);
+            setflags(FLAG_N, _a & 0x80);
             break;
         case inc:
-            bval=getaddr(opc, mode);
-            setaddr(mode,bval);	// read-modify-write writes original 1st
+            bval = getaddr(opc, mode);
+            setaddr(mode, bval);	// read-modify-write writes original 1st
             bval++;
-            setaddr(mode,bval);
-            setflags(FLAG_Z,!bval);
-            setflags(FLAG_N,bval&0x80);
+            setaddr(mode, bval);
+            setflags(FLAG_Z, !bval);
+            setflags(FLAG_N, bval & 0x80);
             break;
         case inx:
             _x++;
-            setflags(FLAG_Z,!_x);
-            setflags(FLAG_N,_x&0x80);
+            setflags(FLAG_Z, !_x);
+            setflags(FLAG_N, _x & 0x80);
             break;
         case iny:
             _y++;
-            setflags(FLAG_Z,!_y);
-            setflags(FLAG_N,_y&0x80);
+            setflags(FLAG_Z, !_y);
+            setflags(FLAG_N, _y & 0x80);
             break;
         case isb: {	// aka ISC; see 'insz' tests
 			// inc
-            bval=getaddr(opc, mode);
-            setaddr(mode,bval);	// read-modify-write writes original 1st
+            bval = getaddr(opc, mode);
+            setaddr(mode, bval);	// read-modify-write writes original 1st
             bval++;
-            setaddr(mode,bval);
-            setflags(FLAG_Z,!bval);
-            setflags(FLAG_N,bval&0x80);
+            setaddr(mode, bval);
+            setflags(FLAG_Z, !bval);
+            setflags(FLAG_N, bval & 0x80);
 
 			// + sbc			
-			uint8_t in1= _a;
-			uint8_t in2= (bval^0xff);	// substract
+			uint8_t in1 = _a;
+			uint8_t in2 = (bval ^ 0xff);	// substract
 			
-            wval=(uint16_t)in1+in2+((_p&FLAG_C)?1:0);
-            setflags(FLAG_C, wval&0x100);
-            _a=(uint8_t)wval;
+            wval = (uint16_t)in1 + in2 + ((_p & FLAG_C) ? 1 : 0);
+            setflags(FLAG_C, wval & 0x100);
+            _a = (uint8_t)wval;
             setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a&0x80);
+            setflags(FLAG_N, _a & 0x80);
 			
-			setflags(FLAG_V, (~(in1 ^ in2))&(in1 ^ _a)&0x80);			
+			setflags(FLAG_V, (~(in1 ^ in2)) & (in1 ^ _a) & 0x80);			
             }
 			break;
 		case jam:	// this op would have crashed the C64
-		    _pc=0;           // just quit the emulation
+		    _pc = 0;           // just quit the emulation
             break;
         case jmp:
-            wval=memGet(_pc++);
-            wval|=memGet(_pc++)<<8;
+            wval = memGet(_pc++);
+            wval |= memGet(_pc++) << 8;
             switch (mode) {
                 case abs:
-					_pc=wval;
+					_pc = wval;
                     break;
                 case ind:
 					// 6502 bug: JMP ($12FF) will fetch the low-byte
 					// from $12FF and the high-byte from $1200
 					
-                    _pc=memGet(wval);
-                    _pc|=memGet((wval==0xff) ? 0 : wval+1)<<8;
+                    _pc = memGet(wval);
+                    _pc |= memGet((wval == 0xff) ? 0 : wval + 1) << 8;
                     break;
             }
             break;
         case jsr:
 			// _pc has already been incremented by 1 (see above) 
 			// (return address to be stored on the stack is original _pc+2 )
-            push((_pc+1)>>8);
-            push((_pc+1));
-            wval=memGet(_pc++);
-            wval|=memGet(_pc++)<<8;
-            _pc=wval;
+            push((_pc + 1) >> 8);
+            push((_pc + 1));
+            wval = memGet(_pc++);
+            wval |= memGet(_pc++) << 8;
+            _pc = wval;
 						
             break;
 		case lae:	// aka LAS, aka LAR .. just for the tests
-            bval=getaddr(opc, mode);
-			_a= _x= _s= (bval & _s);
+            bval = getaddr(opc, mode);
+			_a = _x = _s = (bval & _s);
 			
             setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a&0x80);
+            setflags(FLAG_N, _a & 0x80);
             break;
 		case lax:
 			// e.g. Vicious_SID_2-15638Hz.sid, Kukle.sid
-            _a=getaddr(opc, mode);
-			_x= _a;
-            setflags(FLAG_Z,!_a);
-            setflags(FLAG_N,_a&0x80);
+            _a = getaddr(opc, mode);
+			_x = _a;
+            setflags(FLAG_Z, !_a);
+            setflags(FLAG_N, _a & 0x80);
             break;
 		case lxa: {	// Whats_Your_Lame_Excuse.sid - LOL only real dumbshit player uses this op.. 
-            bval=getaddr(opc, mode);
-			const uint8_t con= 0xff;
-			_a|= con;	// roulette what the specific CPU uses here
-			_a&= bval;
-			_x= _a;
-            setflags(FLAG_Z,!_a);
-            setflags(FLAG_N,_a&0x80);
+            bval = getaddr(opc, mode);
+			const uint8_t con = 0xff;
+			_a |= con;	// roulette what the specific CPU uses here
+			_a &= bval;
+			_x = _a;
+            setflags(FLAG_Z, !_a);
+            setflags(FLAG_N, _a & 0x80);
 		} break;				
         case lda:
-            _a=getaddr(opc, mode);
-            setflags(FLAG_Z,!_a);
-            setflags(FLAG_N,_a&0x80);
+            _a = getaddr(opc, mode);
+            setflags(FLAG_Z, !_a);
+            setflags(FLAG_N, _a & 0x80);
             break;
         case ldx:
-            _x=getaddr(opc, mode);
-            setflags(FLAG_Z,!_x);
-            setflags(FLAG_N,_x&0x80);
+            _x = getaddr(opc, mode);
+            setflags(FLAG_Z, !_x);
+            setflags(FLAG_N, _x & 0x80);
             break;
         case ldy:
-            _y=getaddr(opc, mode);
-            setflags(FLAG_Z,!_y);
-            setflags(FLAG_N,_y&0x80);
+            _y = getaddr(opc, mode);
+            setflags(FLAG_Z, !_y);
+            setflags(FLAG_N, _y & 0x80);
             break;
         case lsr:      
-            bval=getaddr(opc, mode); 
-			wval=(uint8_t)bval;
-            setaddr(mode,bval);	// read-modify-write writes original 1st
-            wval>>=1;
-            setaddr(mode,(uint8_t)wval);
-            setflags(FLAG_Z,!wval);
-            setflags(FLAG_N,wval&0x80);	// always clear?
-            setflags(FLAG_C,bval&1);
+            bval = getaddr(opc, mode); 
+			wval = (uint8_t)bval;
+            setaddr(mode, bval);	// read-modify-write writes original 1st
+            wval >>= 1;
+            setaddr(mode, (uint8_t)wval);
+            setflags(FLAG_Z, !wval);
+            setflags(FLAG_N, wval & 0x80);	// always clear?
+            setflags(FLAG_C, bval & 1);
             break;
         case nop:
 			getaddr(opc, mode);	 // make sure the PC is advanced correctly
             break;
         case ora:
-            bval=getaddr(opc, mode);
-            _a|=bval;
-            setflags(FLAG_Z,!_a);
-            setflags(FLAG_N,_a&0x80);
+            bval = getaddr(opc, mode);
+            _a |= bval;
+            setflags(FLAG_Z, !_a);
+            setflags(FLAG_N, _a & 0x80);
             break;
         case pha:
             push(_a);
@@ -1250,82 +1263,83 @@ static void runNextOp(void) {
             push(_p | FLAG_B0 | FLAG_B1);	// only in the stack copy
             break;
         case pla:
-            _a=pop();
-            setflags(FLAG_Z,!_a);
-            setflags(FLAG_N,_a&0x80);
+            _a = pop();
+            setflags(FLAG_Z, !_a);
+            setflags(FLAG_N, _a & 0x80);
             break;
         case plp: {
-			bval= pop();
+			bval = pop();
 			/*
-			uint8_t i_flag_new= bval & FLAG_I;
-			uint8_t i_flag_old= _p & FLAG_I;
+			uint8_t i_flag_new = bval & FLAG_I;
+			uint8_t i_flag_old = _p & FLAG_I;
 			if (i_flag_new != i_flag_old) {
-				if (i_flag_new) { _delayed_sei= 1; }
-				else 			{ _delayed_cli= 1; }
+				if (i_flag_new) { _delayed_sei = 1; }
+				else 			{ _delayed_cli = 1; }
 				
 				bval = (bval & ~FLAG_I) | i_flag_old; // keep old for one more cycle
 			}
 			*/
-            _p=bval & ~(FLAG_B0 | FLAG_B1);		
-		} break;
+            _p = bval & ~(FLAG_B0 | FLAG_B1);		
+			} 
+			break;
         case rla:				// see Spasmolytic_part_6.sid
 			// rol
-            bval=getaddr(opc, mode);
-            setaddr(mode,bval);	// read-modify-write writes original 1st
-            c=!!(_p&FLAG_C);
-            setflags(FLAG_C,bval&0x80);
-            bval<<=1;
-            bval|=c;
-            setaddr(mode,bval);
+            bval = getaddr(opc, mode);
+            setaddr(mode, bval);	// read-modify-write writes original 1st
+            c = !!(_p & FLAG_C);
+            setflags(FLAG_C, bval & 0x80);
+            bval <<= 1;
+            bval |= c;
+            setaddr(mode, bval);
 
 			// + and
-            _a&=bval;
+            _a &= bval;
             setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a&0x80);
+            setflags(FLAG_N, _a & 0x80);
             break;
         case rol:
-            bval=getaddr(opc, mode);
-            setaddr(mode,bval);	// read-modify-write writes original 1st
-            c=!!(_p&FLAG_C);
-            setflags(FLAG_C,bval&0x80);
-            bval<<=1;
-            bval|=c;
-            setaddr(mode,bval);
-            setflags(FLAG_N,bval&0x80);
-            setflags(FLAG_Z,!bval);
+            bval = getaddr(opc, mode);
+            setaddr(mode, bval);	// read-modify-write writes original 1st
+            c = !!(_p & FLAG_C);
+            setflags(FLAG_C, bval & 0x80);
+            bval <<= 1;
+            bval |= c;
+            setaddr(mode, bval);
+            setflags(FLAG_N, bval & 0x80);
+            setflags(FLAG_Z, !bval);
             break;
         case ror:
-            bval=getaddr(opc, mode);
-            setaddr(mode,bval);	// read-modify-write writes original 1st
-            c=!!(_p&FLAG_C);
-            setflags(FLAG_C,bval&1);
-            bval>>=1;
-            bval|= 0x80*c;
-            setaddr(mode,bval);
-            setflags(FLAG_N,bval&0x80);
-            setflags(FLAG_Z,!bval);
+            bval = getaddr(opc, mode);
+            setaddr(mode, bval);	// read-modify-write writes original 1st
+            c = !!(_p & FLAG_C);
+            setflags(FLAG_C, bval & 1);
+            bval >>= 1;
+            bval |= 0x80 * c;
+            setaddr(mode, bval);
+            setflags(FLAG_N, bval & 0x80);
+            setflags(FLAG_Z, !bval);
             break;
         case rra:
 			// ror
-            bval=getaddr(opc, mode);
-            setaddr(mode,bval);	// read-modify-write writes original 1st
-            c=!!(_p&FLAG_C);
-            setflags(FLAG_C,bval&1);
-            bval>>=1;
-            bval|=0x80*c;
-            setaddr(mode,bval);
+            bval = getaddr(opc, mode);
+            setaddr(mode, bval);	// read-modify-write writes original 1st
+            c = !!(_p & FLAG_C);
+            setflags(FLAG_C, bval & 1);
+            bval >>= 1;
+            bval |= 0x80 * c;
+            setaddr(mode, bval);
 
 			// + adc
-			uint8_t in1= _a;
-			uint8_t in2= bval;
+			uint8_t in1 = _a;
+			uint8_t in2 = bval;
 			
-            wval=(uint16_t)in1+in2+((_p&FLAG_C)?1:0);
-            setflags(FLAG_C, wval&0x100);
-            _a=(uint8_t)wval;
+            wval = (uint16_t)in1 + in2 + ((_p & FLAG_C) ? 1 : 0);
+            setflags(FLAG_C, wval & 0x100);
+            _a = (uint8_t)wval;
             setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a&0x80);
+            setflags(FLAG_N, _a & 0x80);
 			
-			setflags(FLAG_V, (~(in1 ^ in2))&(in1 ^ _a)&0x80);
+			setflags(FLAG_V, (~(in1 ^ in2)) & (in1 ^ _a) & 0x80);
             break;
         case rti:
 			// timing hack: some optimized progs use JMP to an RTI 
@@ -1339,176 +1353,176 @@ static void runNextOp(void) {
 					break;
 			}
 			
-			bval= pop();
-            _p=bval & ~(FLAG_B0 | FLAG_B1);
+			bval = pop();
+            _p = bval & ~(FLAG_B0 | FLAG_B1);
 			
-            wval=pop();
-            wval|=pop()<<8;
-            _pc=wval;	// not like 'rts'! correct address is expected here!
+            wval = pop();
+            wval |= pop() << 8;
+            _pc = wval;	// not like 'rts'! correct address is expected here!
 			
 			sysSetNMIMarker(0);	// hack to improve digi output
 
 #ifdef TRACE_IRQ_TIMING
 			if (_irq_start) {
-				_irq_start= sysCycles()-_irq_start;
+				_irq_start = sysCycles() - _irq_start;
 				EM_ASM_({ console.log('irq t: ' + ($0).toString(16));}, _irq_start);
-				_irq_start= 0;
+				_irq_start = 0;
 			}
 #endif
             break;
         case rts:		
-            wval=pop();
-            wval|=pop()<<8;
-			_pc=wval+1;
+            wval = pop();
+            wval |= pop() << 8;
+			_pc = wval + 1;
             break;
         case sbc:    {
-            bval=getaddr(opc, mode)^0xff;
+            bval = getaddr(opc, mode) ^ 0xff;
 			
-			uint8_t in1= _a;
-			uint8_t in2= bval;
+			uint8_t in1 = _a;
+			uint8_t in2 = bval;
 						
-            wval=(uint16_t)in1+in2+((_p&FLAG_C)?1:0);
-            setflags(FLAG_C, wval&0x100);
-            _a=(uint8_t)wval;
+            wval =(uint16_t)in1 + in2 + ((_p & FLAG_C) ? 1 : 0);
+            setflags(FLAG_C, wval & 0x100);
+            _a = (uint8_t)wval;
             setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a&0x80);
+            setflags(FLAG_N, _a & 0x80);
 			
-			setflags(FLAG_V, (~(in1 ^ in2))&(in1 ^ _a)&0x80);
+			setflags(FLAG_V, (~(in1 ^ in2)) & (in1 ^ _a) & 0x80);
 			}
             break;
         case sha:    {	// aka AHX; for the benefit of the 'SHAAY' test (etc).. have yet to find a song that uses this
-			uint8_t h= getH(mode)+1;
-            bval=getaddr(opc, mode);
-            setaddr(mode,bval);	// read-modify-write writes original 1st
+			uint8_t h = getH(mode) + 1;
+            bval = getaddr(opc, mode);
+            setaddr(mode, bval);	// read-modify-write writes original 1st
 			
-			setaddr(mode,_a&_x&h);
+			setaddr(mode, _a & _x & h);
 			}
             break;			
         case shx:    {	// for the benefit of the 'SHXAY' test (etc).. have yet to find a song that uses this
-			uint8_t h= getH(mode)+1;
-            bval=getaddr(opc, mode);
-            setaddr(mode,bval);	// read-modify-write writes original 1st
+			uint8_t h = getH(mode) + 1;
+            bval = getaddr(opc, mode);
+            setaddr(mode, bval);	// read-modify-write writes original 1st
 			
-			setaddr(mode,_x&h);
+			setaddr(mode, _x & h);
 			}
             break;			
         case shy:    {	// for the benefit of the 'SHYAY' test (etc).. have yet to find a song that uses this
-			uint8_t h= getH(mode);		// should be +1 but it seems to make the test happy.. who cares about this OP
-            bval=getaddr(opc, mode);
-            setaddr(mode,bval);	// read-modify-write writes original 1st
+			uint8_t h = getH(mode);		// should be +1 but it seems to make the test happy.. who cares about this OP
+            bval = getaddr(opc, mode);
+            setaddr(mode, bval);	// read-modify-write writes original 1st
 			
-			setaddr(mode,_y&h);
+			setaddr(mode, _y & h);
 			}
             break;			
         case sax:				// aka AXS; e.g. Vicious_SID_2-15638Hz.sid, Kukle.sid
 			getaddr(opc, mode);	 // make sure the PC is advanced correctly
-            setaddr(mode,bval);	// read-modify-write writes original 1st
-            bval=_a&_x;
-			setaddr(mode,bval);
+            setaddr(mode, bval);	// read-modify-write writes original 1st
+            bval = _a & _x;
+			setaddr(mode, bval);
 			// no flags are affected; registers unchanged
             break;
 		case sbx: // somtimes called SAX; used in Kukle.sid, Artefacts.sid, Whats_Your_Lame_Excuse.sid, Probing_the_Crack_with_a_Hook.sid
 			// affects N Z and C (like CMP)
-			bval=getaddr(opc, mode);
+			bval = getaddr(opc, mode);
 
-            setflags(FLAG_C,(_x&_a)>=bval);	// affects the carry but NOT the overflow
+            setflags(FLAG_C, (_x & _a) >= bval);	// affects the carry but NOT the overflow
 			
-			_x=((_x&_a)-bval) & 0xff;	// _a unchanged (calc not affected by input carry)
+			_x = ((_x & _a) - bval) & 0xff;	// _a unchanged (calc not affected by input carry)
 
-            setflags(FLAG_Z,!_x);		// _a == bval
-            setflags(FLAG_N,_x&0x80);	// _a < bval
+            setflags(FLAG_Z,!_x);			// _a == bval
+            setflags(FLAG_N, _x & 0x80);	// _a < bval
 			break;
         case sec:
-            setflags(FLAG_C,1);
+            setflags(FLAG_C, 1);
             break;
         case sed:
-            setflags(FLAG_D,1);
+            setflags(FLAG_D, 1);
             break;
         case sei:
-            setflags(FLAG_I,1);
-//			_delayed_sei= 1;
+            setflags(FLAG_I, 1);
+//			_delayed_sei = 1;
             break;
 		case shs:	// 	aka TAS 
 			// instable op; hard to think of a good reason why 
 			// anybody would ever use this..
-			_s= _a&_x;
+			_s = _a & _x;
 
-			uint8_t h= getH(mode) +1;
-			bval= getaddr(opc, mode); 	// make sure the PC is advanced correctly
-			setaddr(mode,bval);
+			uint8_t h = getH(mode) + 1;
+			bval = getaddr(opc, mode); 	// make sure the PC is advanced correctly
+			setaddr(mode, bval);
 			setaddr(mode,_s&h);			// setaddr
 		
             break;
         case slo:			// see Spasmolytic_part_6.sid
-            wval=getaddr(opc, mode);
-            setaddr(mode,bval);	// read-modify-write writes original 1st
-            wval<<=1;
-            setaddr(mode,(uint8_t)wval);
-            //setflags(FLAG_Z,!wval);
-            //setflags(FLAG_N,wval&0x80);
-            setflags(FLAG_C,wval&0x100);
+            wval = getaddr(opc, mode);
+            setaddr(mode, bval);	// read-modify-write writes original 1st
+            wval <<= 1;
+            setaddr(mode, (uint8_t)wval);
+            //setflags(FLAG_Z, !wval);
+            //setflags(FLAG_N, wval&0x80);
+            setflags(FLAG_C, wval & 0x100);
 			// + ora
-            bval=wval & 0xff;
-            _a|=bval;
-            setflags(FLAG_Z,!_a);
-            setflags(FLAG_N,_a&0x80);
+            bval = wval & 0xff;
+            _a |= bval;
+            setflags(FLAG_Z, !_a);
+            setflags(FLAG_N, _a & 0x80);
             break;
         case sre:      		// aka LSE; see Spasmolytic_part_6.sid, Halv_2_2.sid
 			// like SLO but shifting right and with eor
 						
 			// copied section from 'lsr'
-            bval=getaddr(opc, mode);			
-            setaddr(mode,bval);	// read-modify-write writes original 1st
-			wval=(uint8_t)bval;
-            wval>>=1;
-            setaddr(mode,(uint8_t)wval);
-            setflags(FLAG_Z,!wval);
-            setflags(FLAG_N,wval&0x80);
-            setflags(FLAG_C,bval&1);
+            bval = getaddr(opc, mode);			
+            setaddr(mode, bval);	// read-modify-write writes original 1st
+			wval = (uint8_t)bval;
+            wval >>= 1;
+            setaddr(mode, (uint8_t)wval);
+            setflags(FLAG_Z, !wval);
+            setflags(FLAG_N, wval & 0x80);
+            setflags(FLAG_C, bval & 1);
 			// + copied section from 'eor'
-            bval=wval & 0xff;
+            bval = wval & 0xff;
 			
-            _a^=bval;
-            setflags(FLAG_Z,!_a);
-            setflags(FLAG_N,_a&0x80);
+            _a ^= bval;
+            setflags(FLAG_Z, !_a);
+            setflags(FLAG_N, _a & 0x80);
 			
             break;
         case sta:
-            store(mode,_a);
+            store(mode, _a);
             break;
         case stx:
-            store(mode,_x);
+            store(mode, _x);
             break;
         case sty:
-            store(mode,_y);
+            store(mode, _y);
             break;
         case tax:
-            _x=_a;
+            _x = _a;
             setflags(FLAG_Z, !_x);
-            setflags(FLAG_N, _x&0x80);
+            setflags(FLAG_N, _x & 0x80);
             break;
         case tay:
-            _y=_a;
+            _y = _a;
             setflags(FLAG_Z, !_y);
-            setflags(FLAG_N, _y&0x80);
+            setflags(FLAG_N, _y & 0x80);
             break;
         case tsx:
-			_x=_s;
+			_x = _s;
             setflags(FLAG_Z, !_x);
-            setflags(FLAG_N, _x&0x80);
+            setflags(FLAG_N, _x & 0x80);
             break;
         case txa:
-            _a=_x;
+            _a = _x;
             setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a&0x80);
+            setflags(FLAG_N, _a & 0x80);
             break;
         case txs:
-            _s=_x;
+            _s = _x;
             break;
         case tya:
-            _a=_y;
+            _a = _y;
             setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a&0x80);
+            setflags(FLAG_N, _a & 0x80);
             break; 
 		default:
 #ifdef DEBUG
@@ -1539,18 +1553,18 @@ static void runNextOp(void) {
 */
 int8_t isStunned(void) {	
 	// VIC badline handling (i.e. CPU may be paused/stunned)
-	uint8_t is_stunned= vicStunCPU();	// it won't hurt to also STUN the crappy PSID songs
+	uint8_t is_stunned = vicStunCPU();	// it won't hurt to also STUN the crappy PSID songs
 	if (is_stunned) {
 		if ((is_stunned == 2) || (_exe_instr_opcode < 0)) {
 			return 1;
 		}
 		
-		uint8_t bus_write= _opbase_write_cycle[_exe_instr_opcode];
+		uint8_t bus_write = _opbase_write_cycle[_exe_instr_opcode];
 		if (!bus_write) {
 			return 1;
 		} else {
 			// this OP may be allowed to still perform "bus write" (if that's the current step):			
-			int8_t p= _exe_instr_cycles -_exe_instr_cycles_remain;
+			int8_t p = _exe_instr_cycles -_exe_instr_cycles_remain;
 			if (p >= bus_write) {
 				// allow this "write to complete".. see below
 			} else {
@@ -1609,26 +1623,26 @@ void cpuClock() {
 			// use NMI settings that must not be used here
 			sysSetNMIMarker(1);
 			
-			_nmi_committed= 0;
+			_nmi_committed = 0;
 			
 						// make that same trigger unusable (interrupt must be 
 			// acknowledged before a new one can be triggered)
-			_nmi_line_ts= 0;
+			_nmi_line_ts = 0;
 			
-			_exe_instr_opcode= start_nmi_op;
-			_exe_instr_cycles= _opbase_frame_cycles[_exe_instr_opcode];
+			_exe_instr_opcode = start_nmi_op;
+			_exe_instr_cycles = _opbase_frame_cycles[_exe_instr_opcode];
 			
 		} else if (pendingIRQ()) {	// interrupts are like a BRK command
-			_irq_committed= 0;
-			_exe_instr_opcode= start_irq_op;
-			_exe_instr_cycles= _opbase_frame_cycles[_exe_instr_opcode];
+			_irq_committed = 0;
+			_exe_instr_opcode = start_irq_op;
+			_exe_instr_cycles = _opbase_frame_cycles[_exe_instr_opcode];
 			
 		} else {
 			// default: start execution of next instruction (determine exact timing)
 			prefetchOP( &_exe_instr_opcode, &_exe_instr_cycles);
 		}
 		// since there are no 1-cycle ops nothing else needs to be done right now
-		_exe_instr_cycles_remain=  _exe_instr_cycles - 1;	// we already are in 1st cycle here
+		_exe_instr_cycles_remain =  _exe_instr_cycles - 1;	// we already are in 1st cycle here
 	} else {
 		
 		// handle "current" instruction
@@ -1641,38 +1655,38 @@ void cpuClock() {
 			// complete current instruction
 
 			if (_exe_instr_opcode == start_irq_op) {
-				push(_pc>>8);		// where to resume after the interrupt
-				push(_pc&0xff);
+				push(_pc >> 8);		// where to resume after the interrupt
+				push(_pc & 0xff);
 				push(_p | FLAG_B1);	// only in the stack copy ( will clear I-flag upon RTI...)
 				
-				setflags(FLAG_I,1);
+				setflags(FLAG_I, 1);
 
-				_pc=memGet(0xfffe);			// IRQ vector
-				_pc|=memGet(0xffff)<<8;
+				_pc = memGet(0xfffe);			// IRQ vector
+				_pc |= memGet(0xffff) << 8;
 #ifdef TRACE_IRQ_TIMING
-				_irq_start= sysCycles();
+				_irq_start = sysCycles();
 #endif
 			} else if (_exe_instr_opcode == start_nmi_op) {			
-				push(_pc>>8);	// where to resume after the interrupt
-				push(_pc&0xff);
+				push(_pc >> 8);	// where to resume after the interrupt
+				push(_pc & 0xff);
 				push(_p | FLAG_B1);	// only in the stack copy
 
 				// "The 6510 will set the IFlag on NMI, too. 6502 untested."
-				setflags(FLAG_I,1);
+				setflags(FLAG_I, 1);
 				
-				_pc=memGet(0xfffa);			// NMI vector
-				_pc|=memGet(0xfffb)<<8;
+				_pc = memGet(0xfffa);			// NMI vector
+				_pc |= memGet(0xfffb) << 8;
 				
 			} else if (_exe_instr_opcode == null_op) {
 				// just burn cycles
 			} else {				
 				runNextOp();	// use old impl that runs a complete instruction
 			}
-			_exe_instr_opcode= -1;	// completed current OP
-			_exe_instr_cycles_remain=  _exe_instr_cycles= 0;
+			_exe_instr_opcode = -1;	// completed current OP
+			_exe_instr_cycles_remain = _exe_instr_cycles = 0;
 		}
 	}
-//	 if (_exe_instr_cycles_remain <0) {
+//	 if (_exe_instr_cycles_remain < 0) {
 //		fprintf(stderr, "ERROR: _exe_instr_cycles_remain < 0\n");
 //	}
 }

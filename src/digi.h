@@ -17,25 +17,25 @@ extern "C" {
 
 // FM detector states
 typedef enum {
-    FreqIdle=0,
-    FreqPrep=1,
-    FreqSet=2,
+    FreqIdle = 0,
+    FreqPrep = 1,
+    FreqSet = 2,
 	
-    FreqVariant1=3,
-    FreqVariant2=4,
+    FreqVariant1 = 3,
+    FreqVariant2 = 4,
 
 } FreqDetectState;
 
 // PWM detector states
 typedef enum {
-    PulseIdle=0,
+    PulseIdle = 0,
 	// variant 2
-    PulsePrep=1,
-    PulseConfirm=2,
+    PulsePrep = 1,
+    PulseConfirm = 2,
 	
 	// variant 2
-	PulsePrep2= 3,
-	PulseConfirm2= 4
+	PulsePrep2 = 3,
+	PulseConfirm2 = 4
 } PulseDetectState;
 
 
@@ -43,10 +43,10 @@ class DigiDetector {
 protected:
 	friend class SID;
 	
-	DigiDetector(class SID *sid);
+	DigiDetector(class SID* sid);
 	
 	// setup
-	void reset(uint32_t clock_rate, uint8_t is_rsid, uint8_t compatibility);
+	void reset(uint32_t clock_rate, uint8_t is_rsid, uint8_t is_compatible);
 	void resetCount();
 
 	// result accessors
@@ -64,11 +64,11 @@ protected:
 	* @param outf	filtered output that digi_out is added to if necessary
 	* @param outo	unfiltered output that digi_out is added to if necessary
 	*/
-	void routeDigiSignal(class Filter *filter, int32_t *digi_out, int32_t *outf, int32_t *outo);
+	void routeDigiSignal(class Filter* filter, int32_t* digi_out, int32_t* outf, int32_t* outo);
 	
 	// diagnostics
 	DigiType getType();
-	const char * getTypeDesc();
+	const char* getTypeDesc();
 	uint16_t getRate();
 private:
 	void recordSample(uint8_t sample, uint8_t voice);
@@ -92,7 +92,7 @@ private:
 	uint8_t getD418Sample( uint8_t value);
 
 private:
-	SID *_sid;
+	SID* _sid;
 	uint16_t _base_addr;
 
 	uint8_t _digi_enabled;	// for manual muting	
@@ -101,8 +101,8 @@ private:
 	
 	// redundant environment state
 	uint8_t _is_rsid;
-	uint8_t _compatible;
-	uint8_t _clock_rate;
+	uint8_t _is_compatible;
+	uint32_t _clock_rate;
 
 	// diagnostic information for GUI use
 	DigiType _used_digi_type;
@@ -129,8 +129,6 @@ private:
 	// nmi d418 (hack)
 	uint8_t _use_non_nmi_D418;
 	uint8_t _non_nmi_count_D418;
-	
 };
-
 
 #endif

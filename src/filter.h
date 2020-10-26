@@ -20,33 +20,33 @@ extern "C" {
 */
 class Filter {
 protected:
-	Filter(class SID *sid);
+	Filter(class SID* sid);
 	
 	void reset(uint32_t sampleRate);
-	int32_t getOutput(int32_t *in, int32_t *out, double cyclesPerSample);
-	int32_t simOutput(uint8_t voice, uint8_t isFiltered, int32_t *in, int32_t *out);
+	int32_t getOutput(int32_t* in, int32_t* out, double cyclesPerSample);
+	int32_t simOutput(uint8_t voice, uint8_t isFiltered, int32_t* in, int32_t* out);
 
-	double runFilter(double in, double output, double *prevbandpass, double *prevlowpass);
+	double runFilter(double in, double output, double* prevbandpass, double* prevlowpass);
 	
 	/**
 	* @return true if voice is filtered
 	*/
-	uint8_t routeSignal(int32_t *voiceOut, int32_t *outf, int32_t *outo, uint8_t voice);
+	uint8_t routeSignal(int32_t* voiceOut, int32_t* outf, int32_t* outo, uint8_t voice);
 	/**
 	* Handle those SID writes that impact the filter.
 	*/
 	void poke(uint8_t reg, uint8_t val);
 	
-	uint8_t isSilenced(uint8_t voice);
+	uint8_t isSilencedVoice3(uint8_t voice);
 protected:
 	void resetInput6581(int32_t filtin);
 	void resetInput8580();
 private:
 	friend class SID;
 	friend class DigiDetector;
-	friend struct FilterState* getState(Filter *e);
+	friend struct FilterState* getState(Filter* e);
 
-	void *_state;	// don't want this header file cluttered with all the implementation details..
+	void* _state;	// don't want this header file cluttered with all the implementation details..
 	class SID* _sid;
 };
 

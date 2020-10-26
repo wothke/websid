@@ -26,10 +26,10 @@ extern "C" {
 
 // ----------- system clock -----------
 
-static uint32_t _cycles= 0;		// counter of elapsed cycles
+static uint32_t _cycles = 0;		// counter of elapsed cycles
 
 extern "C" void sysReset() {
-	_cycles= 0;
+	_cycles = 0;
 }
 
 extern "C" uint32_t sysCycles() {
@@ -48,7 +48,7 @@ extern "C" uint8_t sysClockTimeout() {
 	ciaClock(); 
 	SID::clockAll();
 	
-	_cycles+= 1;
+	_cycles += 1;
 	return 1;
 }
 
@@ -60,7 +60,7 @@ extern "C" void sysClockOpt() {
 	}
 	cpuClock();
 	
-	_cycles+= 1;
+	_cycles += 1;
 }
 
 extern "C" void sysClock() {
@@ -69,7 +69,7 @@ extern "C" void sysClock() {
 	SID::clockAll();
 	cpuClock();	
 	
-	_cycles+= 1;
+	_cycles += 1;
 }
 
 extern "C" uint32_t sysGetClockRate(uint8_t is_ntsc) {

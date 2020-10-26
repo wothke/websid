@@ -153,7 +153,7 @@ static uint8_t swallowStun(uint8_t x, uint16_t y, uint8_t cpr) {
 	// before sprite 0 there is 3 cycle "stun on read"
 	
 	if (memReadIO(0xd015) == 0xff) {
-		if (y < 0x10 || y > (0x10 + 0x29*6 + 1)) {
+		if (y < 0x10 || y > (0x10 + 0x29 * 6 + 1)) {
 			// see used sprite Y positions of 6 lines of sprites
 		} else {
 			if ((x < 10)) {
@@ -161,7 +161,7 @@ static uint8_t swallowStun(uint8_t x, uint16_t y, uint8_t cpr) {
 			}
 			uint8_t s= cpr - 4 - 3;	// should be 6 not 4! (but sounds better like this)
 			if ((x >= s)) {
-				if ((x >= (s+3))) {
+				if ((x >= (s + 3))) {
 					return 2;
 				} else {
 					return 1;
@@ -201,17 +201,17 @@ static uint8_t weAreDemoStun(uint8_t x, uint16_t y, uint8_t cpr) {
 		// in line 66, etc (see other boundary lines)
 		if (y >= 67 && y < 88) {
 			// sprites 2,3,4; i.e. cycles 62,63//1,2//3,4
-			if (x<=4)
+			if (x <= 4)
 				return 2;
-			else if (x >= (62-3)) return (x >= 62) ? 2 : 1;
+			else if (x >= (62 - 3)) return (x >= 62) ? 2 : 1;
 
 			} else if (y >= 88 && y < 123) {
 			// sprites 5,6,7; i.e. cycles 5,6//7,8//9,10
-			if (x >= (5-3) && x < 11) return (x >= 5) ? 2 : 1;
+			if (x >= (5 - 3) && x < 11) return (x >= 5) ? 2 : 1;
 
 		} else if (y >= 123 && y < 165){
 			// sprites 0,1; i.e. cycles 58,59//60,61
-			if (x >= (58-3) && x < 62) return (x >= 58) ? 2 : 1;
+			if (x >= (58 - 3) && x < 62) return (x >= 58) ? 2 : 1;
 		}
 	}
 	return  _defaultStunFunc(x, y, cpr); // use original badline impl
@@ -223,7 +223,7 @@ static void patchWeAreDemoIfNeeded(uint16_t init_addr) {
 	
 	uint8_t pattern[] = {0x8E,0x18,0xD4,0x79,0x00,0x09,0x85,0xE1};
 	if ((init_addr == 0x0c60) && (memMatch(0x0B10, pattern, 8))) {
-		_defaultStunFunc= vicGetStunImpl();
+		_defaultStunFunc = vicGetStunImpl();
 		vicSetStunImpl(&weAreDemoStun);
 	}
 }
