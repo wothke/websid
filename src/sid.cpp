@@ -226,7 +226,12 @@ struct Oscillator {
 
 	
     uint32_t	pulse;					// 16-bit "pulse width" replicated from Voice struct (<<4 shifted for convenience)
+	
     uint8_t		wave;
+		// performance opt: redundant flags from "wave"
+	uint8_t		test_bit;
+	uint8_t		sync_bit;
+	uint8_t		ring_bit;
 	
     uint32_t	counter;				// 24-bit as in the original
 	
@@ -305,7 +310,6 @@ SID::SID() {
 
 
 // ------------------------- convenience accessors ----------------------------
-#define isTestBit(voice) _osc[voice]->wave & TEST_BITMASK
 
 static uint8_t getPreviousVoice(uint8_t voice) {
 	return voice ? voice - 1 : 2;
@@ -321,15 +325,17 @@ uint32_t SID::getRingModCounter(uint8_t voice) {
 	// previous oscillator. That is why the triangle waveform must be
 	// selected to use Ring Modulation."
 	
-	if (_osc[voice]->wave & RING_BITMASK) {
+	struct Oscillator* osc = _osc[voice];
+	
+	if (osc->ring_bit) {
 		// wtf does he mean? (1) substitute MSB before using it in some
 		// EXOR logic OR (2) substitute it using EXOR?
 		
 		uint8_t src_voice = getPreviousVoice(voice);  
-//		return (_osc[voice]->counter & 0x7fffff) | (_osc[src_voice]->counter & 0x800000);	// (1)	
-		return _osc[voice]->counter ^ (_osc[src_voice]->counter & 0x800000);				// (2) judging by the sound of R1D1.sid, this is it..
+//		return (osc->counter & 0x7fffff) | (_osc[src_voice]->counter & 0x800000);	// (1)	
+		return osc->counter ^ (_osc[src_voice]->counter & 0x800000);				// (2) judging by the sound of R1D1.sid, this is it..
 	} else {
-		return _osc[voice]->counter;		
+		return osc->counter;		
 	}
 }
 void SID::resetEngine(uint32_t sample_rate, uint8_t is_6581, uint32_t clock_rate) {	
@@ -392,12 +398,12 @@ void SID::syncOscillator(uint8_t voice) {
 	uint8_t msb_rising = _osc[voice]->msb_rising;		// base trigger condition
 	
 	uint8_t dest_voice = getNextVoice(voice);  
-	uint8_t dest_sync = _osc[dest_voice]->wave & SYNC_BITMASK;	// sync requested?
+	uint8_t dest_sync = _osc[dest_voice]->sync_bit;	// sync requested?
 
 	// exception: when sync source is itself synced in the same cycle then destination
 	// is NOT synced (based on analysis performed by reSID team)
 	
-	uint8_t src_sync = _osc[voice]->wave & SYNC_BITMASK;		// for special case handling
+	uint8_t src_sync = _osc[voice]->sync_bit;		// for special case handling
 	uint8_t src_msb_rising = _osc[getPreviousVoice(voice)]->msb_rising;
 
 	if (msb_rising && dest_sync && !(src_sync && src_msb_rising)) {	  
@@ -408,7 +414,9 @@ void SID::syncOscillator(uint8_t voice) {
 void SID::clockOscillators() {
 	// forward oscillators one CYCLE (required to properly time HARD SYNC)
 	for (uint8_t voice= 0; voice<3; voice++) {
-		_osc[voice]->prev_counter = _osc[voice]->counter;
+		struct Oscillator* osc = _osc[voice];
+		
+		osc->prev_counter = osc->counter;
 		
 		// note: TEST (Bit 3): The TEST bit, when set to one, resets and locks
 		// oscillator 1 at zero until the TEST bit is cleared. The noise waveform
@@ -416,17 +424,17 @@ void SID::clockOscillators() {
 		// held at a DC level; test bit has no influence on the envelope generator
 		// whatsoever!
 		
-		if (isTestBit(voice)) {
-			_osc[voice]->counter  = 0;
-			_osc[voice]->noisepos = 0;
-			_osc[voice]->noiseval = 0x7ffff8;
+		if (osc->test_bit) {
+			osc->counter  = 0;
+			osc->noisepos = 0;
+			osc->noiseval = 0x7ffff8;
 		} else {
 			// update wave counter
-			_osc[voice]->counter = (_osc[voice]->counter + _osc[voice]->freq_inc_cycle) & 0xffffff;				
+			osc->counter = (osc->counter + osc->freq_inc_cycle) & 0xffffff;				
 		}
 
 		// base for hard sync
-		_osc[voice]->msb_rising = (_osc[voice]->counter & 0x800000) > (_osc[voice]->prev_counter & 0x800000);
+		osc->msb_rising = (osc->counter & 0x800000) > (osc->prev_counter & 0x800000);
 	}
 	
 	// handle oscillator HARD SYNC (quality wise it isn't worth the trouble to
@@ -470,11 +478,11 @@ uint16_t SID::createTriangleOutput(uint8_t voice) {
 	return wfout & 0xffff;
 }
 
-uint16_t SID::createSawOutput(uint8_t voice) {	// test-case: Alien.sid, Kawasaki_Synthesizer_Demo.sid
+uint16_t SID::createSawOutput(struct Oscillator* osc) {	// test-case: Alien.sid, Kawasaki_Synthesizer_Demo.sid
 	// Hermit's "anti-aliasing"
 
-	double wfout = _osc[voice]->counter >> 8;	// top 16-bits
-	const double step = _osc[voice]->freq_saw_step;
+	double wfout = osc->counter >> 8;	// top 16-bits
+	const double step = osc->freq_saw_step;
 	
 	if (step != 0) {
 		wfout += wfout * step;
@@ -483,22 +491,22 @@ uint16_t SID::createSawOutput(uint8_t voice) {	// test-case: Alien.sid, Kawasaki
 	return wfout;
 }
 
-void SID::calcPulseBase(uint8_t voice, uint32_t* tmp, uint32_t* pw) {
+void SID::calcPulseBase(struct Oscillator* osc, uint32_t* tmp, uint32_t* pw) {
 	// based on Hermit's impl
-	(*pw) = _osc[voice]->pulse;						// 16 bit
-	(*tmp) = _osc[voice]->freq_pulse_base;			// 15 MSB needed
+	(*pw) = osc->pulse;						// 16 bit
+	(*tmp) = osc->freq_pulse_base;			// 15 MSB needed
 	
 	if ((0 < (*pw)) && ((*pw) < (*tmp))) { (*pw) = (*tmp); }
 	(*tmp) ^= 0xffff;
 	if ((*pw) > (*tmp)) { (*pw) = (*tmp); }
-	(*tmp) = _osc[voice]->counter >> 8;				// 16 MSB needed
+	(*tmp) = osc->counter >> 8;				// 16 MSB needed
 }
 
-uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// elementary pulse
-	if (isTestBit(voice)) return 0xffff;	// pulse start position
+uint16_t SID::createPulseOutput(struct Oscillator* osc, uint32_t tmp, uint32_t pw) {	// elementary pulse
+	if (osc->test_bit) return 0xffff;	// pulse start position
 	
-//	1) int32_t wfout = ((_osc[voice]->counter>>8 >= _osc[voice]->pulse))? 0 : 0xffff; // plain impl - inverted compared to resid
-//	2) int32_t wfout = ((_osc[voice]->counter>>8 < _osc[voice]->pulse))? 0 : 0xffff; // plain impl
+//	1) int32_t wfout = ((osc->counter>>8 >= osc->pulse))? 0 : 0xffff; // plain impl - inverted compared to resid
+//	2) int32_t wfout = ((osc->counter>>8 < osc->pulse))? 0 : 0xffff; // plain impl
 	
 	// Hermit's "anti-aliasing" pulse
 	
@@ -509,8 +517,8 @@ uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// e
 	// test-case: Touch_Me.sid - for some reason avoiding the "division by zero"
 	// actually breaks this song..
 	
-//	double step= ((double)256.0) / (_osc[voice]->freq_inc_sample / (1<<16));	// Hermit's original shift-impl was prone to division-by-zero
-    const double step = _osc[voice]->freq_pulse_step; 	// simple pulse, most often used waveform, make it sound as clean as possible without oversampling
+//	double step= ((double)256.0) / (osc->freq_inc_sample / (1<<16));	// Hermit's original shift-impl was prone to division-by-zero
+    const double step = osc->freq_pulse_step; 	// simple pulse, most often used waveform, make it sound as clean as possible without oversampling
 	
 	double lim;
 	int32_t wfout;
@@ -535,7 +543,7 @@ uint16_t SID::createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw) {	// e
 
 static const uint32_t COMBINED_NOISE_MASK = ~((1<<22)|(1<<20)|(1<<16)|(1<<13)|(1<<11)|(1<<7)|(1<<4)|(1<<2));
 
-uint16_t SID::createNoiseOutput(uint8_t voice) {
+uint16_t SID::createNoiseOutput(struct Oscillator* osc) {
 	// "random values are output through the waveform generator according to the
 	// frequency setting" (http://www.ffd2.com/fridge/blahtune/SID.primer)
 	
@@ -545,15 +553,15 @@ uint16_t SID::createNoiseOutput(uint8_t voice) {
 	// output is considered for a one-sample interval (e.g. ~22 cycles)!
 		
 	// use of top 4-bit seems to sound about right: see Hermit's noisewfsweep.sid
-	uint32_t p = _osc[voice]->counter >> 20;	
-	if (_osc[voice]->noisepos != p) {
-		_osc[voice]->noisepos = p;
+	uint32_t p = osc->counter >> 20;	
+	if (osc->noisepos != p) {
+		osc->noisepos = p;
 		
 		// impl consistent with: http://www.sidmusic.org/sid/sidtech5.html
 		// doc here is probably wrong: http://www.oxyron.de/html/registers_sid.html
 		
-		uint32_t* n = &(_osc[voice]->noiseval);
-		_osc[voice]->noiseout = (((*n) >> (22 - 7) ) & 0x80 ) |
+		uint32_t* n = &(osc->noiseval);
+		osc->noiseout = (((*n) >> (22 - 7) ) & 0x80 ) |
 								(((*n) >> (20 - 6) ) & 0x40 ) |
 								(((*n) >> (16 - 5) ) & 0x20 ) |
 								(((*n) >> (13 - 4) ) & 0x10 ) |
@@ -562,15 +570,16 @@ uint16_t SID::createNoiseOutput(uint8_t voice) {
 								(((*n) >> (4 - 1) ) & 0x02 ) |
 								(((*n) >> (2) ) & 0x01 );
 
-		_osc[voice]->noiseval = (_osc[voice]->noiseval << 1) |
-				(getBit(_osc[voice]->noiseval, 22) ^ getBit(_osc[voice]->noiseval, 17));		
+		osc->noiseval = (osc->noiseval << 1) |
+				(getBit(osc->noiseval, 22) ^ getBit(osc->noiseval, 17));		
 	}
-	return ((uint16_t)_osc[voice]->noiseout) << 8;
+	return ((uint16_t)osc->noiseout) << 8;
 }
 
 uint16_t SID::createWaveOutput(int8_t voice) {
 	uint16_t outv = 0xffff;
-	const uint8_t ctrl = _osc[voice]->wave;
+	struct Oscillator* osc = _osc[voice];
+	const uint8_t ctrl = osc->wave;
 		
 	if (_sid->voices[voice].not_muted) {
 		int8_t combined = 0;	// flags specifically handled "combined waveforms" (not all)
@@ -579,14 +588,14 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 		uint16_t plsout;
 		if ((ctrl & PULSE_BITMASK)) {
 			uint32_t tmp, pw;	// 16 bits used
-			calcPulseBase(voice, &tmp, &pw);
+			calcPulseBase(osc, &tmp, &pw);
 			
 			if (((ctrl&0xf0) == PULSE_BITMASK)) {
 				// pulse only 
-				plsout = createPulseOutput(voice, tmp, pw);
+				plsout = createPulseOutput(osc, tmp, pw);
 			} else {
 				// combined waveforms with pulse
-				plsout =  ((tmp >= pw) || isTestBit(voice)) ? 0xffff : 0; //(this would be enough for simple but aliased-at-high-pitches pulse)
+				plsout =  ((tmp >= pw) || osc->test_bit) ? 0xffff : 0; //(this would be enough for simple but aliased-at-high-pitches pulse)
 
 				if ((ctrl & TRI_BITMASK) && ++combined)  {
 					if (ctrl & SAW_BITMASK) {	// PULSE & TRIANGLE & SAW	- like in Lenore.sid
@@ -605,7 +614,7 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 				}
 			}
 		} else if ((ctrl & TRI_BITMASK) && (ctrl & SAW_BITMASK) && ++combined) {	// TRIANGLE & SAW - like in Garden_Party.sid
-			uint32_t tmp = _osc[voice]->counter >> 12;
+			uint32_t tmp = osc->counter >> 12;
 			outv = combinedWF(voice, _wave.TriSaw_8580, tmp, 1);	// tmp 12 MSB
 		} 
 		
@@ -626,7 +635,7 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 				// to calculate the respective feedback loop.. eventhough other combined
 				// waveforms could squelch the noise by the same process, requiring a GATE
 				// to re-activate it.. have yet to find a song that would use that approach)
-				outv &= createNoiseOutput(voice);
+				outv &= createNoiseOutput(osc);
 				
 				uint32_t feedback = (getBit(outv, 15) << 22) |
 									(getBit(outv, 14) << 20) |
@@ -637,16 +646,16 @@ uint16_t SID::createWaveOutput(int8_t voice) {
 									(getBit(outv, 9) << 4) |
 									(getBit(outv, 8) << 2);
 			
-				_osc[voice]->noiseval &= COMBINED_NOISE_MASK | feedback;	// feed back into shift register
+				osc->noiseval &= COMBINED_NOISE_MASK | feedback;	// feed back into shift register
 			} else {
-				outv &= createNoiseOutput(voice);
+				outv &= createNoiseOutput(osc);
 			}
 		} else if (!combined) {
 			// for the rest mix the oscillators with an AND operation as stated
 			// in the SID's reference manual - even if this is absolutely wrong
 		
 			if (ctrl & TRI_BITMASK)  outv &= createTriangleOutput(voice);					
-			if (ctrl & SAW_BITMASK)  outv &= createSawOutput(voice);
+			if (ctrl & SAW_BITMASK)  outv &= createSawOutput(osc);
 			if (ctrl & PULSE_BITMASK) outv &= plsout;
 		}
 		
@@ -787,14 +796,16 @@ uint8_t SID::readMem(uint16_t addr) {
 }
 
 void SID::updateFreqCache(uint8_t voice) {
-	_osc[voice]->freq_inc_sample = _cycles_per_sample * _sid->voices[voice].freq;	// per 1-sample interval (e.g. ~22 cycles)
+	struct Oscillator* osc = _osc[voice];
+	
+	osc->freq_inc_sample = _cycles_per_sample * _sid->voices[voice].freq;	// per 1-sample interval (e.g. ~22 cycles)
 
 	// optimization for Hermit's waveform generation:
-	_osc[voice]->freq_saw_step = _osc[voice]->freq_inc_sample / 0x1200000;			// for SAW
-	_osc[voice]->freq_pulse_base = ((uint32_t)_osc[voice]->freq_inc_sample) >> 9;	// for PULSE: 15 MSB needed
+	osc->freq_saw_step = osc->freq_inc_sample / 0x1200000;			// for SAW
+	osc->freq_pulse_base = ((uint32_t)osc->freq_inc_sample) >> 9;	// for PULSE: 15 MSB needed
 	
 	// testcase: Dirty_64, Ice_Guys
-	_osc[voice]->freq_pulse_step = 256 / (((uint32_t)_osc[voice]->freq_inc_sample) >> 16);
+	osc->freq_pulse_step = 256 / (((uint32_t)osc->freq_inc_sample) >> 16);
 }
 
 #ifdef PSID_DEBUG_ADSR
@@ -851,11 +862,18 @@ void SID::poke(uint8_t reg, uint8_t val) {
         }
         case 0x3: { // Set pulse width: High byte
             _sid->voices[voice].pulse = (_sid->voices[voice].pulse & 0xff) | ((val & 0xf) << 8);
-			_osc[voice]->pulse= ((uint32_t)_sid->voices[voice].pulse) << 4;	// convenience: 16 MSB pulse needed (input is 12-bit)
+			_osc[voice]->pulse = ((uint32_t)_sid->voices[voice].pulse) << 4;	// convenience: 16 MSB pulse needed (input is 12-bit)
             break;
         }
         case 0x4: {
-			_osc[voice]->wave= val;
+			_osc[voice]->wave = val;
+			
+			// performance optimization: read much more often then written
+			_osc[voice]->test_bit = val & TEST_BITMASK;
+			_osc[voice]->sync_bit = val & SYNC_BITMASK;
+			_osc[voice]->ring_bit = val & RING_BITMASK;
+
+			
 			break;
 		}
     }

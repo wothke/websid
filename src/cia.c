@@ -144,15 +144,17 @@ struct Timer {
 	uint16_t 	memory_address;
 
 		// optimizations
-	uint16_t 	memory_address_0d;
-	uint16_t 	memory_address_0e;
-	uint16_t 	memory_address_0f;
-	
-	
+	uint8_t		interrupt_mask;		// 2 low-bits of respective D*0D register
+	uint8_t		b_is_linked_to_a;
+			
     struct TimerState {
 		uint16_t 	timer_latch;// used to re-load counter		
 		uint32_t 	scripted_transition;
 		uint16_t	counter;
+		
+		// performance optimitaion
+		uint8_t is_started;		// redundant to respective ctrl reg flag
+		
 	} ts[2];					// timers A & B
 	
 	uint8_t delay_INT;			// delayed INTERRUPT signaling (depends on chip model)
@@ -199,18 +201,24 @@ static void initTimer(struct Timer* t, uint8_t timer_idx) {
 	//	uint16_t timer= readCounter(t, timer_idx);		// bootstrap using current memory settings..
 	t->ts[timer_idx].timer_latch = timer;
 	t->ts[timer_idx].counter = 0;
-	
+
+	const uint16_t addr2 = t->memory_address + 0x0e + timer_idx;
+	t->ts[timer_idx].is_started = memReadIO(addr2) & 0x1;
+
 	t->ts[timer_idx].scripted_transition = 0;	
 }
 
+// Initialize the timers using whatever settings have been made in
+// memory.
+// CAUTION: make sure to sync ALL redundant state vars that might be
+// added as performance optimizations! 
 static void initTimerData(uint16_t memory_address, struct Timer* t) {
 
 	t->memory_address = memory_address;
 	
-		// optimization to save "addition" later
-	t->memory_address_0d = memory_address + 0x0d;
-	t->memory_address_0e = memory_address + 0x0e;
-	t->memory_address_0f = memory_address + 0x0f;
+	// perf optimization to save ops later
+	t->interrupt_mask = memReadIO(t->memory_address + 0x0d) & 0x3;
+	t->b_is_linked_to_a = (memReadIO(t->memory_address + 0x0f) & CRB_MODE_MASK) == CRB_MODE_UNDERFLOW_A;
 	
 	initTimer(t, TIMER_A);
 	initTimer(t, TIMER_B);
@@ -235,20 +243,20 @@ static void handleInterrupt(struct Timer* t) {
 	// safer to impersonate the old chip) - also it is what Wolfgang
 	// Lorenz's test-suite expects.
 
-	uint8_t interrupt_mask = memReadIO(t->memory_address_0d) & 0x3;
+//	uint8_t interrupt_mask = memReadIO(t->memory_address_0d) & 0x3;		// use cached mask as perf opt
 		
 	// handle previously scheduled interrupt:
 	if (t->delay_INT) {
 		t->delay_INT = 0;
 		
-		if (t->interrupt_status & interrupt_mask) {
+		if (t->interrupt_status & t->interrupt_mask) {
 			t->interrupt_status |= ICR_INTERRUPT_ON;
 		}
 		return;
 	}
 		
 	// check condition to raise an interrupt:
-	if (t->interrupt_status & interrupt_mask) {
+	if (t->interrupt_status & t->interrupt_mask) {
 		if (!(t->interrupt_status & ICR_INTERRUPT_ON)) {
 			// testcase "IMR": interrupt is triggered with a +1 cycle delay
 			t->delay_INT = 1;
@@ -256,23 +264,29 @@ static void handleInterrupt(struct Timer* t) {
 	}
 }
 
+#define UPDATE_INT_MASK(t, addr, new_mask) \
+			memWriteIO(addr, new_mask);\
+			t->interrupt_mask = new_mask & 0x3;	// performance opt
+
 static void setInterruptMask(struct Timer* t, uint8_t mask) {
 	// i.e. $Dx0D, handle updates of the CIA interrupt control mask	
-	const uint16_t addr = t->memory_address_0d;
+	const uint16_t addr = t->memory_address + 0x0d;
 	
 	if (mask & ICR_SRC_SET) {
-		memWriteIO(addr, memReadIO(addr) | (mask & 0x1f));		// set mask bits
+		uint8_t new_mask = memReadIO(addr) | (mask & 0x1f);		// set mask bits
+		UPDATE_INT_MASK(t, addr, new_mask);
 		
 		// test case "IMR": if condition is already true then IRQ flag must also be set
 		handleInterrupt(t);
 	} else {
-		memWriteIO(addr, memReadIO(addr) & (~(mask & 0x1f)));	// clear mask bits
+		uint8_t new_mask = memReadIO(addr) & (~(mask & 0x1f));	// clear mask bits
+		UPDATE_INT_MASK(t, addr, new_mask);
 	}	
 }
 
 static void setControl(struct Timer* t, uint8_t timer_idx, uint8_t ctrl_new) {	// i.e. $Dx0E
 
-	const uint16_t addr = t->memory_address_0e + timer_idx;
+	const uint16_t addr = t->memory_address + 0x0e + timer_idx;		// i.e. D*0E/D*0F control register
 	const uint8_t ctrl_old = memReadIO(addr);
 	
 	/* todo: verify if this really works - or is actually needed
@@ -290,6 +304,9 @@ static void setControl(struct Timer* t, uint8_t timer_idx, uint8_t ctrl_new) {	/
 	
 	const uint8_t delay_mask = was_started ? DELAY_STARTED_MASK : 0;
 
+	
+	struct TimerState *ts = &t->ts[timer_idx];
+	
 	if (ctrl_new & CRA_FORCE_LOAD) {	// "force load" counter from latch
 
 		// trivia: "Whenever the counter is reloaded from the latch, either
@@ -306,7 +323,7 @@ static void setControl(struct Timer* t, uint8_t timer_idx, uint8_t ctrl_new) {	/
 		// test-case "CIA1TB123" (test 4): the counter is reloaded after
 		// a +1 cycle delay
 		
-		t->ts[timer_idx].scripted_transition = (FORCE_LOAD_MASK<<16) | (FORCE_LOAD_MASK<<8) | (delay_mask);	// after 3 cycle resume normally
+		ts->scripted_transition = (FORCE_LOAD_MASK<<16) | (FORCE_LOAD_MASK<<8) | (delay_mask);	// after 3 cycle resume normally
 
 	} else if (toggled) {
 		// "timer will count from its current position to 0, two clocks after
@@ -315,7 +332,7 @@ static void setControl(struct Timer* t, uint8_t timer_idx, uint8_t ctrl_new) {	/
 		// fixme: what about "stop toggle"
 		
 		// test-case "CIA1TB123" (test 3): +2 delay before start
-		t->ts[timer_idx].scripted_transition = (START_STOP_MASK<<16) | (delay_mask<<8) | (delay_mask);		// after 3 cycle resume normally
+		ts->scripted_transition = (START_STOP_MASK<<16) | (delay_mask<<8) | (delay_mask);		// after 3 cycle resume normally
 	}
 
 	// handle external CNT-pin (testcase: So-Phisticated_III_loader.sid)
@@ -327,6 +344,14 @@ static void setControl(struct Timer* t, uint8_t timer_idx, uint8_t ctrl_new) {	/
 	}
 	
 	memWriteIO(addr, ctrl_new);
+
+	
+	// performance opt: keep redundant flags to avoid ops during reads later..
+	ts->is_started = ctrl_new & 0x1;
+	
+	if (timer_idx) {	// perf opt
+		t->b_is_linked_to_a = (ctrl_new & CRB_MODE_MASK) == CRB_MODE_UNDERFLOW_A;
+	}	
 }
 
 static uint8_t acknInterruptStatus(struct Timer* t) {
@@ -341,12 +366,19 @@ static uint8_t acknInterruptStatus(struct Timer* t) {
 }
 
 static int isStarted(struct Timer* t, uint8_t timer_idx) {
-	return (memReadIO(t->memory_address_0e + timer_idx) & 0x1);
+	return t->ts[timer_idx].is_started;	// performance opt
+	/*
+	const uint16_t addr = t->memory_address + 0x0e + timer_idx;
+	return memReadIO(addr) & 0x1;
+	*/
 }
 
 static void stopTimer(struct Timer* t, uint8_t timer_idx) {
-	const uint16_t addr = t->memory_address_0e + timer_idx;
-	memWriteIO(addr, memReadIO(addr) & (~0x1));	
+	const uint16_t addr = t->memory_address + 0x0e + timer_idx;
+
+	uint8_t ctrl_new = memReadIO(addr) & (~0x1);
+	t->ts[timer_idx].is_started = ctrl_new & 0x1;	// performance opt
+	memWriteIO(addr, ctrl_new);	
 }
 
 /*
@@ -356,12 +388,13 @@ static void stopTimer(struct Timer* t, uint8_t timer_idx) {
 *             reload the latched value, and repeat the procedure continously.
 */
 static int isOneShot(struct Timer* t, uint8_t timer_idx) {
-	const uint16_t addr = t->memory_address_0e + timer_idx;
+	const uint16_t addr = t->memory_address + 0x0e + timer_idx;
 	return memReadIO(addr) & CRA_ONE_SHOT;
 }
 
 static void underflow(struct Timer* t, uint8_t timer_idx) {
-	const uint8_t interrupt_mask = memReadIO(t->memory_address_0d) & (1 << timer_idx);
+//	const uint8_t interrupt_mask = memReadIO(t->memory_address_0d) & (1 << timer_idx);
+	const uint8_t interrupt_mask = t->interrupt_mask & (1 << timer_idx);	// perf opt
 	if (t->interrupt_status & interrupt_mask) {
 		t->delay_INT = 1; // makes sure it triggers directly in the next cycle
 	}
@@ -426,10 +459,13 @@ static void setTimerLatch(struct Timer* t, uint16_t offset, uint8_t value) {
 	}	
 }
 
+// FIXME XXX perf opt: the linked timer mode is rarely used and this respective test
+// useless most of the time (but it seems to make a noticable difference in the profiler..)
+// maybe using 2 different impls for the 2 scenarios would benefit the 99% case?
 static int isBLinkedToA(struct Timer* t) {
-	return ((memReadIO(t->memory_address_0f) & CRB_MODE_MASK) == CRB_MODE_UNDERFLOW_A);
+	return t->b_is_linked_to_a;	// perf opt
+//	return ((memReadIO(t->memory_address_0f) & CRB_MODE_MASK) == CRB_MODE_UNDERFLOW_A);
 }
-
 
 /*
 	@return 1 if underflow occurred
@@ -801,6 +837,9 @@ void ciaReset(uint8_t is_rsid, uint8_t is_ntsc) {
 		initMem(0xdd0f, 0x08); 	// control timer 2B (start/stop)		
 	} 
 
+	// todo: rather than using the above memory settings to then init 
+	// the timers below, regular timer access API should be used, avoiding
+	// duplicate logic and the risk of init-logic getting out of sync
 	initTimerData(ADDR_CIA1, &(_cia[0]));
 	initTimerData(ADDR_CIA2, &(_cia[1]));
 

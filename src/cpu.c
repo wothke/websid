@@ -1560,9 +1560,7 @@ int8_t isStunned(void) {
 		}
 		
 		uint8_t bus_write = _opbase_write_cycle[_exe_instr_opcode];
-		if (!bus_write) {
-			return 1;
-		} else {
+		if (bus_write) {
 			// this OP may be allowed to still perform "bus write" (if that's the current step):			
 			int8_t p = _exe_instr_cycles -_exe_instr_cycles_remain;
 			if (p >= bus_write) {
@@ -1570,7 +1568,9 @@ int8_t isStunned(void) {
 			} else {
 				return 1;				
 			}
-		}		
+		} else {
+			return 1;
+		}
 	}
 	return 0;
 }

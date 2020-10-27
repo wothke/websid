@@ -227,9 +227,7 @@ uint8_t Envelope::triggerLFSR_Threshold(uint16_t threshold, uint16_t* end) {
 	return 0;
 }
 
-uint8_t Envelope::handleExponentialDelay() {
-	struct EnvelopeState* state = getState(this);
-	
+uint8_t Envelope::handleExponentialDelay(struct EnvelopeState* state) {
 	state->exponential_counter += 1;
 	
 	uint8_t result = (state->exponential_counter >= EXPONENTIAL_DELAYS[state->envelope_output]);
@@ -248,6 +246,9 @@ void Envelope::clockEnvelope() {
 	
 	uint8_t previous_envelope_output = state->envelope_output;
 	
+	
+	// FIXME perf opt: sustain/release probably are more probably than attack/decay.. check
+	// if a respectively ordered if/else outperforms a switch
 	switch (state->envphase) {
 		case Attack: {                          // Phase 0 : Attack
 			if (triggerLFSR_Threshold(state->attack, &state->current_LFSR) && !state->zero_lock) {	
@@ -268,7 +269,7 @@ void Envelope::clockEnvelope() {
 		}
 		case Decay: {                   	// Phase 1 : Decay      
 			if (triggerLFSR_Threshold(state->decay, &state->current_LFSR) 
-					&& handleExponentialDelay() && !state->zero_lock) { 	// dec volume when threshold is reached
+					&& handleExponentialDelay(state) && !state->zero_lock) { 	// dec volume when threshold is reached
 				
 					if (state->envelope_output != state->sustain) {
 						state->envelope_output = (state->envelope_output - 1) & 0xff;	// decrease volume
@@ -294,7 +295,7 @@ void Envelope::clockEnvelope() {
 		case Release: {                          // Phase 3 : Release
 			// this phase must be explicitly triggered by clearing the GATE bit..
 			if (triggerLFSR_Threshold(state->release, &state->current_LFSR) 
-				&& handleExponentialDelay() && !state->zero_lock) { 		// dec volume when threshold is reached
+				&& handleExponentialDelay(state) && !state->zero_lock) { 		// dec volume when threshold is reached
 
 				// testcase: Move_Me_Like_A_Movie.sid
 				state->envelope_output = (state->envelope_output - 1) & 0xff;	// decrease volume

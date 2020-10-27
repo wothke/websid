@@ -222,10 +222,10 @@ private:
 	
 	uint16_t	combinedWF(uint8_t channel, double* wfarray, uint16_t index, uint8_t differ6581);
 	uint16_t	createTriangleOutput(uint8_t voice);
-	uint16_t	createSawOutput(uint8_t voice);
-	void		calcPulseBase(uint8_t voice, uint32_t* tmp, uint32_t* pw);
-	uint16_t	createPulseOutput(uint8_t voice, uint32_t tmp, uint32_t pw);
-	uint16_t	createNoiseOutput(uint8_t voice);
+	uint16_t	createSawOutput(struct Oscillator* osc);
+	void		calcPulseBase(struct Oscillator* osc, uint32_t* tmp, uint32_t* pw);
+	uint16_t	createPulseOutput(struct Oscillator* osc, uint32_t tmp, uint32_t pw);
+	uint16_t	createNoiseOutput(struct Oscillator* osc);
 	uint16_t	createWaveOutput(int8_t voice);	// main entry
 	
 protected:

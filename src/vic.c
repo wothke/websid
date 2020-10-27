@@ -49,6 +49,7 @@ static uint16_t _lines_per_screen;
 static uint8_t _x;	// in cycles
 static uint16_t _y;	// in rasters
 
+static uint8_t _signal_irq;	// redundant to (memReadIO(0xd019) & 0x80)
 
 static uint8_t _badline_den;
 
@@ -131,6 +132,7 @@ static void checkIRQ() {
 		
 		uint8_t interrupt_enable = memReadIO(0xd01a) & 0x1;
 		if (interrupt_enable) {
+			_signal_irq = 0x80;
 			latch |= 0x80;	// signal VIC interrupt
 		}
 		
@@ -139,14 +141,14 @@ static void checkIRQ() {
 }
 
 void vicClock() {
-	if (!_x && !_y) {	// special case: in line 0 it is cycle 1		
+	_x += 1;
+	
+	if ((_x == 1) && !_y) {	// special case: in line 0 it is cycle 1		
 		checkIRQ();
 		
 		_badline_den = memReadIO(0xd011) & 0x10;	// default for new frame
-	}
-	_x += 1;	
-	
-	if (_x >= _cycles_per_raster) {
+		
+	} else if (_x >= _cycles_per_raster) {
 		_x = 0;
 		_y += 1;
 
@@ -159,7 +161,10 @@ void vicClock() {
 }
 
 uint8_t vicIRQ() {	
-	return memReadIO(0xd019) & 0x80;
+	// FIXME XXX perf opt: with raster irq once every 20000 cycles, this changes
+	// infrequently but it is checked EVERY CPU cycle - introduce dedicated
+	// flag to make read access less expensive...
+	return _signal_irq; // memReadIO(0xd019) & 0x80;
 }
 
 /*
@@ -214,6 +219,8 @@ void vicReset(uint8_t is_rsid, uint8_t ntsc_mode) {
 	// presumable "the machine" has been running for more than 
 	// one frame before the prog is run (raster has already fired)
 	memWriteIO(0xd019, 0x01);
+	_signal_irq= 0;
+	
 	memWriteIO(0xd01a, 0x00); 	// raster irq not active
 	
 	if (is_rsid) {
@@ -271,6 +278,8 @@ static void writeD019(uint8_t value) {
 	if (!(v & 0xf)) {
 		v &= 0x7f; 	// all sources are gone: IRQ flag should also be cleared
 	}
+	
+	_signal_irq = v & 0x80;	
 	memWriteIO(0xd019, v);
 }
 
@@ -281,6 +290,7 @@ static void writeD01A(uint8_t value) {
 		// check if RASTER condition has already fired previously
 		uint8_t d = memReadIO(0xd019);
 		if (d & 0x1) {
+			_signal_irq = 0x80;	
 			memWriteIO(0xd019, d | 0x80); 	// signal VIC interrupt
 		}
 	}
