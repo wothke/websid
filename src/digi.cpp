@@ -443,7 +443,7 @@ uint8_t DigiDetector::isMahoneyDigi() {
 	// Either the voice-output OR the separately recorded input sample can be
 	// used in the output signal - but not both! (using the later here)
 	
-	//  We_Are_Demo_tune_2.sid seems to be using the same approach only the
+	// We_Are_Demo_tune_2.sid seems to be using the same approach only the
 	// SR uses 0xfb instead of 0xff
 	
 	// song using this from main-loop - test-case: Acid_Flashback.sid
@@ -460,9 +460,17 @@ uint8_t DigiDetector::isMahoneyDigi() {
 
 		if (SID::peek(_base_addr + 0x06) >= 0xfb) {	// correct SR .. might shorten the tests some..
 			_used_digi_type = DigiMahoneyD418;
+			
+			// getting too loud with additional voice output (see We_Are_Demo_tune_2.sid)
+			// todo: fix emulation so that this special handling is no longer needed..
+			_sid->setMute(0, 1);
+			_sid->setMute(1, 1);
+			_sid->setMute(2, 1);			
+
+			return 1;	// XXX FIXME why was it below?!!!
 		}			
 		
-		return 1;
+//		return 1;
 	}
 	return 0;
 }

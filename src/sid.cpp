@@ -2,15 +2,15 @@
 * This emulates the C64's "MOS Technology SID" (see 6581, 8580 or 6582).
 *
 * It handles the respective SID voices and filters. Envelope generator with
-* ADSR-delay bug support, waveform generation including combined waveforms. 
+* ADSR-delay bug support, waveform generation including combined waveforms.
 * Supports all SID features like ring modulation, hard-sync, etc.
 *
 * Emulation is performed on a system clock cycle-by-cycle basis.
 *
-* Anything related to the handling of  'digi samples' is kept separately in digi.c
+* Anything related to the handling of 'digi samples' is kept separately in digi.c
 *
 *
-* Known limitations: 
+* Known limitations:
 *
 *  - effects of the digital-to-analog conversion (e.g. respective 6581 flaws)
 *    are NOT handled
@@ -23,7 +23,7 @@
 * 
 *  - Hermit's jsSID.js provided a variant of "resid filter implementation", an
 *             "anti aliasing" for "pulse" and "saw" waveforms, and a rather
-*             neat approach to generate combined waveforms 
+*             neat approach to generate combined waveforms
 *             (see http://hermit.sidrip.com/jsSID.html)
 *
 * Links:
@@ -35,11 +35,11 @@
 * WebSid (c) 2019 Jürgen Wothke
 * version 0.93
 *
-* Terms of Use: This software is licensed under a CC BY-NC-SA 
+* Terms of Use: This software is licensed under a CC BY-NC-SA
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
  
-// todo: run performance tests to check how cycle based oversampling fares as compared to 
+// todo: run performance tests to check how cycle based oversampling fares as compared to
 // current once-per-sample approach
 
 // todo: with the added external filter Hermit's antialiasing might no longer make sense
@@ -54,6 +54,7 @@
 #include "envelope.h"
 #include "filter.h"
 #include "digi.h"
+#include "wavegenerator.h"
 
 extern "C" {
 #include "base.h"
@@ -61,33 +62,20 @@ extern "C" {
 };
 
 
-// Get the bit from an uint32_t at a specified position
-static uint8_t getBit(uint32_t val, uint8_t b) { return (uint8_t) ((val >> b) & 1); }
-
-#define SYNC_BITMASK 	0x02		
-#define RING_BITMASK 	0x04		
-#define TEST_BITMASK 	0x08		
-
-#define TRI_BITMASK 	0x10		
-#define SAW_BITMASK 	0x20		
-#define PULSE_BITMASK 	0x40		
-#define NOISE_BITMASK 	0x80
-
-
 // --------- HW configuration ----------------
 
 // FIXME get rid of old global vars and move them into configurator..
 
 static uint16_t	_sid_addr[MAX_SIDS];		// start addr of SID chips (0 means NOT available)
-static uint8_t 	_sid_is_6581[MAX_SIDS];		// models of installed SID chips 
-static uint8_t 	_sid_target_chan[MAX_SIDS];	// output channel for the SID chips 
+static uint8_t 	_sid_is_6581[MAX_SIDS];		// models of installed SID chips
+static uint8_t 	_sid_target_chan[MAX_SIDS];	// output channel for the SID chips
 static uint8_t 	_sid_2nd_chan_idx;			// stereo sid-files: 1st chip using 2nd channel
 static uint8_t 	_ext_multi_sid;				// use extended multi-sid mode
 
 SIDConfigurator::SIDConfigurator() {
 }
 
-void SIDConfigurator::init(uint16_t* addr, uint8_t* is_6581, uint8_t* target_chan, uint8_t* second_chan_idx, 
+void SIDConfigurator::init(uint16_t* addr, uint8_t* is_6581, uint8_t* target_chan, uint8_t* second_chan_idx,
 			uint8_t* ext_multi_sid_mode) {
 	_addr = addr;
 	_is_6581 = is_6581;
@@ -97,8 +85,8 @@ void SIDConfigurator::init(uint16_t* addr, uint8_t* is_6581, uint8_t* target_cha
 }
 
 uint16_t SIDConfigurator::getSidAddr(uint8_t center_byte) {
-	if (((center_byte >= 0x42) && (center_byte <= 0xFE)) && 
-		!((center_byte >= 0x80) && (center_byte <= 0xDF)) && 
+	if (((center_byte >= 0x42) && (center_byte <= 0xFE)) &&
+		!((center_byte >= 0x80) && (center_byte <= 0xDF)) &&
 		!(center_byte & 0x1)) {
 
 		return ((uint16_t)0xD000) | (((uint16_t)center_byte) << 4);
@@ -184,108 +172,8 @@ static uint8_t _is_audible = 0;
 static SID _sids[MAX_SIDS];	// allocate the maximum
 
 // globally shared by all SIDs
-static double		_cycles_per_sample;	
+static double		_cycles_per_sample;
 static uint32_t		_sample_rate;				// target playback sample rate
-
-// ----- keeping private structs hidden here - no point to expose these 
-// ----- implementation details in the header file these are the structs from 
-// ----- the old C impl - which could eventually be further refactored
-
-struct SidState {
-	uint8_t is_6581;
-	
-	// SID model specific distortions (based on resid's analysis)
-	int32_t wf_zero;
-	int32_t dac_offset;
-	
-	// bus bahavior for "write only" registers
-	uint8_t bus_write;
-	
-	
-    struct Voice {
-//        uint8_t		wave;			// redundant: see Oscillator
-		uint16_t	freq;
-        uint16_t	pulse;				// 12-bit "pulse width" from respective SID registers
-		uint8_t		not_muted;			// player's separate "mute" feature
- 
-		// add-ons snatched from Hermit's implementation
-		double		prev_wav_data;		// combined waveform handling
-		uint16_t 	prev_wave_form_out;	// floating DAC handling		
-    } voices[3];
-};
-
-// internal oscillator def
-struct Oscillator {
-    double		freq_inc_sample;		// osc increment per sample (for Hermit's anti-aliasing)
-    uint32_t	freq_inc_cycle;			// osc increment per cycle
-
-		// optimization: derived from freq_inc_sample
-    double		freq_saw_step;
-    uint32_t	freq_pulse_base;
-	double		freq_pulse_step;
-
-	
-    uint32_t	pulse;					// 16-bit "pulse width" replicated from Voice struct (<<4 shifted for convenience)
-	
-    uint8_t		wave;
-		// performance opt: redundant flags from "wave"
-	uint8_t		test_bit;
-	uint8_t		sync_bit;
-	uint8_t		ring_bit;
-	
-    uint32_t	counter;				// 24-bit as in the original
-	
-	// hard sync handling
-    uint32_t	prev_counter;
-	uint8_t		msb_rising;
-	
-    uint32_t	noisepos;
-    uint32_t	noiseval;
-    uint8_t		noiseout;
-};
-
-/**
-* This utility class keeps the precalculated "combined waveform" lookup tables. 
-*
-* There is no point keeping these in each SID instance (since they are the same anyway)
-*/
-class WaveformTables {
-public: 
-	WaveformTables();
-private:
-	static void createCombinedWF(double* wfarray, double bitmul, double bitstrength, double threshold);
-public:
-	// Hermit's precalculated "combined waveforms" 
-	double TriSaw_8580[4096];
-	double PulseSaw_8580[4096];
-	double PulseTri_8580[4096];			// Hermit's use of PulseSaw_8580 does not convince in Last_Ninja
-	double PulseTriSaw_8580[4096];
-};
-
-WaveformTables::WaveformTables() {
-    createCombinedWF(TriSaw_8580, 		0.8, 2.4, 0.64);
-    createCombinedWF(PulseSaw_8580, 	1.4, 1.9, 0.68);
-	createCombinedWF(PulseTriSaw_8580, 	0.8, 2.5, 0.64);
-	// far from "correct" but at least a bit better than Hermit's use of PulseSaw_8580 (see Last_Ninja)
-    createCombinedWF(PulseTri_8580, 	0.8, 1.5, 0.38);	// improved settings are welcome!
-}
-
-void WaveformTables::createCombinedWF(double* wfarray, double bitmul, double bitstrength, double threshold) { 
-	// Hermit: "I found out how the combined waveform works (neighboring bits affect each other recursively)"
-	for (uint16_t i = 0; i < 4096; i++) {
-		wfarray[i] = 0; //neighbour-bit strength and DAC MOSFET threshold is approximately set by ears'n'trials
-		for (uint8_t j = 0; j < 12; j++) {
-			double bitlevel = 0;
-			for (uint8_t k = 0; k < 12; k++) {
-				bitlevel += (bitmul / pow(bitstrength, abs(k - j))) * (((i >> k) & 1) - 0.5);
-			}
-			wfarray[i] += (bitlevel >= threshold) ? pow(2.0, (double)j) : 0;
-		}
-		wfarray[i] *= 12;
-	}
-}
-
-static WaveformTables _wave;		// only need one instance of this
 
 
 /**
@@ -294,389 +182,68 @@ static WaveformTables _wave;		// only need one instance of this
 SID::SID() {
 	_addr = 0;		// e.g. 0xd400
 	
-	_sid = (struct SidState*) malloc(sizeof(struct SidState));
-
-	_osc[0] = (struct Oscillator*) malloc(sizeof(struct Oscillator));
-	_osc[1] = (struct Oscillator*) malloc(sizeof(struct Oscillator));
-	_osc[2] = (struct Oscillator*) malloc(sizeof(struct Oscillator));
+	_env_generators[0] = new Envelope(this, 0);
+	_env_generators[1] = new Envelope(this, 1);
+	_env_generators[2] = new Envelope(this, 2);
 		
-	_env[0] = new Envelope(this, 0);
-	_env[1] = new Envelope(this, 1);
-	_env[2] = new Envelope(this, 2);
+	_wave_generators[0] = new WaveGenerator(this, 0);
+	_wave_generators[1] = new WaveGenerator(this, 1);
+	_wave_generators[2] = new WaveGenerator(this, 2);
 		
 	_filter = new Filter(this);
 	_digi = new DigiDetector(this);
 }
 
-
-// ------------------------- convenience accessors ----------------------------
-
-static uint8_t getPreviousVoice(uint8_t voice) {
-	return voice ? voice - 1 : 2;
-}
-static uint8_t getNextVoice(uint8_t voice) {
-	return (voice == 2) ? 0 : voice + 1;
+WaveGenerator* SID::getWaveGenerator(uint8_t voice_idx) {
+	return _wave_generators[voice_idx];
 }
 
-uint32_t SID::getRingModCounter(uint8_t voice) {
-	// Bob Yannes: "Ring Modulation was accomplished by substituting
-	// the accumulator MSB of an oscillator in the EXOR function of
-	// the triangle waveform generator with the accumulator MSB of the
-	// previous oscillator. That is why the triangle waveform must be
-	// selected to use Ring Modulation."
-	
-	struct Oscillator* osc = _osc[voice];
-	
-	if (osc->ring_bit) {
-		// wtf does he mean? (1) substitute MSB before using it in some
-		// EXOR logic OR (2) substitute it using EXOR?
-		
-		uint8_t src_voice = getPreviousVoice(voice);  
-//		return (osc->counter & 0x7fffff) | (_osc[src_voice]->counter & 0x800000);	// (1)	
-		return osc->counter ^ (_osc[src_voice]->counter & 0x800000);				// (2) judging by the sound of R1D1.sid, this is it..
-	} else {
-		return osc->counter;		
-	}
-}
-void SID::resetEngine(uint32_t sample_rate, uint8_t is_6581, uint32_t clock_rate) {	
+
+void SID::resetEngine(uint32_t sample_rate, uint8_t is_6581, uint32_t clock_rate) {
 	// note: structs are NOT packed and contain additional padding..
 	
-	// reset _sid
-	memset((uint8_t*)_sid, 0, sizeof(struct SidState));
-
 	resetModel(is_6581);
 	
 	_sample_rate = sample_rate;
 	_cycles_per_sample = ((double)clock_rate) / sample_rate;	// corresponds to Hermit's clk_ratio
 
 	for (uint8_t i= 0; i<3; i++) {
-//		memset((uint8_t*)&_sid->voices[i], 0, sizeof(struct SidState::Voice));	// already included in _sid	
-
-#ifdef PSID_DEBUG_ADSR
-		_sid->voices[i].not_muted = (i == PSID_DEBUG_VOICE);
-#else
-		_sid->voices[i].not_muted = 1;
-#endif
-		_sid->voices[i].prev_wave_form_out = 0x7fff;	// use center to avoid distortions through envelope scaling
-	}
-	
-	// reset _osc
-	for (uint8_t i= 0; i<3; i++) {
-		memset((uint8_t*)_osc[i], 0, sizeof(struct Oscillator));
-		// note: by default the rest of _sid, _osc & _filter above is set to 0
-		_osc[i]->noiseval = 0x7ffff8;
+		_wave_generators[i]->reset();
 	}
 	
 	// reset envelope generator
 	for (uint8_t i= 0; i<3; i++) {
-		_env[i]->reset();
+		_env_generators[i]->reset();
 	}
 
 	// reset filter
 	_filter->reset(sample_rate);
 }
 
-// ------------------------- wave form generation ----------------------------
-
-void SID::syncOscillator(uint8_t voice) {
-	// Hard Sync is accomplished by clearing the accumulator of an Oscillator
-	// based on the accumulator MSB of the previous oscillator.
-
-	// tests for hard sync:  Ben Daglish's Wilderness music from The Last Ninja
-	// (https://www.youtube.com/watch?v=AbBENI8sHFE) .. seems to be used on
-	// voice 2 early on.. for some reason the instrument that starts on voice 1
-	// at about 45 secs (some combined waveform?) does not sound as crisp as it
-	// should.. (neither in Hermit's player)
-		
-	// intro noise in Martin Galway's Roland's Rat Race
-	// (https://www.youtube.com/watch?v=Zc91S1lrU1I) music.
-	
-	// the below logic is from the "previous oscillator" perspective
-	
-	if (!_osc[voice]->freq_inc_cycle) return;
-	
-	uint8_t msb_rising = _osc[voice]->msb_rising;		// base trigger condition
-	
-	uint8_t dest_voice = getNextVoice(voice);  
-	uint8_t dest_sync = _osc[dest_voice]->sync_bit;	// sync requested?
-
-	// exception: when sync source is itself synced in the same cycle then destination
-	// is NOT synced (based on analysis performed by reSID team)
-	
-	uint8_t src_sync = _osc[voice]->sync_bit;		// for special case handling
-	uint8_t src_msb_rising = _osc[getPreviousVoice(voice)]->msb_rising;
-
-	if (msb_rising && dest_sync && !(src_sync && src_msb_rising)) {	  
-		_osc[dest_voice]->counter = 0;
-	}
-}
-
 void SID::clockOscillators() {
 	// forward oscillators one CYCLE (required to properly time HARD SYNC)
-	for (uint8_t voice= 0; voice<3; voice++) {
-		struct Oscillator* osc = _osc[voice];
-		
-		osc->prev_counter = osc->counter;
-		
-		// note: TEST (Bit 3): The TEST bit, when set to one, resets and locks
-		// oscillator 1 at zero until the TEST bit is cleared. The noise waveform
-		// output of oscillator 1 is also reset and the pulse waveform output is
-		// held at a DC level; test bit has no influence on the envelope generator
-		// whatsoever!
-		
-		if (osc->test_bit) {
-			osc->counter  = 0;
-			osc->noisepos = 0;
-			osc->noiseval = 0x7ffff8;
-		} else {
-			// update wave counter
-			osc->counter = (osc->counter + osc->freq_inc_cycle) & 0xffffff;				
-		}
-
-		// base for hard sync
-		osc->msb_rising = (osc->counter & 0x800000) > (osc->prev_counter & 0x800000);
+	for (uint8_t voice_idx= 0; voice_idx<3; voice_idx++) {
+		WaveGenerator* wave_gen = _wave_generators[voice_idx];
+		wave_gen->clockOscillator();
 	}
 	
 	// handle oscillator HARD SYNC (quality wise it isn't worth the trouble to
 	// use this correct impl..)
-	for (uint8_t voice= 0; voice<3; voice++) {
-		syncOscillator(voice);
-	}	
+	for (uint8_t voice_idx= 0; voice_idx<3; voice_idx++) {
+		WaveGenerator* wave_gen = _wave_generators[voice_idx];
+		wave_gen->syncOscillator();
+	}
 }
 
 double SID::getCyclesPerSample() {
-	return _cycles_per_sample; 
-}
-
-// ------------------------- wave form generation ----------------------------
-
-// Hermit's impl to calculate combined waveforms (check his jsSID-0.9.1-tech_comments
-// in commented jsSID.js for background info): I did not thoroughly check how well
-// this really works (it works well enough for Kentilla and Clique_Baby (apparently
-// this one has to sound as shitty as it does)
-
-uint16_t SID::combinedWF(uint8_t channel, double* wfarray, uint16_t index, uint8_t differ6581) { 
-	//on 6581 most combined waveforms are essentially halved 8580-like waves
-	
-	if (differ6581 && _sid->is_6581) index &= 0x7ff;
-	/* orig
-	double combiwf = (wfarray[index] + _sid->voices[channel].prev_wav_data) / 2;
-	_sid->voices[channel].prev_wav_data = wfarray[index];
-	return (uint16_t)round(combiwf);
-	*/
-	
-	// optimization?
-	uint32_t combiwf = ((uint32_t)(wfarray[index] + _sid->voices[channel].prev_wav_data)) >> 1;	// missing rounding might not make much of a difference
-	_sid->voices[channel].prev_wav_data = wfarray[index];
-	return (uint16_t)combiwf;
-	
-}
-
-uint16_t SID::createTriangleOutput(uint8_t voice) {
-	uint32_t tmp = getRingModCounter(voice);
-    uint32_t wfout = (tmp ^ (tmp & 0x800000 ? 0xffffff : 0)) >> 7;
-	return wfout & 0xffff;
-}
-
-uint16_t SID::createSawOutput(struct Oscillator* osc) {	// test-case: Alien.sid, Kawasaki_Synthesizer_Demo.sid
-	// Hermit's "anti-aliasing"
-
-	double wfout = osc->counter >> 8;	// top 16-bits
-	const double step = osc->freq_saw_step;
-	
-	if (step != 0) {
-		wfout += wfout * step;
-		if (wfout > 0xffff) wfout = 0xffff - (wfout - 0x10000) / step;
-	}
-	return wfout;
-}
-
-void SID::calcPulseBase(struct Oscillator* osc, uint32_t* tmp, uint32_t* pw) {
-	// based on Hermit's impl
-	(*pw) = osc->pulse;						// 16 bit
-	(*tmp) = osc->freq_pulse_base;			// 15 MSB needed
-	
-	if ((0 < (*pw)) && ((*pw) < (*tmp))) { (*pw) = (*tmp); }
-	(*tmp) ^= 0xffff;
-	if ((*pw) > (*tmp)) { (*pw) = (*tmp); }
-	(*tmp) = osc->counter >> 8;				// 16 MSB needed
-}
-
-uint16_t SID::createPulseOutput(struct Oscillator* osc, uint32_t tmp, uint32_t pw) {	// elementary pulse
-	if (osc->test_bit) return 0xffff;	// pulse start position
-	
-//	1) int32_t wfout = ((osc->counter>>8 >= osc->pulse))? 0 : 0xffff; // plain impl - inverted compared to resid
-//	2) int32_t wfout = ((osc->counter>>8 < osc->pulse))? 0 : 0xffff; // plain impl
-	
-	// Hermit's "anti-aliasing" pulse
-	
-	// note: the smaller the step, the slower the phase shift, e.g. ramp-up/-down
-	// rather than immediate switch (current setting does not cause much of an
-	// effect - use "0.1*" to make it obvious ) larger steps cause "sizzling noise"
-		
-	// test-case: Touch_Me.sid - for some reason avoiding the "division by zero"
-	// actually breaks this song..
-	
-//	double step= ((double)256.0) / (osc->freq_inc_sample / (1<<16));	// Hermit's original shift-impl was prone to division-by-zero
-    const double step = osc->freq_pulse_step; 	// simple pulse, most often used waveform, make it sound as clean as possible without oversampling
-	
-	double lim;
-	int32_t wfout;
-	if (tmp < pw) {	// rising edge (i.e. 0x0 side)	(in scope this is: TOP)
-		lim = (0xffff - pw) * step;
-		if (lim > 0xffff) { lim = 0xffff; }
-		wfout = lim - (pw - tmp) * step;
-		if (wfout < 0) { wfout = 0; }
-	} else { //falling edge (i.e. 0xffff side)		(in scope this is: BOTTOM)
-		lim = pw * step;
-		if (lim > 0xffff) { lim = 0xffff; }
-		wfout = (0xffff - tmp) * step - lim;
-		if (wfout >= 0) { wfout = 0xffff; }
-		wfout &= 0xffff;
-	}
-	return wfout;	// like "plain 2)"; NOTE: Hermit's original may actually be flipped due to filter.. which might cause problems with deliberate clicks.. see Geir Tjelta's feedback
-//	return 0xffff - wfout; // like "plain 1)"
-}
-
-// combined noise-waveform will feed back into noiseval shift-register potentially
-// clearing bits that are used for the "noiseout" (no others.. and not setting!)
-
-static const uint32_t COMBINED_NOISE_MASK = ~((1<<22)|(1<<20)|(1<<16)|(1<<13)|(1<<11)|(1<<7)|(1<<4)|(1<<2));
-
-uint16_t SID::createNoiseOutput(struct Oscillator* osc) {
-	// "random values are output through the waveform generator according to the
-	// frequency setting" (http://www.ffd2.com/fridge/blahtune/SID.primer)
-	
-	// known limitations of current impl: 1) "noiseval" shift register is only
-	// updated when noise is actually used  2) instead of generating an average
-	// from the output that should correctly change every clock cycle, only one
-	// output is considered for a one-sample interval (e.g. ~22 cycles)!
-		
-	// use of top 4-bit seems to sound about right: see Hermit's noisewfsweep.sid
-	uint32_t p = osc->counter >> 20;	
-	if (osc->noisepos != p) {
-		osc->noisepos = p;
-		
-		// impl consistent with: http://www.sidmusic.org/sid/sidtech5.html
-		// doc here is probably wrong: http://www.oxyron.de/html/registers_sid.html
-		
-		uint32_t* n = &(osc->noiseval);
-		osc->noiseout = (((*n) >> (22 - 7) ) & 0x80 ) |
-								(((*n) >> (20 - 6) ) & 0x40 ) |
-								(((*n) >> (16 - 5) ) & 0x20 ) |
-								(((*n) >> (13 - 4) ) & 0x10 ) |
-								(((*n) >> (11 - 3) ) & 0x08 ) |
-								(((*n) >> (7 - 2) ) & 0x04 ) |
-								(((*n) >> (4 - 1) ) & 0x02 ) |
-								(((*n) >> (2) ) & 0x01 );
-
-		osc->noiseval = (osc->noiseval << 1) |
-				(getBit(osc->noiseval, 22) ^ getBit(osc->noiseval, 17));		
-	}
-	return ((uint16_t)osc->noiseout) << 8;
-}
-
-uint16_t SID::createWaveOutput(int8_t voice) {
-	uint16_t outv = 0xffff;
-	struct Oscillator* osc = _osc[voice];
-	const uint8_t ctrl = osc->wave;
-		
-	if (_sid->voices[voice].not_muted) {
-		int8_t combined = 0;	// flags specifically handled "combined waveforms" (not all)
-		
-		// use special handling for certain combined waveforms
-		uint16_t plsout;
-		if ((ctrl & PULSE_BITMASK)) {
-			uint32_t tmp, pw;	// 16 bits used
-			calcPulseBase(osc, &tmp, &pw);
-			
-			if (((ctrl&0xf0) == PULSE_BITMASK)) {
-				// pulse only 
-				plsout = createPulseOutput(osc, tmp, pw);
-			} else {
-				// combined waveforms with pulse
-				plsout =  ((tmp >= pw) || osc->test_bit) ? 0xffff : 0; //(this would be enough for simple but aliased-at-high-pitches pulse)
-
-				if ((ctrl & TRI_BITMASK) && ++combined)  {
-					if (ctrl & SAW_BITMASK) {	// PULSE & TRIANGLE & SAW	- like in Lenore.sid
-						outv = plsout ? combinedWF(voice, _wave.PulseTriSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
-					} else { 
-						// PULSE & TRIANGLE - like in Kentilla, Convincing, Clique_Baby, etc
-						// a good test is Last_Ninja:6 voice 1 at 35secs; here Hermit's
-						// original PulseSaw settings seem to be lacking: the respective
-						// sound has none of the crispness nor volume of the original
-						
-						tmp = getRingModCounter(voice); 
-						outv = plsout ? combinedWF(voice, _wave.PulseTri_8580, (tmp ^ (tmp & 0x800000 ? 0xffffff : 0)) >> 11, 0) : 0;	// either on or off						
-					}				
-				} else if ((ctrl & SAW_BITMASK) && ++combined)  {	// PULSE & SAW - like in Defiler.sid, Neverending_Story.sid
-					outv = plsout ? combinedWF(voice, _wave.PulseSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
-				}
-			}
-		} else if ((ctrl & TRI_BITMASK) && (ctrl & SAW_BITMASK) && ++combined) {	// TRIANGLE & SAW - like in Garden_Party.sid
-			uint32_t tmp = osc->counter >> 12;
-			outv = combinedWF(voice, _wave.TriSaw_8580, tmp, 1);	// tmp 12 MSB
-		} 
-		
-		if (ctrl & NOISE_BITMASK)   {
-			if (ctrl & 0x70) {	// combined waveform with noise
-				// test-case: Hollywood_Poker_Pro.sid (also Wizax_demo.sid, Billie_Jean.sid)
-				
-				// The wave-output of the SOASC recording of the above song (at the very
-				// beginning) shows a pulse-wave that is overlaid with a combined "triangle-
-				// noise" waveform (without the below there would be strong noise that
-				// doesn't belong there)
-				
-				// according to resid team's analysis "waveform bits are and-ed into the
-				// shift register via the shift register outputs" and thereby the noise
-				// zeros-out after a few cycles"
-				
-				// (as long as noise is not actually used there does not seem to be a point
-				// to calculate the respective feedback loop.. eventhough other combined
-				// waveforms could squelch the noise by the same process, requiring a GATE
-				// to re-activate it.. have yet to find a song that would use that approach)
-				outv &= createNoiseOutput(osc);
-				
-				uint32_t feedback = (getBit(outv, 15) << 22) |
-									(getBit(outv, 14) << 20) |
-									(getBit(outv, 13) << 16) |
-									(getBit(outv, 12) << 13) |
-									(getBit(outv, 11) << 11) |
-									(getBit(outv, 10) << 7) |
-									(getBit(outv, 9) << 4) |
-									(getBit(outv, 8) << 2);
-			
-				osc->noiseval &= COMBINED_NOISE_MASK | feedback;	// feed back into shift register
-			} else {
-				outv &= createNoiseOutput(osc);
-			}
-		} else if (!combined) {
-			// for the rest mix the oscillators with an AND operation as stated
-			// in the SID's reference manual - even if this is absolutely wrong
-		
-			if (ctrl & TRI_BITMASK)  outv &= createTriangleOutput(voice);					
-			if (ctrl & SAW_BITMASK)  outv &= createSawOutput(osc);
-			if (ctrl & PULSE_BITMASK) outv &= plsout;
-		}
-		
-		// emulate waveform 00 floating wave-DAC
-		if (ctrl & 0xf0) {	// TODO: find testcase song where this is relevant..
-			_sid->voices[voice].prev_wave_form_out = outv;
-		} else {
-			// no waveform set
-			outv = _sid->voices[voice].prev_wave_form_out;
-		}	
-	} else {
-		outv = 0;	// no signal
-	}
-	return outv;
+	return _cycles_per_sample;
 }
 
 // ------------------------- public API ----------------------------
 
 struct SIDConfigurator* SID::getHWConfigurator() {
 	// let loader directly manipulate respective state
-	_hw_config.init(_sid_addr, _sid_is_6581, _sid_target_chan, &_sid_2nd_chan_idx, &_ext_multi_sid);	
+	_hw_config.init(_sid_addr, _sid_is_6581, _sid_target_chan, &_sid_2nd_chan_idx, &_ext_multi_sid);
 	return &_hw_config;
 }
 
@@ -685,7 +252,7 @@ uint8_t SID::isSID6581() {
 }
 
 uint8_t SID::setSID6581(uint8_t is6581) {
-	// this minimal update should allow to toggle the 
+	// this minimal update should allow to toggle the
 	// used filter without disrupting playback in progress
 	
 	_sid_is_6581[0] = _sid_is_6581[1] = _sid_is_6581[2] = is6581;
@@ -714,9 +281,9 @@ uint16_t SID::getBaseAddr() {
 }
 
 void SID::resetModel(uint8_t is_6581) {
-	_sid->is_6581 = is_6581;	
+	_is_6581 = is_6581;
 		
-	_sid->bus_write = 0;
+	_bus_write = 0;
 		
 	// On the real hardware all audio outputs would result in some (positive)
 	// voltage level and different chip models would use different base
@@ -729,24 +296,24 @@ void SID::resetModel(uint8_t is_6581) {
 	// a high base voltage which always provides a strong carrier signal for D418-digis.
 	
 	// The current use of signed values to represent audio signals causes a problem
-	// here, since the D481-scaling of negative numbers inverts the originally intended 
+	// here, since the D481-scaling of negative numbers inverts the originally intended
 	// effect. (For the purpose of D418 output scaling, the respective input
 	// should always be positive.)
 	
-	// todo: since all calculations already use 32-bit numbers, there is enough unused 
-	// range to always use positive values.. update impl accordingly and try to 
+	// todo: since all calculations already use 32-bit numbers, there is enough unused
+	// range to always use positive values.. update impl accordingly and try to
 	// also ditch one(or both) of the below offsets to simplify calculations..
 	// (nobody cares if 8580 plays digis that would normally not be audible..)
 	// also recalibrate the "scope" output such that it is always centered..
 	
-	if (is_6581) {
-		_sid->wf_zero = -0x3800;
-		_sid->dac_offset = 0x8000 * 0xff;
+	if (_is_6581) {
+		_wf_zero = -0x3800;
+		_dac_offset = 0x8000 * 0xff;
 		
 		_filter->resetInput6581(0);
 	} else {
-		_sid->wf_zero = -0x8000;
-		_sid->dac_offset = -0x1000 * 0xff;
+		_wf_zero = -0x8000;
+		_dac_offset = -0x1000 * 0xff;
 		
 		_filter->resetInput8580();
 	}
@@ -768,7 +335,7 @@ void SID::reset(uint16_t addr, uint32_t sample_rate, uint8_t is_6581, uint32_t c
 }
 
 uint8_t SID::isModel6581() {
-	return _sid->is_6581;
+	return _is_6581;
 }
 
 uint8_t SID::peekMem(uint16_t addr) {
@@ -779,11 +346,11 @@ uint8_t SID::readMem(uint16_t addr) {
 	uint16_t offset = addr - _addr;
 	
 	switch (offset) {
-	case 0x1b:									// "oscillator"
-		return createWaveOutput(2) >> 8;
+	case 0x1b:	// oscillator
+		return _wave_generators[2]->getOutput() >> 8;
 		
-	case 0x1c:									// envelope
-		return _env[2]->getOutput();
+	case 0x1c:	// envelope
+		return _env_generators[2]->getOutput();
 	}
 	
 	// reading of "write only" registers returns whatever has been last
@@ -792,44 +359,31 @@ uint8_t SID::readMem(uint16_t addr) {
 	// seem to depend on "fading" to be actually implemented;
 	// testcase: Mysterious_Mountain.sid
 	
-	return _sid->bus_write;
-}
-
-void SID::updateFreqCache(uint8_t voice) {
-	struct Oscillator* osc = _osc[voice];
-	
-	osc->freq_inc_sample = _cycles_per_sample * _sid->voices[voice].freq;	// per 1-sample interval (e.g. ~22 cycles)
-
-	// optimization for Hermit's waveform generation:
-	osc->freq_saw_step = osc->freq_inc_sample / 0x1200000;			// for SAW
-	osc->freq_pulse_base = ((uint32_t)osc->freq_inc_sample) >> 9;	// for PULSE: 15 MSB needed
-	
-	// testcase: Dirty_64, Ice_Guys
-	osc->freq_pulse_step = 256 / (((uint32_t)osc->freq_inc_sample) >> 16);
+	return _bus_write;
 }
 
 #ifdef PSID_DEBUG_ADSR
-int16_t _frame_count;	// redundant 
+int16_t _frame_count;	// redundant
 
-bool isDebug(uint8_t voice) {
-	return (voice == PSID_DEBUG_VOICE) && 
+bool isDebug(uint8_t voice_idx) {
+	return (voice_idx == PSID_DEBUG_VOICE) &&
 		(_frame_count >= PSID_DEBUG_FRAME_START) && (_frame_count <= PSID_DEBUG_FRAME_END);
 }
 #endif
 
 void SID::poke(uint8_t reg, uint8_t val) {
-    uint8_t voice = 0;
+    uint8_t voice_idx = 0;
 	if (reg < 7) {}
-    if ((reg >= 7) && (reg <= 13)) { voice = 1; reg -= 7; }
-    if ((reg >= 14) && (reg <= 20)) { voice = 2; reg -= 14; }
+    if ((reg >= 7) && (reg <= 13)) { voice_idx = 1; reg -= 7; }
+    if ((reg >= 14) && (reg <= 20)) { voice_idx = 2; reg -= 14; }
 
 	// writes that impact the envelope generator
 	if ((reg >= 0x4) && (reg <= 0x6)) {
-		_env[voice]->poke(reg, val);
+		_env_generators[voice_idx]->poke(reg, val);
 	}
 	
 	// writes that impact the filter
-    switch (reg) {		
+    switch (reg) {
 		case 0x15:
 		case 0x16:
 		case 0x17:
@@ -838,50 +392,39 @@ void SID::poke(uint8_t reg, uint8_t val) {
             break;
 	}
 	
-    switch (reg) {		
-        case 0x0: { // Set frequency: Low byte
-			_sid->voices[voice].freq = (_sid->voices[voice].freq & 0xff00) | val;
-			
-			updateFreqCache(voice);	// convenience
-			
-			_osc[voice]->freq_inc_cycle= ((uint32_t)_sid->voices[voice].freq);
+    switch (reg) {
+        case 0x0: {
+			WaveGenerator* wave_gen = _wave_generators[voice_idx];
+			wave_gen->setFreqLow(val, _cycles_per_sample);
             break;
         }
-        case 0x1: { // Set frequency: High byte
-            _sid->voices[voice].freq = (_sid->voices[voice].freq & 0xff) | (val << 8);
-			
-			updateFreqCache(voice);	// convenience
-			
-			_osc[voice]->freq_inc_cycle= ((uint32_t)_sid->voices[voice].freq);
+        case 0x1: {
+			WaveGenerator* wave_gen = _wave_generators[voice_idx];
+			wave_gen->setFreqHigh(val, _cycles_per_sample);
             break;
         }
-        case 0x2: { // Set pulse width: Low byte
-            _sid->voices[voice].pulse = (_sid->voices[voice].pulse & 0x0f00) | val;
-			_osc[voice]->pulse= ((uint32_t)_sid->voices[voice].pulse) << 4;	// convenience: 16 MSB pulse needed (input is 12-bit)
+        case 0x2: {
+			WaveGenerator* wave_gen = _wave_generators[voice_idx];
+			wave_gen->setPulseWidthLow(val);
             break;
         }
-        case 0x3: { // Set pulse width: High byte
-            _sid->voices[voice].pulse = (_sid->voices[voice].pulse & 0xff) | ((val & 0xf) << 8);
-			_osc[voice]->pulse = ((uint32_t)_sid->voices[voice].pulse) << 4;	// convenience: 16 MSB pulse needed (input is 12-bit)
+        case 0x3: {
+			WaveGenerator* wave_gen = _wave_generators[voice_idx];
+			wave_gen->setPulseWidthHigh(val);
             break;
         }
         case 0x4: {
-			_osc[voice]->wave = val;
-			
-			// performance optimization: read much more often then written
-			_osc[voice]->test_bit = val & TEST_BITMASK;
-			_osc[voice]->sync_bit = val & SYNC_BITMASK;
-			_osc[voice]->ring_bit = val & RING_BITMASK;
+			WaveGenerator *wave_gen = _wave_generators[voice_idx];
+			wave_gen->setWave(val);
 
-			
 			break;
 		}
     }
 	
 #ifdef PSID_DEBUG_ADSR
-	if (isDebug(voice) && ((reg >= 0x4) && (reg <= 0x6))) {
-		fprintf(stderr, "    %02X ", _osc[voice]->wave);		
-		_env[voice]->debug();
+	if (isDebug(voice_idx) && ((reg >= 0x4) && (reg <= 0x6))) {
+		fprintf(stderr, "    %02X ", _wave_generators[voice_idx]->getWave());
+		_env_generators[voice_idx]->debug();
 		fprintf(stderr, "\n");
 	}
 #endif
@@ -891,7 +434,7 @@ void SID::poke(uint8_t reg, uint8_t val) {
 void SID::writeMem(uint16_t addr, uint8_t value) {
 	_digi->detectSample(addr, value);
 
-	_sid->bus_write = value;
+	_bus_write = value;
 	
 	// no reason anymore to NOT always write (unlike old/un-synced version)
 	
@@ -914,8 +457,8 @@ void SID::writeMem(uint16_t addr, uint8_t value) {
 void SID::clock() {
 	clockOscillators();		// for all 3 voices
 				
-	for (uint8_t voice= 0; voice<3; voice++) {
-		_env[voice]->clockEnvelope();
+	for (uint8_t voice_idx= 0; voice_idx<3; voice_idx++) {
+		_env_generators[voice_idx]->clockEnvelope();
 	}
 }
 
@@ -929,64 +472,60 @@ void SID::clock() {
 	} \
 	*(dest)= (int16_t)final_sample
 
-void SID::synthSample(int16_t* buffer, int16_t** synth_trace_bufs, uint32_t offset, double* scale, uint8_t do_clear) {			
+void SID::synthSample(int16_t* buffer, int16_t** synth_trace_bufs, uint32_t offset, double* scale, uint8_t do_clear) {
 	// generate the two output signals (filtered / non-filtered)
 	int32_t outf = 0, outo = 0;	// outf and outo here end up with the sum of 3 voices..
-	
-	// sim duration of 1 sample (might try higher sampling for
-	// better quality - see filter adjustments)
+			
+	// create output sample based on current SID state
+	for (uint8_t voice_idx= 0; voice_idx<3; voice_idx++) {
 		
-	if (!_digi->isMahoneyDigi()) {	// use here once rather than create nicer but slower scope output below
-
-		// create output sample based on current SID state
-		for (uint8_t voice= 0; voice<3; voice++) {
-			int32_t voiceOut;
+		WaveGenerator* wave_gen = _wave_generators[voice_idx];
+		
+		int32_t voice_out;
+		
+		if (wave_gen->isMuted() || _filter->isSilencedVoice3(voice_idx)) {
+			// mute voice while still using SID model specific "base voltage"
+			voice_out = (*scale) * ( 0xff * (0 + _wf_zero) + _dac_offset);
 			
-			if ((!_sid->voices[voice].not_muted) || _filter->isSilencedVoice3(voice)) {
-				// mute voice while still using SID model specific "base voltage"
+			if (_digi->isMahoneyDigi()) {	// expensive check should not hurt here
+				// filter would add a distortion that should better be avoided
 
-				// todo: find out what exactely a real SID does in this scenario
-				voiceOut = (*scale) * ( 0xff * (0 + _sid->wf_zero) + _sid->dac_offset);
+				// todo: check if the respective signal routing could always be
+				// removed when voice is muted - testcase? (keep for now to avoid extensive retesting)
 			} else {
-				int32_t outv = createWaveOutput(voice);	// at this point an unsigned 16-bit value (see Hermit's impl)
-														// envelopeOutput has 8-bit
-
-				// the ideal voiceOut would be signed 16-bit - but more bits are actually needed - particularily
-				// for the massively shifted 6581 signal (needed for D418 digis to work correctly)
-				
-				// note: the wf_zero ofset *always* creates some wave-output that will be modulated via the
-				// envelope (even when 0-waveform is set it will cause audible clicks and distortions in 
-				// the scope views)
-				
-				voiceOut= (*scale) * ( _env[voice]->getOutput() * (outv + _sid->wf_zero) + _sid->dac_offset);
+				_filter->routeSignal(&voice_out, &outf, &outo, voice_idx);	// route to either the non-filtered or filtered channel
 			}
+		} else {
+			uint8_t env_out = _env_generators[voice_idx]->getOutput();
+			int32_t outv = wave_gen->getOutput();	// at this point an unsigned 16-bit value (see Hermit's impl)
 			
-			// now route the voice output to either the non-filtered or the
-			// filtered channel (with disabled filter outo is used)
+			// the ideal voice_out would be signed 16-bit - but more bits are actually needed - particularily
+			// for the massively shifted 6581 signal (needed for D418 digis to work correctly)
 			
-			_filter->routeSignal(&voiceOut, &outf, &outo, voice);
+			// note: the _wf_zero ofset *always* creates some wave-output that will be modulated via the
+			// envelope (even when 0-waveform is set it will cause audible clicks and distortions in
+			// the scope views)
 			
-			// trace output (always make it 16-bit)
-			if (synth_trace_bufs) {
-				int16_t *voice_trace_buffer= synth_trace_bufs[voice];
-
-				int32_t o = 0, f = 0;	// isolated from other voices
-				uint8_t is_filtered= _filter->routeSignal(&voiceOut, &f, &o, voice);	// redundant.. see above
-				
-				*(voice_trace_buffer + offset)= (int16_t)_filter->simOutput(voice, is_filtered, &f, &o);
-			}
+			voice_out = (*scale) * ( env_out * (outv + _wf_zero) + _dac_offset);
+			
+			_filter->routeSignal(&voice_out, &outf, &outo, voice_idx);	// route to either the non-filtered or filtered channel
 		}
-	} else {
-		int32_t voiceOut= (*scale) * ( 0xff * (0 + _sid->wf_zero) + _sid->dac_offset);
-		for (uint8_t voice= 0; voice<3; voice++) {
-			// clear buffer
-			if (synth_trace_bufs) {
-				int16_t *voice_trace_buffer = synth_trace_bufs[voice];				
-				*(voice_trace_buffer+offset) = (int16_t)voiceOut;
-			}
+		
+		
+		// trace output (always make it 16-bit)
+		if (synth_trace_bufs) {
+			// when filter is active then muted voices may still show some effect
+			// in the trace... but there is no point to slow things down with additional
+			// checks here
+			int16_t *voice_trace_buffer = synth_trace_bufs[voice_idx];
+
+			int32_t o = 0, f = 0;	// isolated from other voices
+			uint8_t is_filtered = _filter->routeSignal(&voice_out, &f, &o, voice_idx);	// redundant.. see above
+			
+			*(voice_trace_buffer + offset)= (int16_t)_filter->simOutput(voice_idx, is_filtered, &f, &o);
 		}
 	}
-	
+
 	int32_t digi_out = 0;
 	_digi->routeDigiSignal(_filter, &digi_out, &outf, &outo);
 	
@@ -1012,14 +551,16 @@ void SID::synthSample(int16_t* buffer, int16_t** synth_trace_bufs, uint32_t offs
 
 // same as above but without digi & no filter for trace buffers - once faster
 // PCs are more widely in use, then this optimization may be ditched..
-void SID::synthSampleStripped(int16_t* buffer, int16_t** synth_trace_bufs, uint32_t offset, double* scale, uint8_t do_clear) {	
+void SID::synthSampleStripped(int16_t* buffer, int16_t** synth_trace_bufs, uint32_t offset, double* scale, uint8_t do_clear) {
 	int32_t outf = 0, outo = 0;	// outf and outo here end up with the sum of 3 voices..
 	
-	for (uint8_t voice= 0; voice<3; voice++) {
-		uint16_t outv = createWaveOutput(voice);
+	for (uint8_t voice_idx= 0; voice_idx<3; voice_idx++) {
 		
-		int32_t voiceOut = (*scale) * ( _env[voice]->getOutput() * (outv + _sid->wf_zero) + _sid->dac_offset);
-		_filter->routeSignal(&voiceOut, &outf, &outo, voice);
+		uint8_t env_out = _env_generators[voice_idx]->getOutput();
+		uint16_t outv = _wave_generators[voice_idx]->getOutput();
+		
+		int32_t voice_out = (*scale) * ( env_out * (outv + _wf_zero) + _dac_offset);
+		_filter->routeSignal(&voice_out, &outf, &outo, voice_idx);
 		
 		// trace output (always make it 16-bit)
 		if (synth_trace_bufs) {
@@ -1030,8 +571,8 @@ void SID::synthSampleStripped(int16_t* buffer, int16_t** synth_trace_bufs, uint3
 			// difference between "still playing" and "much too slow" -> like on
 			// my old machine
 			
-			int16_t *voice_trace_buffer = synth_trace_bufs[voice];
-			*(voice_trace_buffer + offset) = (int16_t)(voiceOut);
+			int16_t *voice_trace_buffer = synth_trace_bufs[voice_idx];
+			*(voice_trace_buffer + offset) = (int16_t)(voice_out);
 		}
 	}
 	
@@ -1044,21 +585,26 @@ void SID::synthSampleStripped(int16_t* buffer, int16_t** synth_trace_bufs, uint3
 }
 
 // "friends only" accessors
-uint8_t SID::getWave(uint8_t voice) {
-	return _osc[voice]->wave;
+uint8_t SID::getWave(uint8_t voice_idx) {
+	return _wave_generators[voice_idx]->getWave();
 }
-uint8_t SID::getAD(uint8_t voice) {
-	return _env[voice]->getAD();
+
+uint16_t SID::getFreq(uint8_t voice_idx) {
+	return _wave_generators[voice_idx]->getFreq();
 }
-uint8_t SID::getSR(uint8_t voice) {
-	return _env[voice]->getSR();
+
+uint16_t SID::getPulse(uint8_t voice_idx) {
+	return _wave_generators[voice_idx]->getPulse();
 }
-uint16_t SID::getFreq(uint8_t voice) {
-	return _sid->voices[voice].freq;
+
+uint8_t SID::getAD(uint8_t voice_idx) {
+	return _env_generators[voice_idx]->getAD();
 }
-uint16_t SID::getPulse(uint8_t voice) {
-	return _sid->voices[voice].pulse;
+
+uint8_t SID::getSR(uint8_t voice_idx) {
+	return _env_generators[voice_idx]->getSR();
 }
+
 uint32_t SID::getSampleFreq() {
 	return _sample_rate;
 }
@@ -1066,22 +612,23 @@ uint32_t SID::getSampleFreq() {
 DigiType  SID::getDigiType() {
 	return _digi->getType();
 }
+
 const char*  SID::getDigiTypeDesc() {
 	return _digi->getTypeDesc();
 }
+
 uint16_t  SID::getDigiRate() {
 	return _digi->getRate();
 }
 		
-
-void SID::setMute(uint8_t voice, uint8_t is_muted) {
-	if (voice > 3) voice = 3; 	// no more than 4 voices per SID
+void SID::setMute(uint8_t voice_idx, uint8_t is_muted) {
+	if (voice_idx > 3) voice_idx = 3; 	// no more than 4 voices per SID
 	
-	if (voice == 3) {
+	if (voice_idx == 3) {
 		_digi->setEnabled(!is_muted);
 		
 	} else {
-		_sid->voices[voice].not_muted = !is_muted;
+		_wave_generators[voice_idx]->setMute(is_muted);
 	}
 }
 
@@ -1089,22 +636,22 @@ void SID::resetStatistics() {
 	_digi->resetCount();
 }
 
-
 /**
 * Use a simple map to later find which IO access matches which SID (saves annoying if/elses later):
 */
 const int MEM_MAP_SIZE = 0xbff;
-static uint8_t _mem2sid[MEM_MAP_SIZE];	// maps memory area d400-dfff to available SIDs 
+static uint8_t _mem2sid[MEM_MAP_SIZE];	// maps memory area d400-dfff to available SIDs
 
-void SID::setMute(uint8_t sid_idx, uint8_t voice, uint8_t is_muted) {
+void SID::setMute(uint8_t sid_idx, uint8_t voice_idx, uint8_t is_muted) {
 	if (sid_idx > 9) sid_idx = 9; 	// no more than 10 sids supported
 
-	_sids[sid_idx].setMute(voice, is_muted);
+	_sids[sid_idx].setMute(voice_idx, is_muted);
 }
 
 DigiType SID::getGlobalDigiType() {
 	return _sids[0].getDigiType();
 }
+
 const char* SID::getGlobalDigiTypeDesc() {
 	return _sids[0].getDigiTypeDesc();
 }
@@ -1115,14 +662,14 @@ uint16_t SID::getGlobalDigiRate() {
 
 void SID::clockAll() {
 	for (uint8_t i= 0; i<_used_sids; i++) {
-		SID &sid = _sids[i];			
+		SID &sid = _sids[i];		
 		sid.clock();
 	}
 }
 
 void SID::synthSample(int16_t* buffer, int16_t** synth_trace_bufs, double* scale, uint32_t offset) {
 	for (uint8_t i= 0; i<_used_sids; i++) {
-		SID &sid = _sids[i];					
+		SID &sid = _sids[i];
 		int16_t **sub_buf = !synth_trace_bufs ? 0 : &synth_trace_bufs[i << 2];	// synthSample uses 4 entries..
 		sid.synthSample(buffer, sub_buf, offset, scale, !i);
 	}
@@ -1138,14 +685,14 @@ void SID::synthSampleStripped(int16_t* buffer, int16_t** synth_trace_bufs, doubl
 
 void SID::resetGlobalStatistics() {
 	for (uint8_t i= 0; i<_used_sids; i++) {
-		SID &sid = _sids[i];			
+		SID &sid = _sids[i];
 		sid.resetStatistics();
 	}
 }
 
 void SID::setModels(const uint8_t* is_6581) {
 	for (uint8_t i= 0; i<_used_sids; i++) {
-		SID &sid = _sids[i];			
+		SID &sid = _sids[i];
 		sid.resetModel(is_6581[i]);
 	}
 }
@@ -1185,7 +732,7 @@ void SID::resetAll(uint32_t sample_rate, uint32_t clock_rate, uint8_t is_rsid,
 	if (!_ext_multi_sid) {
 		_vol_scale= _vol_map[_used_sids - 1] / 0xff;	// 0xff serves to normalize the 8-bit envelope
 	} else {
-		_vol_scale= _vol_map[_sid_2nd_chan_idx ? _used_sids >> 1 : _used_sids - 1] / 0xff;		
+		_vol_scale= _vol_map[_sid_2nd_chan_idx ? _used_sids >> 1 : _used_sids - 1] / 0xff;
 	}
 }
 
@@ -1204,21 +751,21 @@ uint8_t SID::peek(uint16_t addr) {
 #ifdef PSID_DEBUG_ADSR
 #include <stdio.h>
 
-void SID::debugVoice(uint8_t voice) {
+void SID::debugVoice(uint8_t voice_idx) {
 	// hack to manually check stuff
-	fprintf(stderr, "%03d %02X ", _frame_count, _osc[voice]->wave);		
-	_env[voice]->debug();
-	fprintf(stderr, "\n");		
+	fprintf(stderr, "%03d %02X ", _frame_count, _wave_generators[voice_idx].getWave());
+	_env_generators[voice_idx]->debug();
+	fprintf(stderr, "\n");
 }
 
 extern "C" void sidDebug(int16_t frame_count) {	// PSID specific
 	_frame_count = frame_count;
 	
-	uint8_t voice = PSID_DEBUG_VOICE;
-	if (isDebug(voice)) {
+	uint8_t voice_idx = PSID_DEBUG_VOICE;
+	if (isDebug(voice_idx)) {
 		SID &sid = _sids[0];
-		sid.debugVoice(voice);
-	}	
+		sid.debugVoice(voice_idx);
+	}
 }
 #endif
 

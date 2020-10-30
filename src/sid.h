@@ -4,7 +4,7 @@
 * WebSid (c) 2019 Jürgen Wothke
 * version 0.93
 * 
-* Terms of Use: This software is licensed under a CC BY-NC-SA 
+* Terms of Use: This software is licensed under a CC BY-NC-SA
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
 #ifndef WEBSID_SID_H
@@ -25,21 +25,28 @@ public:
 	
 	void configure(uint8_t is_ext_file, uint8_t sid_file_version, uint16_t flags, uint8_t* addr_list);
 protected:
-	void init(uint16_t* addr, uint8_t* is_6581, uint8_t* target_chan, uint8_t* second_chan_idx, 
+	void init(uint16_t* addr, uint8_t* is_6581, uint8_t* target_chan, uint8_t* second_chan_idx,
 				uint8_t* ext_multi_sid_mode);
 				
 	static uint16_t getSidAddr(uint8_t center_byte);
 	
 	friend class SID;
 private:
-	uint16_t* _addr;				// array of addresses
+	uint16_t* _addr;			// array of addresses
 	uint8_t* _is_6581;			// array of models
 	
 	// use of stereo:
 	uint8_t* _target_chan;		// array of used channel-idx (for stereo scenarios)
 	uint8_t* _second_chan_idx;	// single int: index of the 1st SID that maps to the 2nd stereo channel
-	uint8_t* _ext_multi_sid_mode;// single int: activates "extended sid file" handling	
+	uint8_t* _ext_multi_sid_mode;// single int: activates "extended sid file" handling
 };
+
+
+class Envelope;
+class DigiDetector;
+class WaveGenerator;
+class Filter;
+
 
 /**
 * This class emulates the "MOS Technology SID" chips (see 6581, 8580 or 6582).
@@ -60,7 +67,7 @@ public:
 	* Resets this instance according to the passed params.
 	*/
 	void resetModel(uint8_t is_6581);
-	void reset(uint16_t addr, uint32_t sample_rate, uint8_t is_6581, uint32_t clock_rate, 
+	void reset(uint16_t addr, uint32_t sample_rate, uint8_t is_6581, uint32_t clock_rate,
 				 uint8_t is_rsid, uint8_t is_compatible, uint8_t output_channel);
 	void resetStatistics();
 		
@@ -125,7 +132,7 @@ public:
 	/**
 	* Resets all used SID chips.
 	*/
-	static void resetAll(uint32_t sample_rate, uint32_t clock_rate, uint8_t is_rsid, 
+	static void resetAll(uint32_t sample_rate, uint32_t clock_rate, uint8_t is_rsid,
 							uint8_t is_compatible);
 
 	/**
@@ -157,7 +164,7 @@ public:
 	/**
 	* Allows to mute/unmute a spectific voice.
 	*/
-	static void	setMute(uint8_t sid_idx, uint8_t voice, uint8_t value);
+	static void	setMute(uint8_t sid_idx, uint8_t voice_idx, uint8_t value);
 		
 	static uint8_t isAudible();
 
@@ -178,18 +185,21 @@ public:
 	static uint8_t setSID6581(uint8_t is6581);
 	
 #ifdef PSID_DEBUG_ADSR
-	void debugVoice(uint8_t voice);
+	void debugVoice(uint8_t voice_idx);
 #endif
 protected:
-	friend class Envelope;
-	friend class DigiDetector;
+	friend Envelope;
+	friend DigiDetector;
+	friend WaveGenerator;
+
+	WaveGenerator* getWaveGenerator(uint8_t voice_idx);
 	
 	// API exposed to internal (SID related) components..
-	uint8_t		getWave(uint8_t voice);
-	uint8_t		getAD(uint8_t voice);
-	uint8_t		getSR(uint8_t voice);
-	uint16_t	getFreq(uint8_t voice);
-	uint16_t	getPulse(uint8_t voice);
+	uint8_t		getWave(uint8_t voice_idx);
+	uint8_t		getAD(uint8_t voice_idx);
+	uint8_t		getSR(uint8_t voice_idx);
+	uint16_t	getFreq(uint8_t voice_idx);
+	uint16_t	getPulse(uint8_t voice_idx);
 
 	static uint8_t isExtMultiSidMode();
 	static uint8_t peek(uint16_t addr);
@@ -199,7 +209,7 @@ protected:
 	uint16_t	getDigiRate();
 		
 	static uint32_t	getSampleFreq();
-	void		setMute(uint8_t voice, uint8_t value);
+	void		setMute(uint8_t voice_idx, uint8_t value);
 private:
 	/**
 	* Reconfigures all used chips to the specified model.
@@ -208,37 +218,25 @@ private:
 	*/
 	static void	setModels(const uint8_t* is_6581);
 	
-	// convenience accessors & utilities
 	void		resetEngine(uint32_t sample_rate, uint8_t is_6581, uint32_t clock_rate);
-	uint32_t	getRingModCounter(uint8_t voice);
-	
-	// oscillator handling
-	void		syncOscillator(uint8_t voice);
-	
 	void		clockOscillators();
-		
-	// wave form generation
-	void		updateFreqCache(uint8_t voice);
-	
-	uint16_t	combinedWF(uint8_t channel, double* wfarray, uint16_t index, uint8_t differ6581);
-	uint16_t	createTriangleOutput(uint8_t voice);
-	uint16_t	createSawOutput(struct Oscillator* osc);
-	void		calcPulseBase(struct Oscillator* osc, uint32_t* tmp, uint32_t* pw);
-	uint16_t	createPulseOutput(struct Oscillator* osc, uint32_t tmp, uint32_t pw);
-	uint16_t	createNoiseOutput(struct Oscillator* osc);
-	uint16_t	createWaveOutput(int8_t voice);	// main entry
 	
 protected:
-	struct SidState* _sid;	// as long as the legacy C accessors are still there
-	class DigiDetector* _digi;
+	uint8_t			_is_6581;
+	uint8_t			_bus_write;	// bus bahavior for "write only" registers
+	
+	// SID model specific distortions (based on resid's analysis)
+	int32_t			_wf_zero;
+	int32_t			_dac_offset;
+
+	DigiDetector*	_digi;
 private:
-	struct Oscillator* _osc[3];
+	WaveGenerator*	_wave_generators[3];
+	Envelope*		_env_generators[3];
+	Filter*			_filter;
 	
-	class Envelope* _env[3];
-	class Filter* _filter;
-	
-	uint16_t _addr;			// start memory address that the SID is mapped to
-	uint8_t _dest_channel;		// which stereo channel to output to
+	uint16_t		_addr;			// start memory address that the SID is mapped to
+	uint8_t			_dest_channel;	// which stereo channel to output to
 };
 
 #endif
