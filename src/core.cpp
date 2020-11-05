@@ -46,7 +46,7 @@ static double _sample_cycles;
 static void resetDefaults(uint32_t sample_rate, uint8_t is_rsid, 
 							uint8_t is_ntsc, uint8_t is_compatible) {
 	sysReset();
-	cpuInit();
+	cpuInit(is_rsid);
 	
     memResetIO();
 

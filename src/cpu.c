@@ -108,10 +108,10 @@ static uint8_t _p;				// status register (see above flags)
 // "inline" for the below local function! (however perf-test inlining
 // the code via a define did not show any relevant benefit..)
 
-static void setflags(int32_t flag, int32_t cond) {
-    if (cond) _p |= flag;
-    else _p &= ~flag;
-}
+#define SETFLAGS(flag, cond) \
+    if (cond) _p |= (int32_t)flag;\
+    else _p &= ~(int32_t)flag;
+
 
 // ---- interrupt handling ---
 
@@ -169,38 +169,30 @@ static uint32_t _irq_line_ts = 0;
 uint32_t _irq_start;
 #endif
 
-void checkForIRQ(void) {
-	// test-case: Humphrey_Bogart.sid, Monster_Museum.sid
-	
-	// as long as the IRQ line stays active new IRQ will trigger as soon
-	// as the I-flag is cleared .. let's presume that the I-flag masking
-	// is done initially and once committed it will no longer matter
-	// (like in the NMI case)
-	
-	if (!(_p & FLAG_I) && (vicIRQ() || ciaIRQ())) {
-		// test-case: Vicious_SID_2-Escos (needs FLAG_I check)
-	
-		if (!_irq_line_ts) {
-			_irq_committed = 1;			// there is no way back now
-			_irq_line_ts = sysCycles();	// ts when line was activated
-		}
-	} else {
-		if (!_irq_committed) _irq_line_ts = 0;	// IRQ flag really relevant here? (see mandatory check in pendingIRQ())
-	}
-}
 
-int8_t pendingIRQ(void) {
-	if (_irq_committed) {
-		uint32_t elapsed = sysCycles() - _irq_line_ts;
-
-		// test-case: Vaakataso.sid, Vicious_SID_2-Carmina_Burana.sid
-		//            depend on the FLAG_I test probably compensates
-		//            for some flaw in the state handling
-		
-		return (!(_p & FLAG_I)) && (elapsed  >= _interrupt_lead_time); // test-case: "IMR"
+// as long as the IRQ line stays active new IRQ will trigger as soon
+// as the I-flag is cleared .. let's presume that the I-flag masking
+// is done initially and once committed it will no longer matter
+// (like in the NMI case)
+// test-case: Humphrey_Bogart.sid, Monster_Museum.sid
+#define CHECK_FOR_IRQ() \
+	if (!(_p & FLAG_I) && (vicIRQ() || ciaIRQ())) { \
+		/* test-case: Vicious_SID_2-Escos (needs FLAG_I check)*/ \
+	 \
+		if (!_irq_line_ts) { \
+			_irq_committed = 1;			/* there is no way back now */ \
+			_irq_line_ts = sysCycles();	/* ts when line was activated */ \
+		} \
+	} else { \
+		if (!_irq_committed) _irq_line_ts = 0;	/* IRQ flag really relevant here? (see mandatory check in IS_IRQ_PENDING()) */ \
 	}
-	return 0;
-}
+
+
+// test-case: Vaakataso.sid, Vicious_SID_2-Carmina_Burana.sid
+//            depend on the FLAG_I test probably compensates
+//            for some flaw in the state handling
+#define IS_IRQ_PENDING() \
+		(_irq_committed ? (!(_p & FLAG_I)) && ((sysCycles() - _irq_line_ts)  >= _interrupt_lead_time) : 0) // test-case: "IMR"
 
 
 	// ---- NMI handling ---	
@@ -209,56 +201,48 @@ static uint8_t _nmi_committed = 0;		// CPU is committed to running the NMI
 static uint8_t _nmi_line = 0;			// state change detection
 static uint32_t _nmi_line_ts = 0;		// for scheduling
 
-void checkForNMI(void) {
-	// when the CPU detects the "NMI line" activation it "commits" to
-	// running that NMI handler and no later state change will stop
-	// that NMI from being executed (see above for scheduling)
 
-	// test-case: "ICR01" ("READING ICR=81 MUST PASS NMI"): eventhough
-	// the NMI line is immediately acknowledged/cleared in the same
-	// cycle that the CIA sets it, the NMI handler should still be called.
-	
-	if (ciaNMI()) {						// NMI line is active now
+// when the CPU detects the "NMI line" activation it "commits" to
+// running that NMI handler and no later state change will stop
+// that NMI from being executed (see above for scheduling)
 
-		// NMI is different from IRQ in that only the transition from
-		// high to low signal triggers an NMI, and the line has to be
-		// restored to high (meaning "false" here) before the next NMI
-		// can trigger.
-	
-		if (!_nmi_line) {
-			
-			_nmi_committed = 1;			// there is no way back now
-			_nmi_line = 1;				// using 1 to model HW line "low" signal
-			_nmi_line_ts = sysCycles();
-			
-			// "If both an NMI and an IRQ are pending at the end of an
-			// instruction, the NMI will be handled and the pending
-			// status of the IRQ forgotten (though it's likely to be
-			// detected again during later polling)."
-			
-	//		_irq_committed= 0;
-	//		_irq_line_ts= 0;
-		} else {
-			// line already/still activated... cannot trigger new 
-			// NMI before previous one has been acknowledged
-		}
-	} else {
-		_nmi_line = 0;			// NMI has been acknowledged
-		if (!_nmi_committed) {
-			// still needed until the committed NMI has been scheduled
-			_nmi_line_ts = 0; 	
-		}
+// test-case: "ICR01" ("READING ICR=81 MUST PASS NMI"): eventhough
+// the NMI line is immediately acknowledged/cleared in the same
+// cycle that the CIA sets it, the NMI handler should still be called.
+#define CHECK_FOR_NMI() \
+	if (ciaNMI()) {				/* NMI line is active now */\
+	\
+		/* NMI is different from IRQ in that only the transition from \
+		   high to low signal triggers an NMI, and the line has to be \
+		   restored to high (meaning "false" here) before the next NMI \
+		   can trigger.*/ \
+		\
+		if (!_nmi_line) { \
+			_nmi_committed = 1;			/* there is no way back now */ \
+			_nmi_line = 1;				/* using 1 to model HW line "low" signal */ \
+			_nmi_line_ts = sysCycles(); \
+			 \
+			/* "If both an NMI and an IRQ are pending at the end of an \
+			   instruction, the NMI will be handled and the pending \
+			   status of the IRQ forgotten (though it's likely to be \
+			   detected again during later polling)." \
+			 \
+			_irq_committed= 0; \
+			_irq_line_ts= 0; */ \
+		} else { \
+			/* line already/still activated... cannot trigger new  \
+			   NMI before previous one has been acknowledged */ \
+		} \
+	} else { \
+		_nmi_line = 0;			/* NMI has been acknowledged */ \
+		if (!_nmi_committed) { \
+			/* still needed until the committed NMI has been scheduled */ \
+			_nmi_line_ts = 0; \
+		} \
 	}	
-}
 
-uint8_t pendingNMI () {
-
-	if (_nmi_committed) {
-		uint32_t elapsed = sysCycles() - _nmi_line_ts;
-		return elapsed >= _interrupt_lead_time;
-	}
-	return 0;
-}
+#define IS_NMI_PENDING()\
+	(_nmi_committed ? (sysCycles() - _nmi_line_ts) >= _interrupt_lead_time : 0)
 
 uint8_t cpuIsValidPcPSID() {
 	// only used to to run PSID INIT separately.. everything else
@@ -614,11 +598,11 @@ static void addBranchOpCycles(uint8_t opc, int32_t flag) {
 static void prefetchOP( int16_t* opcode, int8_t* cycles) {
 	/* see comment at var decl
 	if (_delayed_sei) {
-		setflags(FLAG_I,1);
+		SETFLAGS(FLAG_I, 1);
 		_delayed_sei = 0;
 	}
 	if (_delayed_cli) {
-		setflags(FLAG_I,0);
+		SETFLAGS(FLAG_I, 0);
 		_delayed_cli = 0;
 	}
 	*/
@@ -792,37 +776,6 @@ static uint16_t _frame_count;
 extern void sidDebug(int16_t frame_count);
 #endif
 
-void cpuInit() {		
-	// cpu status
-	_pc = _a = _x = _y = _s = _p = 0;
-		
-	_exe_instr_cycles = _exe_instr_cycles_remain = 0;
-	_exe_instr_opcode = -1;
-	
-	_irq_line_ts = _irq_committed = 0;
-	_nmi_line = _nmi_line_ts = _nmi_committed = 0;
-
-	sysSetNMIMarker(0);
-//	_delayed_cli = _delayed_sei = 0;
-
-#ifdef TEST
-	test_running = 1;
-
-	_s = 0x0; 	// this should be equivalent to the 0xfd that the tests expect:
-	push(0);	// use as marker to know when to return
-	push(0);
-	push(0);	
-	
-	_p = 0x00;	// idiotic advice to set I-flag! (see "irq" tests)
-	_pc = 0x0801;
-	
-#endif
-
-#ifdef PSID_DEBUG_ADSR
-	_frame_count = 0;
-#endif
-}
-
 static void cpuRegReset() {
     _a =_x =_y = 0;
     _p = 0;
@@ -840,7 +793,7 @@ void cpuSetProgramCounter(uint16_t pc, uint8_t a) {
 }
 
 void cpuIrqFlagPSID(uint8_t on) {
-	setflags(FLAG_I, on);
+	SETFLAGS(FLAG_I, on);
 }
 
 #ifdef TEST
@@ -899,14 +852,14 @@ static void runNextOp(void) {
 			// value is stored in the carry flag.
 			
             wval = (uint16_t)in1 + in2 + ((_p & FLAG_C) ? 1 : 0);	// "carry-in"
-            setflags(FLAG_C, wval & 0x100);
+            SETFLAGS(FLAG_C, wval & 0x100);
             _a = (uint8_t)wval;
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
 			
 			// calc overflow flag (http://www.righto.com/2012/12/the-6502-overflow-flag-explained.html)
 			// also see http://www.6502.org/tutorials/vflag.html
-			setflags(FLAG_V, (~(in1 ^ in2)) & (in1 ^ _a) & 0x80);
+			SETFLAGS(FLAG_V, (~(in1 ^ in2)) & (in1 ^ _a) & 0x80);
 			}
             break;
 		case alr: 		// aka ASR - Kukle.sid, Raveloop14_xm.sid (that song has other issues though)
@@ -914,36 +867,36 @@ static void runNextOp(void) {
             bval = getaddr(opc, mode);
 			_a = _a & bval;
 
-            setflags(FLAG_C, _a & 1);
+            SETFLAGS(FLAG_C, _a & 1);
             _a >>= 1;
 			
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
 			break;
         case anc:	// Kukle.sid, Axelf.sid (Crowther), Whats_Your_Lame_Excuse.sid, Probing_the_Crack_with_a_Hook.sid
             bval = getaddr(opc, mode);
 			_a = _a & bval;
 			
 			// http://codebase64.org/doku.php?id=base:some_words_about_the_anc_opcode
-            setflags(FLAG_C, _a & 0x80);
+            SETFLAGS(FLAG_C, _a & 0x80);
 			
 			// supposedly also sets these (http://www.oxyron.de/html/opcodes02.html)
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
             break;
         case and:
             bval = getaddr(opc, mode);
             _a &= bval;
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
             break;
         case ane: {// aka XAA; another useless op that is only used in the tests
 	        bval = getaddr(opc, mode);
 			const uint8_t con = 0x0; 	// this is HW dependent.. i.e. this OP is bloody useless			
 			_a = (_a | con) & _x & bval;
 			
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
 			} 
 			break; 
         case arr: {		// Whats_Your_Lame_Excurse.sid uses this. sigh "the crappier the song...." & 
@@ -959,8 +912,8 @@ static void runNextOp(void) {
 
             c = !!(_p & FLAG_C);
 			
-			setflags(FLAG_V, bit7 ^ bit6);
-            setflags(FLAG_C, bit7);
+			SETFLAGS(FLAG_V, bit7 ^ bit6);
+            SETFLAGS(FLAG_C, bit7);
 						
 			// ROR - C+V not affected here
             _a >>= 1;
@@ -968,8 +921,8 @@ static void runNextOp(void) {
 			if (c) {
 				_a |= 0x80;	// exchange bit 7 with carry
 			}
-            setflags(FLAG_N, _a & 0x80);
-            setflags(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
 			}			
             break;
         case asl:
@@ -977,9 +930,9 @@ static void runNextOp(void) {
             setaddr(mode, (uint8_t)wval);	// read-modify-write writes original 1st
             wval <<= 1;
             setaddr(mode, (uint8_t)wval);
-            setflags(FLAG_Z, !(wval & 0xff));
-            setflags(FLAG_N, wval & 0x80);
-            setflags(FLAG_C, wval & 0x100);
+            SETFLAGS(FLAG_Z, !(wval & 0xff));
+            SETFLAGS(FLAG_N, wval & 0x80);
+            SETFLAGS(FLAG_C, wval & 0x100);
             break;
         case bcc:
             branch(opc, !(_p & FLAG_C));
@@ -1007,9 +960,9 @@ static void runNextOp(void) {
             break;
         case bit:
             bval = getaddr(opc, mode);
-            setflags(FLAG_Z, !(_a & bval));
-            setflags(FLAG_N, bval & 0x80);
-            setflags(FLAG_V, bval & 0x40);	// bit 6
+            SETFLAGS(FLAG_Z, !(_a & bval));
+            SETFLAGS(FLAG_N, bval & 0x80);
+            SETFLAGS(FLAG_V, bval & 0x40);	// bit 6
             break;
         case brk:
 #ifdef TEST
@@ -1058,41 +1011,41 @@ static void runNextOp(void) {
 			_pc = memGet(0xfffe);
 			_pc |= memGet(0xffff) << 8;		// somebody might finger the IRQ vector or the BRK vector at 0316/0317 to use this?
 			
-			setflags(FLAG_I, 1);
+			SETFLAGS(FLAG_I, 1);
             break;
         case clc:
-            setflags(FLAG_C, 0);
+            SETFLAGS(FLAG_C, 0);
             break;
         case cld:
-            setflags(FLAG_D, 0);
+            SETFLAGS(FLAG_D, 0);
             break;
         case cli:
-            setflags(FLAG_I, 0);
+            SETFLAGS(FLAG_I, 0);
 //			_delayed_cli = 1;
             break;
         case clv:
-            setflags(FLAG_V, 0);
+            SETFLAGS(FLAG_V, 0);
             break;
         case cmp:
             bval = getaddr(opc, mode);
             wval = (uint16_t)_a - bval;
-            setflags(FLAG_Z, !wval);		// _a == bval
-            setflags(FLAG_N, wval & 0x80);	// _a < bval
-            setflags(FLAG_C, _a >= bval);
+            SETFLAGS(FLAG_Z, !wval);		// _a == bval
+            SETFLAGS(FLAG_N, wval & 0x80);	// _a < bval
+            SETFLAGS(FLAG_C, _a >= bval);
             break;
         case cpx:
             bval = getaddr(opc, mode);
             wval = (uint16_t)_x - bval;
-            setflags(FLAG_Z, !wval);
-            setflags(FLAG_N, wval & 0x80);      
-            setflags(FLAG_C, _x >= bval);
+            SETFLAGS(FLAG_Z, !wval);
+            SETFLAGS(FLAG_N, wval & 0x80);      
+            SETFLAGS(FLAG_C, _x >= bval);
             break;
         case cpy:
             bval = getaddr(opc, mode);
             wval = (uint16_t)_y - bval;
-            setflags(FLAG_Z, !wval);
-            setflags(FLAG_N, wval & 0x80);      
-            setflags(FLAG_C, _y >= bval);
+            SETFLAGS(FLAG_Z, !wval);
+            SETFLAGS(FLAG_N, wval & 0x80);      
+            SETFLAGS(FLAG_C, _y >= bval);
             break;
         case dcp:		// used by: Clique_Baby.sid, Musik_Run_Stop.sid
             bval = getaddr(opc, mode);
@@ -1102,51 +1055,51 @@ static void runNextOp(void) {
             setaddr(mode, bval);
 			// cmp
             wval = (uint16_t)_a - bval;
-            setflags(FLAG_Z, !wval);
-            setflags(FLAG_N, wval & 0x80);
-            setflags(FLAG_C, _a >= bval);
+            SETFLAGS(FLAG_Z, !wval);
+            SETFLAGS(FLAG_N, wval & 0x80);
+            SETFLAGS(FLAG_C, _a >= bval);
             break;
         case dec:
             bval = getaddr(opc, mode);
             setaddr(mode, bval);	// read-modify-write writes original 1st
             bval--;
             setaddr(mode, bval);
-            setflags(FLAG_Z, !bval);
-            setflags(FLAG_N, bval & 0x80);
+            SETFLAGS(FLAG_Z, !bval);
+            SETFLAGS(FLAG_N, bval & 0x80);
             break;
         case dex:
             _x--;
-            setflags(FLAG_Z, !_x);
-            setflags(FLAG_N, _x & 0x80);
+            SETFLAGS(FLAG_Z, !_x);
+            SETFLAGS(FLAG_N, _x & 0x80);
             break;
         case dey:
             _y--;
-            setflags(FLAG_Z, !_y);
-            setflags(FLAG_N, _y & 0x80);
+            SETFLAGS(FLAG_Z, !_y);
+            SETFLAGS(FLAG_N, _y & 0x80);
             break;
         case eor:
             bval = getaddr(opc, mode);
             _a ^= bval;
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
             break;
         case inc:
             bval = getaddr(opc, mode);
             setaddr(mode, bval);	// read-modify-write writes original 1st
             bval++;
             setaddr(mode, bval);
-            setflags(FLAG_Z, !bval);
-            setflags(FLAG_N, bval & 0x80);
+            SETFLAGS(FLAG_Z, !bval);
+            SETFLAGS(FLAG_N, bval & 0x80);
             break;
         case inx:
             _x++;
-            setflags(FLAG_Z, !_x);
-            setflags(FLAG_N, _x & 0x80);
+            SETFLAGS(FLAG_Z, !_x);
+            SETFLAGS(FLAG_N, _x & 0x80);
             break;
         case iny:
             _y++;
-            setflags(FLAG_Z, !_y);
-            setflags(FLAG_N, _y & 0x80);
+            SETFLAGS(FLAG_Z, !_y);
+            SETFLAGS(FLAG_N, _y & 0x80);
             break;
         case isb: {	// aka ISC; see 'insz' tests
 			// inc
@@ -1154,20 +1107,20 @@ static void runNextOp(void) {
             setaddr(mode, bval);	// read-modify-write writes original 1st
             bval++;
             setaddr(mode, bval);
-            setflags(FLAG_Z, !bval);
-            setflags(FLAG_N, bval & 0x80);
+            SETFLAGS(FLAG_Z, !bval);
+            SETFLAGS(FLAG_N, bval & 0x80);
 
 			// + sbc			
 			uint8_t in1 = _a;
 			uint8_t in2 = (bval ^ 0xff);	// substract
 			
             wval = (uint16_t)in1 + in2 + ((_p & FLAG_C) ? 1 : 0);
-            setflags(FLAG_C, wval & 0x100);
+            SETFLAGS(FLAG_C, wval & 0x100);
             _a = (uint8_t)wval;
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
 			
-			setflags(FLAG_V, (~(in1 ^ in2)) & (in1 ^ _a) & 0x80);			
+			SETFLAGS(FLAG_V, (~(in1 ^ in2)) & (in1 ^ _a) & 0x80);			
             }
 			break;
 		case jam:	// this op would have crashed the C64
@@ -1203,15 +1156,15 @@ static void runNextOp(void) {
             bval = getaddr(opc, mode);
 			_a = _x = _s = (bval & _s);
 			
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
             break;
 		case lax:
 			// e.g. Vicious_SID_2-15638Hz.sid, Kukle.sid
             _a = getaddr(opc, mode);
 			_x = _a;
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
             break;
 		case lxa: {	// Whats_Your_Lame_Excuse.sid - LOL only real dumbshit player uses this op.. 
             bval = getaddr(opc, mode);
@@ -1219,23 +1172,23 @@ static void runNextOp(void) {
 			_a |= con;	// roulette what the specific CPU uses here
 			_a &= bval;
 			_x = _a;
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
 		} break;				
         case lda:
             _a = getaddr(opc, mode);
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
             break;
         case ldx:
             _x = getaddr(opc, mode);
-            setflags(FLAG_Z, !_x);
-            setflags(FLAG_N, _x & 0x80);
+            SETFLAGS(FLAG_Z, !_x);
+            SETFLAGS(FLAG_N, _x & 0x80);
             break;
         case ldy:
             _y = getaddr(opc, mode);
-            setflags(FLAG_Z, !_y);
-            setflags(FLAG_N, _y & 0x80);
+            SETFLAGS(FLAG_Z, !_y);
+            SETFLAGS(FLAG_N, _y & 0x80);
             break;
         case lsr:      
             bval = getaddr(opc, mode); 
@@ -1243,9 +1196,9 @@ static void runNextOp(void) {
             setaddr(mode, bval);	// read-modify-write writes original 1st
             wval >>= 1;
             setaddr(mode, (uint8_t)wval);
-            setflags(FLAG_Z, !wval);
-            setflags(FLAG_N, wval & 0x80);	// always clear?
-            setflags(FLAG_C, bval & 1);
+            SETFLAGS(FLAG_Z, !wval);
+            SETFLAGS(FLAG_N, wval & 0x80);	// always clear?
+            SETFLAGS(FLAG_C, bval & 1);
             break;
         case nop:
 			getaddr(opc, mode);	 // make sure the PC is advanced correctly
@@ -1253,8 +1206,8 @@ static void runNextOp(void) {
         case ora:
             bval = getaddr(opc, mode);
             _a |= bval;
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
             break;
         case pha:
             push(_a);
@@ -1264,8 +1217,8 @@ static void runNextOp(void) {
             break;
         case pla:
             _a = pop();
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
             break;
         case plp: {
 			bval = pop();
@@ -1287,44 +1240,44 @@ static void runNextOp(void) {
             bval = getaddr(opc, mode);
             setaddr(mode, bval);	// read-modify-write writes original 1st
             c = !!(_p & FLAG_C);
-            setflags(FLAG_C, bval & 0x80);
+            SETFLAGS(FLAG_C, bval & 0x80);
             bval <<= 1;
             bval |= c;
             setaddr(mode, bval);
 
 			// + and
             _a &= bval;
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
             break;
         case rol:
             bval = getaddr(opc, mode);
             setaddr(mode, bval);	// read-modify-write writes original 1st
             c = !!(_p & FLAG_C);
-            setflags(FLAG_C, bval & 0x80);
+            SETFLAGS(FLAG_C, bval & 0x80);
             bval <<= 1;
             bval |= c;
             setaddr(mode, bval);
-            setflags(FLAG_N, bval & 0x80);
-            setflags(FLAG_Z, !bval);
+            SETFLAGS(FLAG_N, bval & 0x80);
+            SETFLAGS(FLAG_Z, !bval);
             break;
         case ror:
             bval = getaddr(opc, mode);
             setaddr(mode, bval);	// read-modify-write writes original 1st
             c = !!(_p & FLAG_C);
-            setflags(FLAG_C, bval & 1);
+            SETFLAGS(FLAG_C, bval & 1);
             bval >>= 1;
             bval |= 0x80 * c;
             setaddr(mode, bval);
-            setflags(FLAG_N, bval & 0x80);
-            setflags(FLAG_Z, !bval);
+            SETFLAGS(FLAG_N, bval & 0x80);
+            SETFLAGS(FLAG_Z, !bval);
             break;
         case rra:
 			// ror
             bval = getaddr(opc, mode);
             setaddr(mode, bval);	// read-modify-write writes original 1st
             c = !!(_p & FLAG_C);
-            setflags(FLAG_C, bval & 1);
+            SETFLAGS(FLAG_C, bval & 1);
             bval >>= 1;
             bval |= 0x80 * c;
             setaddr(mode, bval);
@@ -1334,12 +1287,12 @@ static void runNextOp(void) {
 			uint8_t in2 = bval;
 			
             wval = (uint16_t)in1 + in2 + ((_p & FLAG_C) ? 1 : 0);
-            setflags(FLAG_C, wval & 0x100);
+            SETFLAGS(FLAG_C, wval & 0x100);
             _a = (uint8_t)wval;
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
 			
-			setflags(FLAG_V, (~(in1 ^ in2)) & (in1 ^ _a) & 0x80);
+			SETFLAGS(FLAG_V, (~(in1 ^ in2)) & (in1 ^ _a) & 0x80);
             break;
         case rti:
 			// timing hack: some optimized progs use JMP to an RTI 
@@ -1382,12 +1335,12 @@ static void runNextOp(void) {
 			uint8_t in2 = bval;
 						
             wval =(uint16_t)in1 + in2 + ((_p & FLAG_C) ? 1 : 0);
-            setflags(FLAG_C, wval & 0x100);
+            SETFLAGS(FLAG_C, wval & 0x100);
             _a = (uint8_t)wval;
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
 			
-			setflags(FLAG_V, (~(in1 ^ in2)) & (in1 ^ _a) & 0x80);
+			SETFLAGS(FLAG_V, (~(in1 ^ in2)) & (in1 ^ _a) & 0x80);
 			}
             break;
         case sha:    {	// aka AHX; for the benefit of the 'SHAAY' test (etc).. have yet to find a song that uses this
@@ -1425,21 +1378,21 @@ static void runNextOp(void) {
 			// affects N Z and C (like CMP)
 			bval = getaddr(opc, mode);
 
-            setflags(FLAG_C, (_x & _a) >= bval);	// affects the carry but NOT the overflow
+            SETFLAGS(FLAG_C, (_x & _a) >= bval);	// affects the carry but NOT the overflow
 			
 			_x = ((_x & _a) - bval) & 0xff;	// _a unchanged (calc not affected by input carry)
 
-            setflags(FLAG_Z,!_x);			// _a == bval
-            setflags(FLAG_N, _x & 0x80);	// _a < bval
+            SETFLAGS(FLAG_Z,!_x);			// _a == bval
+            SETFLAGS(FLAG_N, _x & 0x80);	// _a < bval
 			break;
         case sec:
-            setflags(FLAG_C, 1);
+            SETFLAGS(FLAG_C, 1);
             break;
         case sed:
-            setflags(FLAG_D, 1);
+            SETFLAGS(FLAG_D, 1);
             break;
         case sei:
-            setflags(FLAG_I, 1);
+            SETFLAGS(FLAG_I, 1);
 //			_delayed_sei = 1;
             break;
 		case shs:	// 	aka TAS 
@@ -1458,14 +1411,14 @@ static void runNextOp(void) {
             setaddr(mode, bval);	// read-modify-write writes original 1st
             wval <<= 1;
             setaddr(mode, (uint8_t)wval);
-            //setflags(FLAG_Z, !wval);
-            //setflags(FLAG_N, wval&0x80);
-            setflags(FLAG_C, wval & 0x100);
+            //SETFLAGS(FLAG_Z, !wval);
+            //SETFLAGS(FLAG_N, wval&0x80);
+            SETFLAGS(FLAG_C, wval & 0x100);
 			// + ora
             bval = wval & 0xff;
             _a |= bval;
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
             break;
         case sre:      		// aka LSE; see Spasmolytic_part_6.sid, Halv_2_2.sid
 			// like SLO but shifting right and with eor
@@ -1476,15 +1429,15 @@ static void runNextOp(void) {
 			wval = (uint8_t)bval;
             wval >>= 1;
             setaddr(mode, (uint8_t)wval);
-            setflags(FLAG_Z, !wval);
-            setflags(FLAG_N, wval & 0x80);
-            setflags(FLAG_C, bval & 1);
+            SETFLAGS(FLAG_Z, !wval);
+            SETFLAGS(FLAG_N, wval & 0x80);
+            SETFLAGS(FLAG_C, bval & 1);
 			// + copied section from 'eor'
             bval = wval & 0xff;
 			
             _a ^= bval;
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
 			
             break;
         case sta:
@@ -1498,31 +1451,31 @@ static void runNextOp(void) {
             break;
         case tax:
             _x = _a;
-            setflags(FLAG_Z, !_x);
-            setflags(FLAG_N, _x & 0x80);
+            SETFLAGS(FLAG_Z, !_x);
+            SETFLAGS(FLAG_N, _x & 0x80);
             break;
         case tay:
             _y = _a;
-            setflags(FLAG_Z, !_y);
-            setflags(FLAG_N, _y & 0x80);
+            SETFLAGS(FLAG_Z, !_y);
+            SETFLAGS(FLAG_N, _y & 0x80);
             break;
         case tsx:
 			_x = _s;
-            setflags(FLAG_Z, !_x);
-            setflags(FLAG_N, _x & 0x80);
+            SETFLAGS(FLAG_Z, !_x);
+            SETFLAGS(FLAG_N, _x & 0x80);
             break;
         case txa:
             _a = _x;
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
             break;
         case txs:
             _s = _x;
             break;
         case tya:
             _a = _y;
-            setflags(FLAG_Z, !_a);
-            setflags(FLAG_N, _a & 0x80);
+            SETFLAGS(FLAG_Z, !_a);
+            SETFLAGS(FLAG_N, _a & 0x80);
             break; 
 		default:
 #ifdef DEBUG
@@ -1551,29 +1504,33 @@ static void runNextOp(void) {
 * => CPU may run any cycles that DO NOT use the bus.. and there might be
 *    special cases that I overlooked
 */
-int8_t isStunned(void) {	
-	// VIC badline handling (i.e. CPU may be paused/stunned)
-	uint8_t is_stunned = vicStunCPU();	// it won't hurt to also STUN the crappy PSID songs
-	if (is_stunned) {
-		if ((is_stunned == 2) || (_exe_instr_opcode < 0)) {
-			return 1;
-		}
-		
-		uint8_t bus_write = _opbase_write_cycle[_exe_instr_opcode];
-		if (bus_write) {
-			// this OP may be allowed to still perform "bus write" (if that's the current step):			
-			int8_t p = _exe_instr_cycles -_exe_instr_cycles_remain;
-			if (p >= bus_write) {
-				// allow this "write to complete".. see below
-			} else {
-				return 1;				
-			}
-		} else {
-			return 1;
-		}
+#define CHECK_FOR_VIC_STUN(is_stunned) \
+	/* VIC badline handling (i.e. CPU may be paused/stunned) */ \
+	uint8_t stun_mode = vicStunCPU();	/* it won't hurt to also STUN the crappy PSID songs */ \
+	if (stun_mode) { \
+		if ((stun_mode == 2) || (_exe_instr_opcode < 0)) { \
+			is_stunned = 1; \
+		} else { \
+			uint8_t bus_write = _opbase_write_cycle[_exe_instr_opcode]; \
+			if (bus_write) { \
+				/* this OP may be allowed to still perform "bus write" (if that's the current step): */ \
+				int8_t p = _exe_instr_cycles -_exe_instr_cycles_remain; \
+				if (p >= bus_write) { \
+					/* allow this "write to complete".. see below */ \
+					is_stunned = 0; \
+				} else { \
+					is_stunned = 1; \
+				} \
+			} else { \
+				is_stunned = 1; \
+			} \
+		} \
+	} else { \
+		is_stunned = 0; \
 	}
-	return 0;
-}
+
+// cpuClock function pointer
+void (*cpuClock)();
 
 /*
 * Simulate what the CPU does within the next system clock cycle.
@@ -1602,7 +1559,7 @@ int8_t isStunned(void) {
 *            BRK is finished as a NMI. In this case, BFlag on the stack
 *            will not be cleared."
 */
-void cpuClock() {
+static void cpuClockRSID() {
 	// note: on the real HW the respective check happends in ø2 phase
 	// of the previous CPU cycle and the respective internal interrupt
 	// signal then goes high in the ø1 phase after (the potential
@@ -1610,14 +1567,16 @@ void cpuClock() {
 	// it might incorrectly pick up some CIA change that has just
 	// happend in the ø1 phase)
 	
-	checkForIRQ();	// check 1st (so NMI can overrule if needed)
-	checkForNMI();
-
-	if (isStunned()) return;
+	CHECK_FOR_IRQ();	// check 1st (so NMI can overrule if needed)
+	CHECK_FOR_NMI();
+	
+	uint8_t is_stunned;
+	CHECK_FOR_VIC_STUN(is_stunned);	
+	if (is_stunned) return;
 
 	if (_exe_instr_opcode < 0) {	// get next instruction	
 
-		if(pendingNMI()) {					// has higher prio than IRQ
+		if(IS_NMI_PENDING()) {					// has higher prio than IRQ
 		
 			// some old PlaySID files (with recorded digis) files actually 
 			// use NMI settings that must not be used here
@@ -1625,14 +1584,14 @@ void cpuClock() {
 			
 			_nmi_committed = 0;
 			
-						// make that same trigger unusable (interrupt must be 
+			// make that same trigger unusable (interrupt must be 
 			// acknowledged before a new one can be triggered)
 			_nmi_line_ts = 0;
 			
 			_exe_instr_opcode = start_nmi_op;
 			_exe_instr_cycles = _opbase_frame_cycles[_exe_instr_opcode];
 			
-		} else if (pendingIRQ()) {	// interrupts are like a BRK command
+		} else if (IS_IRQ_PENDING()) {	// interrupts are like a BRK command
 			_irq_committed = 0;
 			_exe_instr_opcode = start_irq_op;
 			_exe_instr_cycles = _opbase_frame_cycles[_exe_instr_opcode];
@@ -1646,9 +1605,6 @@ void cpuClock() {
 	} else {
 		
 		// handle "current" instruction
-//		if (_exe_instr_cycles_remain <=0) {
-//			fprintf(stderr, "ERROR: _exe_instr_cycles_remain <= 0\n");
-//		}
 		_exe_instr_cycles_remain--;	
 		
 		if(_exe_instr_cycles_remain == 0) {
@@ -1659,7 +1615,7 @@ void cpuClock() {
 				push(_pc & 0xff);
 				push(_p | FLAG_B1);	// only in the stack copy ( will clear I-flag upon RTI...)
 				
-				setflags(FLAG_I, 1);
+				SETFLAGS(FLAG_I, 1);
 
 				_pc = memGet(0xfffe);			// IRQ vector
 				_pc |= memGet(0xffff) << 8;
@@ -1672,7 +1628,7 @@ void cpuClock() {
 				push(_p | FLAG_B1);	// only in the stack copy
 
 				// "The 6510 will set the IFlag on NMI, too. 6502 untested."
-				setflags(FLAG_I, 1);
+				SETFLAGS(FLAG_I, 1);
 				
 				_pc = memGet(0xfffa);			// NMI vector
 				_pc |= memGet(0xfffb) << 8;
@@ -1686,13 +1642,94 @@ void cpuClock() {
 			_exe_instr_cycles_remain = _exe_instr_cycles = 0;
 		}
 	}
-//	 if (_exe_instr_cycles_remain < 0) {
-//		fprintf(stderr, "ERROR: _exe_instr_cycles_remain < 0\n");
-//	}
 }
+
+static void cpuClockPSID() {
+	// optimization: this is a 1:1 copy of the regular cpuClock() with all the
+	// NMI handling thrown out (tested songs ran about 5% faster with this optimization)
+	
+	CHECK_FOR_IRQ();	// check 1st (so NMI can overrule if needed)
+	
+	if (_exe_instr_opcode < 0) {	// get next instruction	
+
+		if (IS_IRQ_PENDING()) {	// interrupts are like a BRK command
+			_irq_committed = 0;
+			_exe_instr_opcode = start_irq_op;
+			_exe_instr_cycles = _opbase_frame_cycles[_exe_instr_opcode];
+			
+		} else {
+			// default: start execution of next instruction (determine exact timing)
+			prefetchOP( &_exe_instr_opcode, &_exe_instr_cycles);
+		}
+		// since there are no 1-cycle ops nothing else needs to be done right now
+		_exe_instr_cycles_remain =  _exe_instr_cycles - 1;	// we already are in 1st cycle here
+	} else {
+		
+		// handle "current" instruction
+		_exe_instr_cycles_remain--;	
+		
+		if(_exe_instr_cycles_remain == 0) {
+			// complete current instruction
+
+			if (_exe_instr_opcode == start_irq_op) {
+				push(_pc >> 8);		// where to resume after the interrupt
+				push(_pc & 0xff);
+				push(_p | FLAG_B1);	// only in the stack copy ( will clear I-flag upon RTI...)
+				
+				SETFLAGS(FLAG_I, 1);
+
+				_pc = memGet(0xfffe);			// IRQ vector
+				_pc |= memGet(0xffff) << 8;
+#ifdef TRACE_IRQ_TIMING
+				_irq_start = sysCycles();
+#endif
+			} else if (_exe_instr_opcode == null_op) {
+				// just burn cycles
+			} else {				
+				runNextOp();	// use old impl that runs a complete instruction
+			}
+			_exe_instr_opcode = -1;	// completed current OP
+			_exe_instr_cycles_remain = _exe_instr_cycles = 0;
+		}
+	}
+}
+
+void cpuInit(uint8_t is_rsid) {
+	cpuClock = is_rsid ? &cpuClockRSID : &cpuClockPSID;
+	
+	// cpu status
+	_pc = _a = _x = _y = _s = _p = 0;
+		
+	_exe_instr_cycles = _exe_instr_cycles_remain = 0;
+	_exe_instr_opcode = -1;
+	
+	_irq_line_ts = _irq_committed = 0;
+	_nmi_line = _nmi_line_ts = _nmi_committed = 0;
+
+	sysSetNMIMarker(0);
+//	_delayed_cli = _delayed_sei = 0;
+
+#ifdef TEST
+	test_running = 1;
+
+	_s = 0x0; 	// this should be equivalent to the 0xfd that the tests expect:
+	push(0);	// use as marker to know when to return
+	push(0);
+	push(0);	
+	
+	_p = 0x00;	// idiotic advice to set I-flag! (see "irq" tests)
+	_pc = 0x0801;
+	
+#endif
+
+#ifdef PSID_DEBUG_ADSR
+	_frame_count = 0;
+#endif
+}
+
 
 void cpuSetProgramCounterPSID(uint16_t pc) {
 	_pc= pc;
 	
-   setflags(FLAG_I, 0);		// make sure the IRQ isn't blocked
+   SETFLAGS(FLAG_I, 0);		// make sure the IRQ isn't blocked
 }

@@ -55,6 +55,7 @@
 #include "filter.h"
 #include "digi.h"
 #include "wavegenerator.h"
+#include "memory_opt.h"
 
 extern "C" {
 #include "base.h"
@@ -339,7 +340,7 @@ uint8_t SID::isModel6581() {
 }
 
 uint8_t SID::peekMem(uint16_t addr) {
-	return memReadIO(addr);		// used for digi-detection
+	return MEM_READ_IO(addr);
 }
 
 uint8_t SID::readMem(uint16_t addr) {

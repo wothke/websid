@@ -779,7 +779,7 @@ uint8_t DigiDetector::detectSample(uint16_t addr, uint8_t value) {
 	if (_is_rsid && (addr == (_base_addr + 0x18))) {
 		if(assertSameSource(0)) recordSample(isMahoneyDigi() ? _mahoneySample[value] : getD418Sample(value), 0);	// this may lead to false positives..
 	}					
-	if (!_is_compatible) {
+	if (!_is_compatible) {	// XXX avoid repeated check.. see above.. cleanup!
 		handlePsidDigi(addr, value);
 	}
 	return 0;

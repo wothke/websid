@@ -39,6 +39,7 @@
 #include "vic.h"
 
 #include "memory.h"
+#include "memory_opt.h"
 #include "cpu.h"
 
 
@@ -65,7 +66,7 @@ static uint8_t intBadlineStun(uint8_t x, uint16_t y, uint8_t cpr) {
 		// vicClock() logic; better keep the extra cost limited to 
 		// those few songs that use it
 		
-		if ((y >= 0x30) && (y <= 0xf7) && ((memReadIO(0xd011) & 0x7) == (y & 0x7))) {
+		if ((y >= 0x30) && (y <= 0xf7) && ((MEM_READ_IO(0xd011) & 0x7) == (y & 0x7))) {
 			if ((x >= 11) && (x <= 53)) {
 				if ((x >= 14)) {
 					return 2;	// stun completely
@@ -121,32 +122,31 @@ void vicSetModel(uint8_t ntsc_mode) {
 	// clocks per frame: NTSC: 17095 - PAL: 19656		
 }
 
-static void checkIRQ() {
-	// "The test for reaching the interrupt raster line is done in
-	// cycle 0 of every line (for line 0, in cycle 1)."	
-	
-	if (_y == _raster_latch) {
-		// always signal (test case: Wally Beben songs that use 
-		// CIA 1 timer for IRQ but check for this flag)
-		uint8_t latch = memReadIO(0xd019) | 0x1;
-		
-		uint8_t interrupt_enable = memReadIO(0xd01a) & 0x1;
-		if (interrupt_enable) {
-			_signal_irq = 0x80;
-			latch |= 0x80;	// signal VIC interrupt
-		}
-		
-		memWriteIO(0xd019, latch);
+#define CHECK_IRQ() \
+	/* "The test for reaching the interrupt raster line is done in */ \
+	/* cycle 0 of every line (for line 0, in cycle 1)."	*/ \
+	 \
+	if (_y == _raster_latch) { \
+		/* always signal (test case: Wally Beben songs that use */ \
+		/* CIA 1 timer for IRQ but check for this flag) */ \
+		uint8_t latch = MEM_READ_IO(0xd019) | 0x1; \
+		 \
+		uint8_t interrupt_enable = MEM_READ_IO(0xd01a) & 0x1; \
+		if (interrupt_enable) { \
+			_signal_irq = 0x80; \
+			latch |= 0x80;	/* signal VIC interrupt */  \
+		} \
+		 \
+		MEM_WRITE_IO(0xd019, latch); \
 	}
-}
 
 void vicClock() {
 	_x += 1;
 	
 	if ((_x == 1) && !_y) {	// special case: in line 0 it is cycle 1		
-		checkIRQ();
+		CHECK_IRQ();
 		
-		_badline_den = memReadIO(0xd011) & 0x10;	// default for new frame
+		_badline_den = MEM_READ_IO(0xd011) & 0x10;	// default for new frame
 		
 	} else if (_x >= _cycles_per_raster) {
 		_x = 0;
@@ -156,14 +156,11 @@ void vicClock() {
 			_y = 0;			
 		}
 				
-		if (_y) checkIRQ();	// normal case: check in cycle 0				
+		if (_y) { CHECK_IRQ(); }	// normal case: check in cycle 0				
 	}
 }
 
 uint8_t vicIRQ() {	
-	// FIXME XXX perf opt: with raster irq once every 20000 cycles, this changes
-	// infrequently but it is checked EVERY CPU cycle - introduce dedicated
-	// flag to make read access less expensive...
 	return _signal_irq; // memReadIO(0xd019) & 0x80;
 }
 

@@ -11,6 +11,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <emscripten.h>
 
 #include "memory.h"
@@ -38,7 +39,7 @@ static uint8_t _kernal_rom[KERNAL_SIZE];	// mapped to $e000-$ffff
 #define IO_AREA_SIZE 0x1000
 static uint8_t _char_rom[IO_AREA_SIZE];		// mapped to $d000-$dfff
 
-static uint8_t _io_area[IO_AREA_SIZE];		// mapped to $d000-$dfff
+uint8_t*		_io_area= 0;				// mapped to $d000-$dfff
 
 
 /*
@@ -296,8 +297,15 @@ const static uint8_t _driverPSID[33] = {
 	0x40,				// RTI
 };
 
+void allocIO() {
+	// this array cannot be allocated statically if the pointer is to be used 
+	// directly from other compilation units.. bloody C crap..
+	if (_io_area == 0) _io_area = (uint8_t*) calloc(1, IO_AREA_SIZE);
+}
+
 #ifdef TEST
 void memInitTest() {
+	allocIO();
 
 	// environment needed for Wolfgang Lorenz's test suite
     memset(&_kernal_rom[0], 0x00, KERNAL_SIZE);					// BRK by default 
@@ -350,6 +358,8 @@ void memResetCharROM(uint8_t* rom) {
 }
 
 void memResetKernelROM(uint8_t* rom) {
+	allocIO();	// todo place properly
+	
 	if (rom) {
 		// optional: for those that bring their own ROM (precondition for BASIC songs)
 		memcpy(_kernal_rom, rom, KERNAL_SIZE);

@@ -179,26 +179,75 @@ uint8_t ciaIRQ() {
 	return t->interrupt_status & ICR_INTERRUPT_ON;
 }
 
-static uint16_t readCounter(struct Timer* t, uint8_t timer_idx) {
-	return t->ts[timer_idx].counter;
-}
+// perf opt: inline short functions repeatedly used during clocking
+// see "memory_opt.h" for mor information
 
-static void writeCounter(struct Timer* t, uint8_t timer_idx, uint16_t value) {
-//	note: counter is reloaded from latch in the following 3 scenarios:
-	
+#define READ_COUNTER(t, timer_idx) \
+	t->ts[timer_idx].counter
+
+//	note: counter is reloaded from latch in the following 3 scenarios:	
 //	1) on any underflow (see underflow())
 //	2) on force load (see setControl)
 //	3) hi-byte prescaler write *while stopped* (see setTimerLatch())
+#define WRITE_COUNTER(t, timer_idx, value) \
+	t->ts[timer_idx].counter = value
 
-	 t->ts[timer_idx].counter = value;
-}
+#define UPDATE_INT_MASK(t, addr, new_mask) \
+	memWriteIO(addr, new_mask);\
+	t->interrupt_mask = new_mask & 0x3;
+
+#define IS_STARTED(t, timer_idx) \
+	t->ts[timer_idx].is_started
+	
+// One-Shot:   Timer will count down from the latched value to zero, generate an interrupt, 
+//             reload the latched value, then stop.
+// Continuous: Timer will count down from the latched value to zero, generate an interrupt, 
+//             reload the latched value, and repeat the procedure continously.
+#define IS_ONE_SHOT(t, timer_idx) \
+	(memReadIO(t->memory_address + 0x0e + timer_idx) & CRA_ONE_SHOT)
+	
+// todo perf opt: the linked timer mode is rarely used and this respective test is
+// useless most of the time (but it seems to make a noticable difference in the profiler..)
+// maybe using 2 different impls for the 2 scenarios would benefit the 99% case?
+#define IS_B_LINKED_TO_A(t) \
+	t->b_is_linked_to_a
+
+// CAUTION: COUNT() leaves the CIA in an intermediate state that MUST be
+// further processed in case of an underflow!
+//
+// test-case: "SET IMR CLOCK 2" uses a LATCH=0 and the IRQ startup
+// timing is currently correct.. however that test DOES NOT check the
+// timing of a "continuous" counter, i.e. timing of successive runs
+// might still be wrong..
+	
+// FIXME it doesn't make sense that 0 and 1 counter have the same 
+// effect: logically a 0 latch should lead to a 1 cycle quicker 
+// count (at least in continuous mode). Interestingly the tests 
+// don't seem to care and it doesn't seem to be relevant for real
+// world songs.. still there must be a bug left somewhere.. 
+#define COUNT(is_underflow, t, timer_idx) \
+	uint16_t counter = READ_COUNTER(t, timer_idx);\
+	if (!counter) {\
+		/* 0 latch/counter (see test "IMR") */ \
+		is_underflow = 1; /* cannot count below 0 */ \
+	} else {\
+		counter -= 1; /* count down	*/ \
+		WRITE_COUNTER(t, timer_idx, counter);\
+		is_underflow = !counter;\
+	}
+
+#define STOP_TIMER(t, timer_idx) \
+	const uint16_t addr = t->memory_address + 0x0e + timer_idx;\
+	uint8_t ctrl_new = memReadIO(addr) & (~0x1);\
+	t->ts[timer_idx].is_started = ctrl_new & 0x1;\
+	memWriteIO(addr, ctrl_new);
 
 static void initTimer(struct Timer* t, uint8_t timer_idx) {
 	// bootstrap using current memory settings..
 	uint16_t addr = t->memory_address + _offset_lo_byte[timer_idx];	
 	uint16_t timer =  (memReadIO(addr) | (memReadIO(addr + 1) << 8));
 
-	//	uint16_t timer= readCounter(t, timer_idx);		// bootstrap using current memory settings..
+	//	uint16_t timer= READ_COUNTER(t, timer_idx);		// bootstrap using current memory settings..
 	t->ts[timer_idx].timer_latch = timer;
 	t->ts[timer_idx].counter = 0;
 
@@ -226,47 +275,39 @@ static void initTimerData(uint16_t memory_address, struct Timer* t) {
 	t->interrupt_status = t->delay_INT = 0;
 }
 
-static void handleInterrupt(struct Timer* t) {
-	// "When a timer underflows, the corresponding bit in the Interrupt
-	// Control Register (ICR) will be set... When the bit in the Interrupt
-	// Mask Register (IMR) is also set, the CIA6526 will raise
-	// an interrupt with a delay of one ø2 clock. "
 
-	// "This interrupt can be prevented by reading the ICR at the time
-	// of the underflow. Once the interrupt flip-flop has been set,
-	// changing the condition in the IMR has no effect. Only reading the
-	// ICR will clear it."
+// "When a timer underflows, the corresponding bit in the Interrupt
+// Control Register (ICR) will be set... When the bit in the Interrupt
+// Mask Register (IMR) is also set, the CIA6526 will raise
+// an interrupt with a delay of one ø2 clock. "
 
-	// note: only original CIA 6526 triggers interrupts 1 cycle *after*
-	// the timer underflow whereas there is no such delay for 6526A (new
-	// players will usually have a respective detection logic and it seem
-	// safer to impersonate the old chip) - also it is what Wolfgang
-	// Lorenz's test-suite expects.
+// "This interrupt can be prevented by reading the ICR at the time
+// of the underflow. Once the interrupt flip-flop has been set,
+// changing the condition in the IMR has no effect. Only reading the
+// ICR will clear it."
 
-//	uint8_t interrupt_mask = memReadIO(t->memory_address_0d) & 0x3;		// use cached mask as perf opt
-		
-	// handle previously scheduled interrupt:
-	if (t->delay_INT) {
-		t->delay_INT = 0;
-		
-		if (t->interrupt_status & t->interrupt_mask) {
-			t->interrupt_status |= ICR_INTERRUPT_ON;
-		}
-		return;
+// note: only original CIA 6526 triggers interrupts 1 cycle *after*
+// the timer underflow whereas there is no such delay for 6526A (new
+// players will usually have a respective detection logic and it seem
+// safer to impersonate the old chip) - also it is what Wolfgang
+// Lorenz's test-suite expects.
+	
+// handle previously scheduled interrupt:
+#define HANDLE_INTERRUPT(t) \
+	if (t->delay_INT) { \
+		t->delay_INT = 0; \
+		 \
+		if (t->interrupt_status & t->interrupt_mask) { \
+			t->interrupt_status |= ICR_INTERRUPT_ON; \
+		} \
+		 \
+	} else if (t->interrupt_status & t->interrupt_mask) { \
+		/* check condition to raise an interrupt: */ \
+		if (!(t->interrupt_status & ICR_INTERRUPT_ON)) { \
+			/* testcase "IMR": interrupt is triggered with a +1 cycle delay */ \
+			t->delay_INT = 1; \
+		} \
 	}
-		
-	// check condition to raise an interrupt:
-	if (t->interrupt_status & t->interrupt_mask) {
-		if (!(t->interrupt_status & ICR_INTERRUPT_ON)) {
-			// testcase "IMR": interrupt is triggered with a +1 cycle delay
-			t->delay_INT = 1;
-		}
-	}
-}
-
-#define UPDATE_INT_MASK(t, addr, new_mask) \
-			memWriteIO(addr, new_mask);\
-			t->interrupt_mask = new_mask & 0x3;	// performance opt
 
 static void setInterruptMask(struct Timer* t, uint8_t mask) {
 	// i.e. $Dx0D, handle updates of the CIA interrupt control mask	
@@ -277,7 +318,7 @@ static void setInterruptMask(struct Timer* t, uint8_t mask) {
 		UPDATE_INT_MASK(t, addr, new_mask);
 		
 		// test case "IMR": if condition is already true then IRQ flag must also be set
-		handleInterrupt(t);
+		HANDLE_INTERRUPT(t);
 	} else {
 		uint8_t new_mask = memReadIO(addr) & (~(mask & 0x1f));	// clear mask bits
 		UPDATE_INT_MASK(t, addr, new_mask);
@@ -292,7 +333,7 @@ static void setControl(struct Timer* t, uint8_t timer_idx, uint8_t ctrl_new) {	/
 	/* todo: verify if this really works - or is actually needed
 	// test-case: "FLIPOS" doesn't seem to care
 	if (ctrl_old & CRA_ONE_SHOT) {
-		if (readCounter(t, timer_idx) == 1) {
+		if (READ_COUNTER(t, timer_idx) == 1) {
 			// stop counter if this happens just 1 cycle before the underflow
 			ctrl_new &= (~0x1); 
 		}
@@ -365,33 +406,6 @@ static uint8_t acknInterruptStatus(struct Timer* t) {
 #endif
 }
 
-static int isStarted(struct Timer* t, uint8_t timer_idx) {
-	return t->ts[timer_idx].is_started;	// performance opt
-	/*
-	const uint16_t addr = t->memory_address + 0x0e + timer_idx;
-	return memReadIO(addr) & 0x1;
-	*/
-}
-
-static void stopTimer(struct Timer* t, uint8_t timer_idx) {
-	const uint16_t addr = t->memory_address + 0x0e + timer_idx;
-
-	uint8_t ctrl_new = memReadIO(addr) & (~0x1);
-	t->ts[timer_idx].is_started = ctrl_new & 0x1;	// performance opt
-	memWriteIO(addr, ctrl_new);	
-}
-
-/*
-* One-Shot:   Timer will count down from the latched value to zero, generate an interrupt, 
-*             reload the latched value, then stop.
-* Continuous: Timer will count down from the latched value to zero, generate an interrupt, 
-*             reload the latched value, and repeat the procedure continously.
-*/
-static int isOneShot(struct Timer* t, uint8_t timer_idx) {
-	const uint16_t addr = t->memory_address + 0x0e + timer_idx;
-	return memReadIO(addr) & CRA_ONE_SHOT;
-}
-
 static void underflow(struct Timer* t, uint8_t timer_idx) {
 //	const uint8_t interrupt_mask = memReadIO(t->memory_address_0d) & (1 << timer_idx);
 	const uint8_t interrupt_mask = t->interrupt_mask & (1 << timer_idx);	// perf opt
@@ -400,45 +414,15 @@ static void underflow(struct Timer* t, uint8_t timer_idx) {
 	}
 }
 
-/*
-* CAUTION: count() leaves the CIA in an intermediate state that MUST be
-* further processed in case of an underflow!
-*
-* @return 0 in case of an underflow
-*/
-static uint16_t count(struct Timer* t, uint8_t timer_idx) {
-	// test-case: "SET IMR CLOCK 2" uses a LATCH=0 and the IRQ startup
-	// timing is currently correct.. however that test DOES NOT check the
-	// timing of a "continuous" counter, i.e. timing of successive runs
-	// might still be wrong..
-		
-	// FIXME it doesn't make sense that 0 and 1 counter have the same 
-	// effect: logically a 0 latch should lead to a 1 cycle quicker 
-	// count (at least in continuous mode). Interestingly the tests 
-	// don't seem to care and it doesn't seem to be relevant for real
-	// world songs.. still there must be a bug left somewhere.. 
-	
-	uint16_t counter = readCounter(t, timer_idx);
-	
-	// 0 latch/counter (see test "IMR")
-	if (!counter) return 0; 	// cannot count below 0
-		
-	counter -= 1;		// count down	
-	
-	writeCounter(t, timer_idx, counter);	
-		
-	return counter;
-}
-
 static void writeLatch(struct Timer* t, uint8_t timer_idx, uint16_t value, uint8_t reset) {
 	t->ts[timer_idx].timer_latch = value;
 	
-	if (reset && !isStarted(t, timer_idx)) {
+	if (reset && !IS_STARTED(t, timer_idx)) {
 		// a hi-byte prescaler (aka latch) written *while
 		// timer is stopped* will reset the counter
 		
 		const uint16_t latch = t->ts[timer_idx].timer_latch;
-		writeCounter(t, timer_idx, latch);
+		WRITE_COUNTER(t, timer_idx, latch);
 	}		
 }
 
@@ -457,14 +441,6 @@ static void setTimerLatch(struct Timer* t, uint16_t offset, uint8_t value) {
 			writeLatch(t, TIMER_B, (t->ts[TIMER_B].timer_latch & 0xff) | (value << 8), 1);			
 			break;
 	}	
-}
-
-// FIXME XXX perf opt: the linked timer mode is rarely used and this respective test
-// useless most of the time (but it seems to make a noticable difference in the profiler..)
-// maybe using 2 different impls for the 2 scenarios would benefit the 99% case?
-static int isBLinkedToA(struct Timer* t) {
-	return t->b_is_linked_to_a;	// perf opt
-//	return ((memReadIO(t->memory_address_0f) & CRB_MODE_MASK) == CRB_MODE_UNDERFLOW_A);
 }
 
 /*
@@ -502,7 +478,7 @@ static uint8_t clockT(struct Timer* t, uint8_t timer_idx) {
 				underflow(t, timer_idx);
 
 				// react with 1 cycle delay. test-case: Graphixmania_2_part_6.sid, Demi-Demo_4.sid
-				if (isBLinkedToA(t)) {
+				if (IS_B_LINKED_TO_A(t)) {
 					clockT(t, TIMER_B);
 				}
 				
@@ -514,7 +490,7 @@ static uint8_t clockT(struct Timer* t, uint8_t timer_idx) {
 				// where the counter should stay "as is"
 				
 				uint16_t latch= t->ts[timer_idx].timer_latch;
-				writeCounter(t, timer_idx, latch);			// instead of counting
+				WRITE_COUNTER(t, timer_idx, latch);			// instead of counting
 				
 				done = 1;	// suppose there is no counting in this phase
 			}
@@ -531,9 +507,11 @@ static uint8_t clockT(struct Timer* t, uint8_t timer_idx) {
 	
 	// handle regular counter mode
 
-	if (isStarted(t, timer_idx) || delayed_stop) {
+	if (IS_STARTED(t, timer_idx) || delayed_stop) {
+		uint8_t is_underflow;
+		COUNT(is_underflow, t, timer_idx);
 		
-		if (!count(t, timer_idx)) {
+		if (is_underflow) {
 			// reached underflow
 			
 			// "When the counter has reached zero, it is reloaded from
@@ -562,7 +540,7 @@ static uint8_t clockT(struct Timer* t, uint8_t timer_idx) {
 			
 			// reload the counter from latch (0 counter is "never" visible)
 			struct TimerState *in = &t->ts[timer_idx];
-			writeCounter(t, timer_idx, in->timer_latch);
+			WRITE_COUNTER(t, timer_idx, in->timer_latch);
 			
 			/*
 			if (in->timer_latch == 0) {
@@ -575,10 +553,9 @@ static uint8_t clockT(struct Timer* t, uint8_t timer_idx) {
 				t->interrupt_status |= ICR_INTERRUPT_ON;
 			}*/
 			
-			if (isOneShot(t, timer_idx)) {
+			if (IS_ONE_SHOT(t, timer_idx)) {
 				// test-case 'ONESHOT': timer must be immediately marked as stopped when 0 is reached
-				
-				stopTimer(t, timer_idx);
+				STOP_TIMER(t, timer_idx);
 			}			
 			return 1; 			// report underflow (for timer chaining)
 		}
@@ -586,16 +563,25 @@ static uint8_t clockT(struct Timer* t, uint8_t timer_idx) {
 	return 0;
 }
 
+// WTF: using "inline" for the below function seems to totally fuck up
+// performance complete emu turns 6x slower.. something in the compiler / optimizer
+// must be seriously fucked up!
 
 static void clock(struct Timer* t) {
 
-	handleInterrupt(&(_cia[CIA1])); 	// IRQ
-	handleInterrupt(&(_cia[CIA2])); 	// NMI
+// XXX FIXME. DONT THESE BELONG BELOW INTO ciaClock??
+// why should BOIH timers be always handled here? i.e. respective methods are called 
+// 2x for each clock().. => verify potential fix with unit tests!
+	struct Timer* tIrq= &(_cia[CIA1]);
+	HANDLE_INTERRUPT(tIrq);
+	
+	struct Timer* tNmi= &(_cia[CIA2]);
+	HANDLE_INTERRUPT(tNmi);
 
-	if (isBLinkedToA(t)) {	// e.g. in Graphixmania_2_part_6.sid
-			if (clockT(t, TIMER_A)) {				// underflow
-				// will trigger B count with 1 cycle delay
-			}			
+	if (IS_B_LINKED_TO_A(t)) {	// e.g. in Graphixmania_2_part_6.sid
+		if (clockT(t, TIMER_A)) {				// underflow
+			// will trigger B count with 1 cycle delay
+		}			
 	} else {
 		// handle independent counters (testcases: Vicious_SID_2-
 		// Carmina_Burana, LMan - Vortex, new digi stuff)
@@ -604,6 +590,10 @@ static void clock(struct Timer* t) {
 	}	
 }
 
+// FIXME todo: NOT handling an unused NMI timer saves about 10%!
+// until started, empty clock functions could be used..
+// this would benefit PSID&RSIDS alike.. similarily the is_b_linked_to_a 
+// check could be disabled..
 void ciaClock() {
 	// advance all the timers by one clock cycle..
 	struct Timer* timer1 = &(_cia[CIA1]);
@@ -613,10 +603,9 @@ void ciaClock() {
 	clock(timer2);
 }
 
-
 // -----------------------------------------------------------------------
 
-// hack: poor man's "time of day" sim (only secs & 10th of sec), 
+// hack: poor man's "time of day" sim (only secs & 10th of sec),
 // see Kawasaki_Synthesizer_Demo.sid
 
 static uint32_t _tod_in_millies = 0;
@@ -652,19 +641,19 @@ uint8_t ciaReadMem(uint16_t addr) {
 
 		case 0xdc04: {			
 			struct Timer* t = &(_cia[CIA1]);
-			return readCounter(t, TIMER_A) & 0xff;		
+			return READ_COUNTER(t, TIMER_A) & 0xff;		
 		}
 		case 0xdc05: {			
 			struct Timer* t = &(_cia[CIA1]);
-			return readCounter(t, TIMER_A) >> 8;
+			return READ_COUNTER(t, TIMER_A) >> 8;
 		}
 		case 0xdc06: {			
 			struct Timer* t = &(_cia[CIA1]);			
-			return (readCounter(t, TIMER_B) & 0xff);
+			return (READ_COUNTER(t, TIMER_B) & 0xff);
 		}
 		case 0xdc07: {
 			struct Timer* t = &(_cia[CIA1]);
-			return (readCounter(t, TIMER_B) >> 8);
+			return (READ_COUNTER(t, TIMER_B) >> 8);
 		}
 
 		case 0xdc08: 
@@ -679,19 +668,19 @@ uint8_t ciaReadMem(uint16_t addr) {
 		// CIA 2 - "NMI" timer
 		case 0xdd04: {
 			struct Timer* t = &(_cia[CIA2]);
-			return readCounter(t, TIMER_A) & 0xff;		
+			return READ_COUNTER(t, TIMER_A) & 0xff;		
 		}
 		case 0xdd05: {
 			struct Timer* t = &(_cia[CIA2]);
-			return readCounter(t, TIMER_A) >> 8;
+			return READ_COUNTER(t, TIMER_A) >> 8;
 		}
 		case 0xdd06: {
 			struct Timer* t = &(_cia[CIA2]);
-			return (readCounter(t, TIMER_B) & 0xff);
+			return (READ_COUNTER(t, TIMER_B) & 0xff);
 		}
 		case 0xdd07: {
 			struct Timer* t = &(_cia[CIA2]);
-			return (readCounter(t, TIMER_B) >> 8);
+			return (READ_COUNTER(t, TIMER_B) >> 8);
 		}
 
 		case 0xdd08:	// testcase: Traffic.sid 

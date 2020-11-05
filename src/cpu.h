@@ -15,11 +15,10 @@
 
 
 // setup
-void		cpuInit();
+void		cpuInit(uint8_t is_rsid);
 void 		cpuSetProgramCounter(uint16_t pc, uint8_t a);
 
-// clocking 
-void		cpuClock();
+extern void (*cpuClock)();		// cpuClock function pointer (crappy C requires different syntax here)
 
 // PSID only crap
 uint8_t		cpuIsValidPcPSID();
