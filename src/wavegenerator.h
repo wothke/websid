@@ -12,6 +12,8 @@
 
 #include "base.h"
 
+//#define USE_HERMIT_ANTIALIAS
+
 class WaveGenerator {
 protected:
 	friend class SID;								// the only user of Voice
@@ -44,13 +46,18 @@ protected:
 	
 private:
 	// utils for waveform generation
-	uint32_t	getRingModCounter();
 	void		updateFreqCache(double cycles_per_sample);
 	uint16_t	combinedWF(double* wfarray, uint16_t index, uint8_t differ6581);
 	uint16_t	createTriangleOutput();
 	uint16_t	createSawOutput();
+	
+#ifdef USE_HERMIT_ANTIALIAS	
 	void		calcPulseBase(uint32_t* tmp, uint32_t* pw);
 	uint16_t	createPulseOutput(uint32_t tmp, uint32_t pw);
+#else	
+	void		updatePulseCache();
+	uint16_t	createPulseOutput();
+#endif
 	uint16_t	createNoiseOutput(uint16_t outv, uint8_t is_combined);
 		
 private:
@@ -71,11 +78,28 @@ private:
 	uint8_t		_sync_bit;
 	uint8_t		_ring_bit;
 	
+	double		_freq_inc_sample;
+
 		// pulse waveform
 	uint16_t	_pulse_width;		// 12-bit "pulse width" from respective SID registers
+#ifdef USE_HERMIT_ANTIALIAS
 	uint32_t	_pulse_out;			// 16-bit "pulse width" _pulse_width<<4 shifted for convenience)
-    uint32_t	_freq_pulse_base;	// Hermit's "anti-aliasing"
+	uint32_t	_freq_pulse_base;	// Hermit's "anti-aliasing"
 	double		_freq_pulse_step;	// Hermit's "anti-aliasing"
+	
+	// saw waveform
+	double		_freq_saw_step;		// Hermit's "anti-aliasing"	
+#else
+	double		_freq_inc_sample_inv;
+	double		_ffff_freq_inc_sample_inv;
+	uint32_t	_pulse_width12;
+	uint32_t	_pulse_width12_neg;
+	uint32_t	_pulse_width12_plus;
+	
+		// saw waveform
+	uint16_t	_saw_range;
+	uint16_t	_saw_base;
+#endif
 
 		// noise waveform
 	uint8_t		_noise_oversample;	// number of noise-updates per sample
@@ -83,8 +107,6 @@ private:
     uint32_t	_noise_LFSR;
     uint16_t	_noiseout;			// wave output
 		
-		// saw waveform
-    double		_freq_saw_step;		// Hermit's "anti-aliasing"
 
 	// add-ons snatched from Hermit's implementation
 	double		_prev_wav_data;		// combined waveform handling
