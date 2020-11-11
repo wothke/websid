@@ -313,7 +313,7 @@ void disableDecimalModeTests(uint8_t* in_buffer, uint32_t in_buf_size, char* fil
 		skipCode("sbcix", filename, in_buffer, 0x08bc, 0x0990);
 		skipCode("sbciy", filename, in_buffer, 0x08bc, 0x0990);
 		
-		skipCode("sbcb(eb)", filename, in_buffer, 0x08bc, 0x0988);
+		skipCode("sbcb(eb)", filename, in_buffer, 0x08b7, 0x0988);
 		
 		skipCode("arrb", filename, in_buffer, 0x0899, 0x0959);
 	}

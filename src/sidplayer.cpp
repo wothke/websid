@@ -407,6 +407,11 @@ extern "C" uint16_t EMSCRIPTEN_KEEPALIVE getRAM(uint16_t addr) {
 	return  memReadRAM(addr);
 }
 
+extern "C" void setRAM(uint16_t addr, uint8_t value) __attribute__((noinline));
+extern "C" void EMSCRIPTEN_KEEPALIVE setRAM(uint16_t addr, uint8_t value) {
+	memWriteRAM(addr, value);
+}
+
 extern "C" uint16_t getGlobalDigiType() __attribute__((noinline));
 extern "C" uint16_t EMSCRIPTEN_KEEPALIVE getGlobalDigiType() {
 	return SID::getGlobalDigiType();

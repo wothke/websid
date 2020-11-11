@@ -54,14 +54,14 @@
 * WebSid (c) 2019 Jürgen Wothke
 * version 0.94
 *
-* Terms of Use: This software is licensed under a CC BY-NC-SA 
+* Terms of Use: This software is licensed under a CC BY-NC-SA
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
 
 #include "digi.h"
- 
+
 #include <stdio.h>
-#include <stdlib.h> 
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
@@ -74,7 +74,7 @@ extern "C" {
 
 #define MASK_DIGI_UNUSED 0x80
 
-DigiDetector::DigiDetector(SID* sid) {	
+DigiDetector::DigiDetector(SID* sid) {
 	_sid = sid;
 	_base_addr = 0;	// not available at this point
 	_digi_source = MASK_DIGI_UNUSED;
@@ -82,14 +82,14 @@ DigiDetector::DigiDetector(SID* sid) {
 	_is_rsid = 1;
 }
 
-void DigiDetector::routeDigiSignal(Filter *filter, int32_t *digi_out, 
+void DigiDetector::routeDigiSignal(Filter *filter, int32_t *digi_out,
 									int32_t *outf, int32_t *outo) {
-										
+
 	if ((_used_digi_type != DigiNone) && _digi_enabled) {
 		(*digi_out) = getSample();
-		
+
 		// note: _used_digi_type can change within same song.. (see Storebror.sid)
-		
+
 		switch (_used_digi_type) {
 			case DigiD418:
 				// regular D418: need no special handling since the effect is already
@@ -102,7 +102,7 @@ void DigiDetector::routeDigiSignal(Filter *filter, int32_t *digi_out,
 			default:
 				// all the other digi techniques
 				filter->routeSignal(digi_out, outf, outo,  getSource() - 1);
-				
+
 				(*digi_out) >>= 1;	// scale down to match D418 signals
 		}
 	}
@@ -145,31 +145,31 @@ int32_t DigiDetector::getSample() {
 }
 
 uint8_t DigiDetector::getSource() {
-	return _current_digi_src; 
+	return _current_digi_src;
 }
 
 
 void DigiDetector::recordSample(uint8_t sample, uint8_t voice) {
-	
-	// SID emu will just use the last set value; for D418 technique digis 
+
+	// SID emu will just use the last set value; for D418 technique digis
 	// need to be less loud.. (but not for voice specific techniques)
-	
-	uint8_t shift = (voice == 0) ? 1 : 0;	
-	
+
+	uint8_t shift = (voice == 0) ? 1 : 0;
+
 	// optimization: calc here 1x instead of recalculating it for each output sample
 	// reduced max amplitude to reduce risk of overflows (see Batman-Mix.sid)
-	
-	_current_digi_sample = (((int32_t)sample) * 0x101 - 0x8000) >> shift;	
+
+	_current_digi_sample = (((int32_t)sample) * 0x101 - 0x8000) >> shift;
 
 	_current_digi_src = voice;
-	
+
 	_digi_count++;
 }
 
 uint8_t _use_non_nmi_D418 = 1;
 
 uint8_t DigiDetector::assertSameSource(uint8_t voice_plus) {
-	
+
 	// a song may perform different SID interactions that may or may not be
 	// meant to produce digi-sample output. the same program may do both,
 	// e.g. perform regular volume setting from MAIN or IRQ and also output
@@ -178,10 +178,10 @@ uint8_t DigiDetector::assertSameSource(uint8_t voice_plus) {
 	// both NMI and IRQ to output samples (see some of THCM's stuff). Some
 	// songs (e.g. Vicious_SID_2-15638Hz.sid) alternatingly use D418 and PWM
 	// (on voice1 & voice2) from their MAIN to create sample output.
-	
+
 	// The goal here is to filter out/ignore false positives - which may
 	// cause audible clicks.
-	
+
 	// assumption: if some "voice specific" approach is used any D418 write
 	// will NOT be interpreted as "sample output"..
 
@@ -190,15 +190,15 @@ uint8_t DigiDetector::assertSameSource(uint8_t voice_plus) {
 			_digi_source = voice_plus;		// correct it later if necessary
 		} else {
 			if (voice_plus == 0) {
-				// d418 write while there is already other data.. just ignore				
+				// d418 write while there is already other data.. just ignore
 				return 0;
-			} else if (_digi_source == 0) {	
+			} else if (_digi_source == 0) {
 				// previously recorded D418 stuff is not really sample output
 				// problem: is has already been rendered as a "sample"..
 				// i.e. that cannot be undone
-				
+
 				_digi_count = 0;
-				_digi_source = voice_plus;		// assumtion: only one digi voice..		
+				_digi_source = voice_plus;		// assumtion: only one digi voice..
 			} else {
 				// accept voice switches - test-case: Vicious_SID_2-15638Hz.sid
 			}
@@ -208,7 +208,7 @@ uint8_t DigiDetector::assertSameSource(uint8_t voice_plus) {
 		// from their IRQ.. when interpreted as a digi-sample this causes
 		// annoying clicks.. however there are also songs that play from
 		// IRQ and from NMI: test-case: Vicious_SID_2-Blood_Money.sid
-		
+
 		if (voice_plus == 0) {
 			if (!sysCheckNMIMarker()) {
 				_non_nmi_count_D418++;
@@ -242,36 +242,36 @@ uint8_t DigiDetector::recordFreqSample(uint8_t voice, uint8_t sample) {
 	// no longer needed with the cycle-emu.. causes problems: Synthesis.sid
 //	_sid->poke(voice * 7 + 4, 0);	// GATE
 //	_sid->poke(voice * 7 + 1, 0);	// freq HI
-	
+
 	_freq_detect_state[voice] = FreqIdle;
 	_freq_detect_ts[voice] = 0;
 
 	// test-case: Storebror.sid (same voice is later used for regular output)
 	_fm_count++;
 	_sid->setMute(voice, 1);
-	
+
 	_used_digi_type = DigiFM;
 	return 1;
 }
 
 uint8_t DigiDetector::handleFreqModulationDigi(uint8_t voice, uint8_t reg, uint8_t value) {
-	/* 
-	test-bit approach: the following settings are performed on the 
-	waveform/freq register in short order: 1) Triangle+GATE, 2) TEST+GATE 
-	3) GATE only 4) then the desired output sample is played by setting 
-	the "frequency hi-byte" (the whole sequence usually takes about 20-30 
-	cycles.. - exaxt limits still to be verified) .. possible variations: GATE 
+	/*
+	test-bit approach: the following settings are performed on the
+	waveform/freq register in short order: 1) Triangle+GATE, 2) TEST+GATE
+	3) GATE only 4) then the desired output sample is played by setting
+	the "frequency hi-byte" (the whole sequence usually takes about 20-30
+	cycles.. - exaxt limits still to be verified) .. possible variations: GATE
 	is not set in step 2 and/or steps 3 and 4 are switched (see LMan - Vortex.sid)
-	
-	An unusual (currently unsupported) variation can be seen in 
-	Super_Carling_the_Spider_credits 
+
+	An unusual (currently unsupported) variation can be seen in
+	Super_Carling_the_Spider_credits
 	where 2 alternating NMIs are using 2 different voices for this..
 	*/
 	if (reg == 4) {	// waveform
 		value &= 0x19;	// mask all excess bits..
 		switch (value) {
 			case 0x11:	// triangle/GATE
-				// reset statemachine 
+				// reset statemachine
 				_freq_detect_state[voice] = FreqPrep;	// may be start of a digi playback
 				_freq_detect_ts[voice] = sysCycles();
 			break;
@@ -281,7 +281,7 @@ uint8_t DigiDetector::handleFreqModulationDigi(uint8_t voice, uint8_t reg, uint8
 					_freq_detect_state[voice] = FreqSet;	// we are getting closer
 					_freq_detect_ts[voice] = sysCycles();
 				} else {
-					_freq_detect_state[voice] = FreqIdle;	// just to reduce future comparisons			
+					_freq_detect_state[voice] = FreqIdle;	// just to reduce future comparisons
 				}
 				break;
 			case 0x1:	// GATE
@@ -291,24 +291,24 @@ uint8_t DigiDetector::handleFreqModulationDigi(uint8_t voice, uint8_t reg, uint8
 					_freq_detect_ts[voice] = sysCycles();
 				} else if ((_freq_detect_state[voice] == FreqVariant2) && isWithinFreqDetectTimeout(voice)) {
 					// variant 2: sample set before GATE
-					return recordFreqSample(voice, _freq_detect_delayed_sample[voice]);				
+					return recordFreqSample(voice, _freq_detect_delayed_sample[voice]);
 				} else {
-					_freq_detect_state[voice] = FreqIdle;	// just to reduce future comparisons			
+					_freq_detect_state[voice] = FreqIdle;	// just to reduce future comparisons
 				}
 				break;
 		}
-	} else if (reg == 1) {	// step: set sample 
+	} else if (reg == 1) {	// step: set sample
 		if ((_freq_detect_state[voice] == FreqSet) && isWithinFreqDetectTimeout(voice)) {
 			// variant 2: sample before GATE
 			_freq_detect_delayed_sample[voice] = value;
-			
+
 			_freq_detect_state[voice] = FreqVariant2;	// now we only need confirmation
 			_freq_detect_ts[voice] = sysCycles();
 		} else if ((_freq_detect_state[voice] == FreqVariant1) && isWithinFreqDetectTimeout(voice)) {
 			// variant 1: sample set after GATE (testcase: Synthesis.sid)
 			return recordFreqSample(voice, value);
 		}
-	}	
+	}
 	return 0;	// other "detectors" may still take their turn
 }
 
@@ -328,28 +328,28 @@ uint8_t DigiDetector::recordPulseSample(uint8_t voice, uint8_t sample) {
 	// no longer needed in cycle-emu
 //	_sid->poke(voice * 7 + 4, 0);	// GATE
 //	_sid->poke(voice * 7 + 2, 0);	// pulse width
-	
+
 	_pulse_detect_state[voice] = PulseIdle;
 	_pulse_detect_ts[voice] = 0;
-	
+
 	_used_digi_type = DigiPWMTest;
 	return 1;
 }
 
 uint8_t DigiDetector::handlePulseModulationDigi(uint8_t voice, uint8_t reg, uint8_t value) {
-	/* 
-	approach: the following settings are performed on the waveform/pulsewidth 
+	/*
+	approach: the following settings are performed on the waveform/pulsewidth
 	register in short order:
-	1) desired output sample is played by setting the "pulse width" then	
-	2) PULSE+TEST+GATE, 3) PULSE+GATE (the whole sequence usually takes about 
-	20-30 cycles.. - exaxt limits still to be verified) variant: pulse-width 
+	1) desired output sample is played by setting the "pulse width" then
+	2) PULSE+TEST+GATE, 3) PULSE+GATE (the whole sequence usually takes about
+	20-30 cycles.. - exaxt limits still to be verified) variant: pulse-width
 	is set between 2 and 3.
 
 	e.g. used in "Wonderland XII - Digi (part4)"
-	
-	problem: Galway songs like Yie_Ar_Kung_Fu (see voice 2) are actually using 
-	the same sequence within regular song (reduce detection timeout to 7 cycles 
-	to avoid false positive).	
+
+	problem: Galway songs like Yie_Ar_Kung_Fu (see voice 2) are actually using
+	the same sequence within regular song (reduce detection timeout to 7 cycles
+	to avoid false positive).
 	*/
 	if (reg == 4) {	// waveform
 		value &= 0x49;	// mask all excess bits..
@@ -366,9 +366,9 @@ uint8_t DigiDetector::handlePulseModulationDigi(uint8_t voice, uint8_t reg, uint
 				}
 				break;
 			case 0x41:	// PULSE/GATE
-				if (((_pulse_detect_state[voice] == PulseConfirm) || (_pulse_detect_state[voice] == PulseConfirm2)) 
+				if (((_pulse_detect_state[voice] == PulseConfirm) || (_pulse_detect_state[voice] == PulseConfirm2))
 						&& isWithinPulseDetectTimeout(voice)) {
-					
+
 			// 		I did not find any testcase for the "3" case
 			//		uint8_t sample= (_pulse_detect_mode[voice] == 2) ?
 			//						_pulse_detect_delayed_sample[voice] : 	// Wonderland_XII-Digi_part_1
@@ -378,22 +378,22 @@ uint8_t DigiDetector::handlePulseModulationDigi(uint8_t voice, uint8_t reg, uint
 
 					// played waveform may actually be a problem here.. (maybe an envelope issue?)
 					 _sid->setMute(voice, 1);        // test-case: Wonderland_XII-Digi_part_1
-					 
+
 					_pulse_detect_state[voice] = PulseIdle;	// just to reduce future comparisons
-					return recordPulseSample(voice, sample);								
+					return recordPulseSample(voice, sample);
 				} else {
-					_pulse_detect_state[voice] = PulseIdle;	// just to reduce future comparisons			
+					_pulse_detect_state[voice] = PulseIdle;	// just to reduce future comparisons
 				}
 				break;
 		}
-	} else if (reg == 2/* || (reg == 3)*/) {	// PULSE width 
+	} else if (reg == 2/* || (reg == 3)*/) {	// PULSE width
 		PulseDetectState followState;
 		if ((_pulse_detect_state[voice] == PulsePrep2) && isWithinPulseDetectTimeout(voice)) {
 			followState = PulseConfirm2;	// variant 2
 		} else {
 			followState = PulsePrep;		// variant 1
 		}
-		// reset statemachine 
+		// reset statemachine
 		_pulse_detect_state[voice] = followState;	// this may be the start of a digi playback
 		_pulse_detect_ts[voice] = sysCycles();
 		_pulse_detect_delayed_sample[voice] = value;
@@ -412,64 +412,64 @@ uint8_t DigiDetector::handlePulseModulationDigi(uint8_t voice, uint8_t reg, uint
 
 // from Mahoney's amplitude_table_8580.txt (respective songs usually use the new SID)
 static const uint8_t _mahoneySample[256] = {
-	164, 170, 176, 182, 188, 194, 199, 205, 212, 218, 224, 230, 236, 242, 248, 254, 
-	164, 159, 153, 148, 142, 137, 132, 127, 120, 115, 110, 105, 99, 94, 89, 84, 
-	164, 170, 176, 181, 187, 193, 199, 205, 212, 217, 223, 229, 235, 241, 246, 252, 
-	164, 159, 153, 148, 142, 137, 132, 127, 120, 115, 110, 105, 100, 94, 90, 85, 
-	164, 170, 176, 182, 188, 194, 200, 206, 213, 219, 225, 231, 237, 243, 249, 255, 
-	164, 159, 154, 149, 143, 138, 133, 128, 122, 117, 112, 107, 102, 97, 92, 87, 
-	164, 170, 176, 182, 188, 194, 199, 205, 212, 218, 224, 230, 236, 242, 248, 253, 
-	164, 159, 154, 149, 143, 138, 133, 128, 122, 117, 112, 107, 102, 97, 92, 87, 
-	164, 164, 164, 164, 164, 164, 164, 164, 163, 163, 163, 163, 163, 163, 163, 163, 
-	164, 153, 142, 130, 119, 108, 97, 86, 73, 62, 52, 41, 30, 20, 10, 0, 	
-	164, 164, 164, 164, 164, 164, 163, 163, 163, 163, 163, 163, 163, 163, 162, 162, 
-	164, 153, 142, 131, 119, 108, 97, 87, 73, 63, 52, 42, 31, 21, 11, 1, 
-	164, 164, 164, 164, 164, 164, 164, 165, 165, 165, 165, 165, 165, 165, 165, 165, 
-	164, 153, 142, 131, 120, 109, 98, 88, 75, 64, 54, 44, 33, 23, 13, 3, 
-	164, 164, 164, 164, 164, 164, 164, 164,164, 164, 164, 164, 164, 164, 164, 164, 
+	164, 170, 176, 182, 188, 194, 199, 205, 212, 218, 224, 230, 236, 242, 248, 254,
+	164, 159, 153, 148, 142, 137, 132, 127, 120, 115, 110, 105, 99, 94, 89, 84,
+	164, 170, 176, 181, 187, 193, 199, 205, 212, 217, 223, 229, 235, 241, 246, 252,
+	164, 159, 153, 148, 142, 137, 132, 127, 120, 115, 110, 105, 100, 94, 90, 85,
+	164, 170, 176, 182, 188, 194, 200, 206, 213, 219, 225, 231, 237, 243, 249, 255,
+	164, 159, 154, 149, 143, 138, 133, 128, 122, 117, 112, 107, 102, 97, 92, 87,
+	164, 170, 176, 182, 188, 194, 199, 205, 212, 218, 224, 230, 236, 242, 248, 253,
+	164, 159, 154, 149, 143, 138, 133, 128, 122, 117, 112, 107, 102, 97, 92, 87,
+	164, 164, 164, 164, 164, 164, 164, 164, 163, 163, 163, 163, 163, 163, 163, 163,
+	164, 153, 142, 130, 119, 108, 97, 86, 73, 62, 52, 41, 30, 20, 10, 0,
+	164, 164, 164, 164, 164, 164, 163, 163, 163, 163, 163, 163, 163, 163, 162, 162,
+	164, 153, 142, 131, 119, 108, 97, 87, 73, 63, 52, 42, 31, 21, 11, 1,
+	164, 164, 164, 164, 164, 164, 164, 165, 165, 165, 165, 165, 165, 165, 165, 165,
+	164, 153, 142, 131, 120, 109, 98, 88, 75, 64, 54, 44, 33, 23, 13, 3,
+	164, 164, 164, 164, 164, 164, 164, 164,164, 164, 164, 164, 164, 164, 164, 164,
 	164, 153, 142, 131, 120, 109, 99, 88, 75, 65, 55, 44, 34, 24, 14, 4
 } ;
 
 uint8_t DigiDetector::isMahoneyDigi() {
 	// Mahoney's "8-bit" D418 sample-technique requires a specific SID setup
-	
+
 	// The idea of the approach is that the combined effect of the output of
 	// all three voices (2 filtered, 1 unfiltered) creates a carrier base
 	// signal what is modulated not only by the 4-bit volume but also by the
 	// filter settings in D418 allowing for more than 4-bit digi resolution
 	// (the name is misleading since the actual resolution is probably closer
 	// to 6 or 7 bits..)
-	
+
 	// Either the voice-output OR the separately recorded input sample can be
 	// used in the output signal - but not both! (using the later here)
-	
+
 	// We_Are_Demo_tune_2.sid seems to be using the same approach only the
 	// SR uses 0xfb instead of 0xff
-	
+
 	// song using this from main-loop - test-case: Acid_Flashback.sid
 
 	if ( (SID::peek(_base_addr + 0x17) == 0x3) && 	// voice 1&2 through filter
-		 (SID::peek(_base_addr + 0x15) == 0xff) && 
+		 (SID::peek(_base_addr + 0x15) == 0xff) &&
 		 (SID::peek(_base_addr + 0x16) == 0xff) &&		// correct filter cutoff
-		 (SID::peek(_base_addr + 0x06) == SID::peek(_base_addr + 0x0d)) && 
+		 (SID::peek(_base_addr + 0x06) == SID::peek(_base_addr + 0x0d)) &&
 		 (SID::peek(_base_addr + 0x06) == SID::peek(_base_addr + 0x14)) &&	// all same SR
-		 (SID::peek(_base_addr + 0x04) == 0x49) && 
-		 (SID::peek(_base_addr + 0x0b) == 0x49) && 
+		 (SID::peek(_base_addr + 0x04) == 0x49) &&
+		 (SID::peek(_base_addr + 0x0b) == 0x49) &&
 		 (SID::peek(_base_addr + 0x12) == 0x49)  // correct waveform: pulse + test + gate
-		) {	
+		) {
 
 		if (SID::peek(_base_addr + 0x06) >= 0xfb) {	// correct SR .. might shorten the tests some..
 			_used_digi_type = DigiMahoneyD418;
-			
+
 			// getting too loud with additional voice output (see We_Are_Demo_tune_2.sid)
 			// todo: fix emulation so that this special handling is no longer needed..
 			_sid->setMute(0, 1);
 			_sid->setMute(1, 1);
-			_sid->setMute(2, 1);			
+			_sid->setMute(2, 1);
 
 			return 1;	// XXX FIXME why was it below?!!!
-		}			
-		
+		}
+
 //		return 1;
 	}
 	return 0;
@@ -487,15 +487,15 @@ uint8_t DigiDetector::isMahoneyDigi() {
 uint8_t DigiDetector::setSwallowMode(uint8_t voice, uint8_t m) {
 	_swallow_pwm[voice] = m;
 	_sid->setMute(voice, 1);	// avoid wheezing base signals
-	
+
 	return 1;
 }
 
-uint8_t DigiDetector::handleSwallowDigi(uint8_t voice, uint8_t reg, 
+uint8_t DigiDetector::handleSwallowDigi(uint8_t voice, uint8_t reg,
 										uint16_t addr, uint8_t value) {
-											
+
 	if (reg == 4) {
-		if ((_sid->getWave(voice) & 0x8) && !(value & 0x8) && (value & 0x40) 
+		if ((_sid->getWave(voice) & 0x8) && !(value & 0x8) && (value & 0x40)
 				&& ((_sid->getAD(voice) == 0) && (_sid->getSR(voice) == 0xf0))) {
 
 			// the tricky part here is that the tests here do not trigger for
@@ -507,32 +507,32 @@ uint8_t DigiDetector::handleSwallowDigi(uint8_t voice, uint8_t reg,
 				return setSwallowMode(voice, 1);
 			}  else if ((_sid->getPulse(voice) == 0x08fe) && (_sid->getFreq(voice) == 0xffff)) {
 				// e.g. Sverige.sid, Holy_Maling.sid, Voodoo_People_part_*.sid
-				return setSwallowMode(voice, 2);	
+				return setSwallowMode(voice, 2);
 			} else if ( (_sid->getPulse(voice)&0xff00) == 0x0800 ) {
-				// e.g. Bla_Bla.sid, Bouncy_Balls_RCA_Intro.sid, Spasmolytic_part_6.sid			
+				// e.g. Bla_Bla.sid, Bouncy_Balls_RCA_Intro.sid, Spasmolytic_part_6.sid
 				// Bouncy_Balls_RCA_Intro.sid, Ragga_Run.sid, Wonderland_X_part_1.sid
 				return setSwallowMode(voice, 3);
-			} 
+			}
 		}
 	} else if (_swallow_pwm[0] && (reg == 3)) {
 		// depending on the specific player routine, the sample info is
 		// available in different registers(d402/d403 and d409/a)..
 		// for retrieval d403 seems to work for most player impls
-		
+
 		switch(_swallow_pwm[voice]) {
 			case 1:
 				recordSample((value & 0xf) * 0x11, voice + 1);
 				break;
-			case 2: 
+			case 2:
 				recordSample(((value << 4) | (value >> 4)), voice + 1);	// trial & error
 				break;
-			case 3: 
+			case 3:
 				recordSample((value & 0xf) * 0x11, voice + 1);
 				break;
 		}
-		
+
 		_used_digi_type = DigiPWM;
-		
+
 		return 1;
 	}
 	return 0;
@@ -554,7 +554,7 @@ _internal_add, _internal_repeat_times, _internal_repeat_start;
 
 static void handlePsidDigi(uint16_t addr, uint8_t value) {
 	// Neue SID-Register
-	if ((addr > 0xd418) && (addr < 0xd500)) {		
+	if ((addr > 0xd418) && (addr < 0xd500)) {
 		// Start-Hi
 		if (addr == 0xd41f) _internal_start = (_internal_start & 0x00ff) | (value << 8);
 	  // Start-Lo
@@ -602,7 +602,7 @@ static void handlePsidDigi(uint16_t addr, uint8_t value) {
 				default: return;
 			}
 		}
-	}	
+	}
 }
 
 int32_t DigiDetector::genPsidSample(int32_t sample_in)
@@ -633,7 +633,7 @@ int32_t DigiDetector::genPsidSample(int32_t sample_in)
                     _sample_nibble = 1;
                     _sample_position++;
                 }
-            }       
+            }
             if (_sample_repeats) {
                 if  (_sample_position > _sample_end) {
                     _sample_repeats--;
@@ -642,22 +642,22 @@ int32_t DigiDetector::genPsidSample(int32_t sample_in)
 					_sample_active = 0;
 				}
             }
-            
+
             sample = memReadRAM(_sample_position & 0xffff);
-            if (_sample_nibble == 1) {  // Hi-Nibble holen?     
+            if (_sample_nibble == 1) {  // Hi-Nibble holen?
                 sample = (sample & 0xf0) >> 4;
             } else {
 				sample = sample & 0x0f;
 			}
-			// transform unsigned 4 bit range into signed 16 bit (?32,768 to 32,767) range			
-			sample = (sample << 11) - 0x3fc0;			
+			// transform unsigned 4 bit range into signed 16 bit (?32,768 to 32,767) range
+			sample = (sample << 11) - 0x3fc0;
         }
-    }	
+    }
     return sample_in;
 }
 
 void DigiDetector::resetCount() {
-		
+
 	if (_used_digi_type == DigiFM) {
 		if (!_fm_count) {
 			// test-case: Storebror.sid => switches back to other digi technique
@@ -688,7 +688,7 @@ void DigiDetector::setEnabled(uint8_t value) {
 }
 
 void DigiDetector::reset(uint32_t clock_rate, uint8_t is_rsid, uint8_t is_compatible) {
-	
+
 	_base_addr = _sid->getBaseAddr();
 
 	_clock_rate = clock_rate;
@@ -696,35 +696,35 @@ void DigiDetector::reset(uint32_t clock_rate, uint8_t is_rsid, uint8_t is_compat
 	_is_compatible = is_compatible;
 
 	_digi_enabled = 1;
-	
-	memset( (uint8_t*)&_swallow_pwm, 0, sizeof(_swallow_pwm) ); 	
+
+	memset( (uint8_t*)&_swallow_pwm, 0, sizeof(_swallow_pwm) );
 
 	_digi_count = 0;
 	_digi_source = MASK_DIGI_UNUSED;
-		
+
 	// PSID digi stuff
-	_sample_active = _sample_position = _sample_start = _sample_end = _sample_repeat_start = _frac_pos = 
+	_sample_active = _sample_position = _sample_start = _sample_end = _sample_repeat_start = _frac_pos =
 		_sample_period = _sample_repeats = _sample_order = _sample_nibble = 0;
 	_internal_period = _internal_order = _internal_start = _internal_end =
 		_internal_add = _internal_repeat_times = _internal_repeat_start = 0;
 
-	//	digi sample detection 
+	//	digi sample detection
 	for (uint8_t i= 0; i<3; i++) {
 		_freq_detect_state[i] = FreqIdle;
 		_freq_detect_ts[i] = 0;
 		_freq_detect_delayed_sample[i] = 0;
-		
+
 		_pulse_detect_state[i] = PulseIdle;
 //		_pulse_detect_mode[i] = 0;
 		_pulse_detect_ts[i] = 0;
 		_pulse_detect_delayed_sample[i] = 0;
-		
+
 		_swallow_pwm[i] = 0;
 	}
 
 	_current_digi_sample = 0x80;	// center
 	_current_digi_src = 0;
-	
+
 	_used_digi_type = DigiNone;
 
 	_non_nmi_count_D418 = 0;
@@ -743,42 +743,42 @@ uint8_t DigiDetector::getD418Sample( uint8_t value) {
 	respective voice output is distorted accordingly. (Songs like "Arkanoid"
 	use all three voices for melody and parts of the played digi-samples
 	are audible based on the those distorted signals alone.
-		
+
 	2) On older 6581 SIDs there is an "idle" voltage offset that acts as a
 	"carrier signal" even when there is no voice output. (on newer 8580 models
 	this offset is close to 0 and this is the reason why early songs that
 	depended on the offset alone, where barely audible on newer SID models)
-	*/	
-	
+	*/
+
 	_used_digi_type = DigiD418;
-	
+
 	return (value & 0xf) * 0x11;
 }
 
 uint8_t DigiDetector::detectSample(uint16_t addr, uint8_t value) {
 	if (SID::isExtMultiSidMode()) return 0;	// optimization for multi-SID
-	
+
 	// mask out alternative addresses of d400 SID (see 5-Channel_Digi-Tune)..
 	// use in PSID would crash playback of recorded samples
-	if ((SID::getNumberUsedChips() == 1) && _is_compatible) addr &= ~(0x3e0); 
-	
+	if ((SID::getNumberUsedChips() == 1) && _is_compatible) addr &= ~(0x3e0);
+
 	// for songs like MicroProse_Soccer_V1.sid tracks >5 (PSID digis must
 	// still be handled.. like Demi-Demo_4_PSID.sid)
-	if (!_is_rsid && _is_compatible) return 0;	
-		
+	if (!_is_rsid && _is_compatible) return 0;
+
 	uint8_t reg = addr & 0x1f;
 	uint8_t voice = 0;
     if ((reg >= 7) && (reg <=13)) { voice = 1; reg -= 7; }
     if ((reg >= 14) && (reg <=20)) { voice = 2; reg -= 14; }
-	
+
 	if (handleFreqModulationDigi(voice, reg, value)) return 1;
 	if (handlePulseModulationDigi(voice, reg, value)) return 1;
 	if (handleSwallowDigi(voice, reg, addr, value)) return 1;
-	
+
 	// normal handling
 	if (_is_rsid && (addr == (_base_addr + 0x18))) {
 		if(assertSameSource(0)) recordSample(isMahoneyDigi() ? _mahoneySample[value] : getD418Sample(value), 0);	// this may lead to false positives..
-	}					
+	}
 	if (!_is_compatible) {	// XXX avoid repeated check.. see above.. cleanup!
 		handlePsidDigi(addr, value);
 	}

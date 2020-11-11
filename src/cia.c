@@ -86,7 +86,9 @@ the left are for successive cycles.
 
 
 // flags used to script state transitions
-#define DELAY_STARTED_MASK		0x1
+#define WAS_STOPPED_MASK		0x0	// cannot be combined with other flags!
+#define WAS_STARTED_MASK		0x1	// "started" status before a delayed change
+
 #define FORCE_LOAD_MASK			0x2
 #define START_STOP_MASK			0x4	// just needed as an end-marker (since delay-mask may be 0)
 #define UNDERFLOW_MASK			0x8	
@@ -179,7 +181,7 @@ uint8_t ciaIRQ() {
 	return t->interrupt_status & ICR_INTERRUPT_ON;
 }
 
-// perf opt: inline short functions repeatedly used during clocking
+// perf optimization: inline short functions repeatedly used during clocking
 // see "memory_opt.h" for mor information
 
 #define READ_COUNTER(t, timer_idx) \
@@ -233,7 +235,7 @@ uint8_t ciaIRQ() {
 	} else {\
 		counter -= 1; /* count down	*/ \
 		WRITE_COUNTER(t, timer_idx, counter);\
-		is_underflow = !counter;\
+		is_underflow = !counter; /* this still feels fishy - see above 0 */\
 	}
 
 #define STOP_TIMER(t, timer_idx) \
@@ -275,7 +277,6 @@ static void initTimerData(uint16_t memory_address, struct Timer* t) {
 	t->interrupt_status = t->delay_INT = 0;
 }
 
-
 // "When a timer underflows, the corresponding bit in the Interrupt
 // Control Register (ICR) will be set... When the bit in the Interrupt
 // Mask Register (IMR) is also set, the CIA6526 will raise
@@ -292,20 +293,22 @@ static void initTimerData(uint16_t memory_address, struct Timer* t) {
 // safer to impersonate the old chip) - also it is what Wolfgang
 // Lorenz's test-suite expects.
 	
-// handle previously scheduled interrupt:
-#define HANDLE_INTERRUPT(t) \
+// handle previously scheduled interrupt
+#define HANDLE_INTERRUPT1(t) \
 	if (t->delay_INT) { \
-		t->delay_INT = 0; \
-		 \
-		if (t->interrupt_status & t->interrupt_mask) { \
-			t->interrupt_status |= ICR_INTERRUPT_ON; \
+		if (--(t->delay_INT) == 0) {\
+			if (t->interrupt_status & t->interrupt_mask) { \
+				t->interrupt_status |= ICR_INTERRUPT_ON; \
+			} \
 		} \
-		 \
-	} else if (t->interrupt_status & t->interrupt_mask) { \
+	}
+
+#define HANDLE_INTERRUPT2(t, delay) \
+	if (t->interrupt_status & t->interrupt_mask) { \
 		/* check condition to raise an interrupt: */ \
 		if (!(t->interrupt_status & ICR_INTERRUPT_ON)) { \
 			/* testcase "IMR": interrupt is triggered with a +1 cycle delay */ \
-			t->delay_INT = 1; \
+			t->delay_INT = delay; \
 		} \
 	}
 
@@ -318,7 +321,11 @@ static void setInterruptMask(struct Timer* t, uint8_t mask) {
 		UPDATE_INT_MASK(t, addr, new_mask);
 		
 		// test case "IMR": if condition is already true then IRQ flag must also be set
-		HANDLE_INTERRUPT(t);
+
+		// this update is triggered by the CPU, i.e. in the other clock phase than 
+		// the CIA, there is therfore another +1 delay to the +1 delay on the CIA side 
+
+		HANDLE_INTERRUPT2(t, 2);
 	} else {
 		uint8_t new_mask = memReadIO(addr) & (~(mask & 0x1f));	// clear mask bits
 		UPDATE_INT_MASK(t, addr, new_mask);
@@ -341,10 +348,8 @@ static void setControl(struct Timer* t, uint8_t timer_idx, uint8_t ctrl_new) {	/
 	*/
 	
 	const uint8_t was_started = ctrl_old & 0x1;
-	const uint8_t toggled = was_started != (ctrl_new & 0x1);
 	
-	const uint8_t delay_mask = was_started ? DELAY_STARTED_MASK : 0;
-
+	const uint8_t delay_mask = was_started ? WAS_STARTED_MASK : 0;
 	
 	struct TimerState *ts = &t->ts[timer_idx];
 	
@@ -366,12 +371,10 @@ static void setControl(struct Timer* t, uint8_t timer_idx, uint8_t ctrl_new) {	/
 		
 		ts->scripted_transition = (FORCE_LOAD_MASK<<16) | (FORCE_LOAD_MASK<<8) | (delay_mask);	// after 3 cycle resume normally
 
-	} else if (toggled) {
+	} else if (was_started != (ctrl_new & 0x1)) {	// start/stop toggled
 		// "timer will count from its current position to 0, two clocks after
 		// the flag has been set, the timer starts counting"
-		
-		// fixme: what about "stop toggle"
-		
+				
 		// test-case "CIA1TB123" (test 3): +2 delay before start
 		ts->scripted_transition = (START_STOP_MASK<<16) | (delay_mask<<8) | (delay_mask);		// after 3 cycle resume normally
 	}
@@ -381,16 +384,14 @@ static void setControl(struct Timer* t, uint8_t timer_idx, uint8_t ctrl_new) {	/
 		// this timer should never count anything ... so just don't start 
 		// it (to avoid costly extra check later)
 		
+		// note: this does break the "CNTDEF" test, but that's OK
 		ctrl_new &= 0xfe; // clear the "start" bit
 	}
 	
-	memWriteIO(addr, ctrl_new);
-
-	
-	// performance opt: keep redundant flags to avoid ops during reads later..
+	memWriteIO(addr, ctrl_new);	// FIXME flag immediately signals "started" eventhough that is actually delayed by +2!?
 	ts->is_started = ctrl_new & 0x1;
 	
-	if (timer_idx) {	// perf opt
+	if (timer_idx) {
 		t->b_is_linked_to_a = (ctrl_new & CRB_MODE_MASK) == CRB_MODE_UNDERFLOW_A;
 	}	
 }
@@ -407,8 +408,8 @@ static uint8_t acknInterruptStatus(struct Timer* t) {
 }
 
 static void underflow(struct Timer* t, uint8_t timer_idx) {
-//	const uint8_t interrupt_mask = memReadIO(t->memory_address_0d) & (1 << timer_idx);
-	const uint8_t interrupt_mask = t->interrupt_mask & (1 << timer_idx);	// perf opt
+	// testcase: Thats_All_Folks.sid
+	const uint8_t interrupt_mask = t->interrupt_mask & (1 << timer_idx);
 	if (t->interrupt_status & interrupt_mask) {
 		t->delay_INT = 1; // makes sure it triggers directly in the next cycle
 	}
@@ -453,17 +454,22 @@ static uint8_t clockT(struct Timer* t, uint8_t timer_idx) {
 	uint8_t done = 0;	
 	uint8_t delayed_stop = 0;
 	
-	if (t->ts[timer_idx].scripted_transition) {
+	struct TimerState *ts = &t->ts[timer_idx];
+	
+	if (ts->scripted_transition) {
 
-		const uint8_t mask = t->ts[timer_idx].scripted_transition & 0xff;	// for this cycle
-		t->ts[timer_idx].scripted_transition >>=  8;						// remainder for next cycles
+		const uint8_t mask = ts->scripted_transition & 0xff;	// for this cycle
+		ts->scripted_transition >>=  8;						// remainder for next cycles
 
 		if (!(mask & NO_DELAY_MASK )) {
 			// purely a delay cycle - continue with what the timer was originally doing
 			
-			if(mask & DELAY_STARTED_MASK) {
+			if(mask & WAS_STARTED_MASK) {
+				// this looks wrong since the timer may still be set to "start" now..  
+				// with nobody wanting to stop it. (all the unit test run "- OK" though)
+
 				// timer has already been switched to "stopped", so 
-				// it takes extra convincing to make it count
+				// it takes extra convincing to still make it count
 				
 				delayed_stop = 1;
 			} else {
@@ -489,7 +495,7 @@ static uint8_t clockT(struct Timer* t, uint8_t timer_idx) {
 				// no harm repeating this for the 2 successive cycles 
 				// where the counter should stay "as is"
 				
-				uint16_t latch= t->ts[timer_idx].timer_latch;
+				uint16_t latch= ts->timer_latch;
 				WRITE_COUNTER(t, timer_idx, latch);			// instead of counting
 				
 				done = 1;	// suppose there is no counting in this phase
@@ -536,14 +542,13 @@ static uint8_t clockT(struct Timer* t, uint8_t timer_idx) {
 			
 			t->interrupt_status |= (timer_idx + 1); 	 // mask: 0x01 or 0x02
 
-			t->ts[timer_idx].scripted_transition |= UNDERFLOW_MASK;		// test-case: Vaakataso.sid, Vicious_SID_2-Carmina_Burana.sid
+			ts->scripted_transition |= UNDERFLOW_MASK;		// test-case: Vaakataso.sid, Vicious_SID_2-Carmina_Burana.sid
 			
 			// reload the counter from latch (0 counter is "never" visible)
-			struct TimerState *in = &t->ts[timer_idx];
-			WRITE_COUNTER(t, timer_idx, in->timer_latch);
+			WRITE_COUNTER(t, timer_idx, ts->timer_latch);
 			
 			/*
-			if (in->timer_latch == 0) {
+			if (ts->timer_latch == 0) {
 				// would seems logical to shorten the process by one
 				// cycle - as compared to a 1-LATCH but this breaks:
 				// "IMR=$81 IRQ IN CLOCK 2  " - probably some delay
@@ -563,21 +568,12 @@ static uint8_t clockT(struct Timer* t, uint8_t timer_idx) {
 	return 0;
 }
 
-// WTF: using "inline" for the below function seems to totally fuck up
-// performance complete emu turns 6x slower.. something in the compiler / optimizer
-// must be seriously fucked up!
-
 static void clock(struct Timer* t) {
+	// FIXME reminder: old impl did all the HANDLE_INTERRUPT calls here BEFORE 
+	// clocking.. and always for both CIA0s! lets see how this cleanup holds up
 
-// XXX FIXME. DONT THESE BELONG BELOW INTO ciaClock??
-// why should BOIH timers be always handled here? i.e. respective methods are called 
-// 2x for each clock().. => verify potential fix with unit tests!
-	struct Timer* tIrq= &(_cia[CIA1]);
-	HANDLE_INTERRUPT(tIrq);
+	HANDLE_INTERRUPT1(t);
 	
-	struct Timer* tNmi= &(_cia[CIA2]);
-	HANDLE_INTERRUPT(tNmi);
-
 	if (IS_B_LINKED_TO_A(t)) {	// e.g. in Graphixmania_2_part_6.sid
 		if (clockT(t, TIMER_A)) {				// underflow
 			// will trigger B count with 1 cycle delay
@@ -588,11 +584,13 @@ static void clock(struct Timer* t) {
 		 clockT(t, TIMER_A);
 		 clockT(t, TIMER_B);
 	}	
+	
+	HANDLE_INTERRUPT2(t, 1);
 }
 
 // FIXME todo: NOT handling an unused NMI timer saves about 10%!
 // until started, empty clock functions could be used..
-// this would benefit PSID&RSIDS alike.. similarily the is_b_linked_to_a 
+// this would benefit PSID & RSIDS alike.. similarily the is_b_linked_to_a 
 // check could be disabled..
 void ciaClock() {
 	// advance all the timers by one clock cycle..

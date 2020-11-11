@@ -423,6 +423,8 @@ uint16_t WaveGenerator::createPulseOutput(uint32_t tmp, uint32_t pw) {	// elemen
 }
 #else
 uint16_t WaveGenerator::createPulseOutput() {
+	if (_test_bit) return 0xffff;	// pulse start position
+	
 	// note: at the usual sample-rates (<50kHz) the shortest 
 	// pulse repetition interval takes about 10 samples, i.e. 
 	// a sample depends on data from (usually) one or at most two such 
@@ -442,6 +444,13 @@ uint16_t WaveGenerator::createPulseOutput() {
 	
 	
 	// handle start of a new pulse (i.e. high to low toggle)
+	
+	// XXX issue: at the very start of a pulse something still seems to go wrong: see Slapshot_1989
+	// which just re-gates a Pulse waveform (with a PW FFFF).. what is and what should be happending here?	
+	// is it a FFF specific issue or due to the 0 counter?? what is the base for that digi anyway??
+	// plötzlich läuft Slapshot auch so.... aber We_Are_Demo braucht Hermit...
+	
+	
 	if (_counter < _freq_inc_sample) {
 		
 		// pulse was reset less than _freq_inc_sample ago:
@@ -601,16 +610,20 @@ uint16_t WaveGenerator::getOutput() {
 				// combined waveforms with pulse (all except noise)
 				
 #ifdef USE_HERMIT_ANTIALIAS
-//				plsout =  ((tmp >= pw) || _test_bit) ? 0xffff : 0; //(this would be enough for simple but aliased-at-high-pitches pulse)
+				plsout =  ((tmp >= pw) || _test_bit) ? 0xffff : 0; //(this would be enough for simple but aliased-at-high-pitches pulse)
 #else
 				// FIXME why does Hermit not use the regular pulse output? maybe better just use the raw pulse logik again?
-				plsout = _test_bit ? 0xffff : createPulseOutput();
+				plsout = createPulseOutput();
 	//			plsout =  ((_counter >> 12 >= _pulse_width) || _test_bit) ? 0xffff : 0;
 #endif
 				
 				if ((_ctrl & TRI_BITMASK) && ++combined)  {
 					if (_ctrl & SAW_BITMASK) {	// PULSE & TRIANGLE & SAW	- like in Lenore.sid
+#ifdef USE_HERMIT_ANTIALIAS
+						outv = plsout ? combinedWF(_wave_table.PulseTriSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
+#else
 						outv = plsout ? combinedWF(_wave_table.PulseTriSaw_8580, _counter >> 12, 1) : 0;	// 12 MSB needed
+#endif
 					} else {
 						// PULSE & TRIANGLE - like in Kentilla, Convincing, Clique_Baby, etc
 						// a good test is Last_Ninja:6 voice 1 at 35secs; here Hermit's
@@ -621,11 +634,20 @@ uint16_t WaveGenerator::getOutput() {
 						outv = plsout ? combinedWF(_wave_table.PulseTri_8580, (c ^ (c & 0x800000 ? 0xffffff : 0)) >> 11, 0) : 0;	// either on or off						
 					}
 				} else if ((_ctrl & SAW_BITMASK) && ++combined)  {	// PULSE & SAW - like in Defiler.sid, Neverending_Story.sid
+#ifdef USE_HERMIT_ANTIALIAS
+					outv = plsout ? combinedWF(_wave_table.PulseSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
+#else
 					outv = plsout ? combinedWF(_wave_table.PulseSaw_8580, _counter >> 12, 1) : 0;	// 12 MSB needed
+#endif
 				}
 			}
 		} else if ((_ctrl & TRI_BITMASK) && (_ctrl & SAW_BITMASK) && ++combined) {	// TRIANGLE & SAW - like in Garden_Party.sid
+#ifdef USE_HERMIT_ANTIALIAS
+			uint32_t tmp = _counter >> 12;
+			outv = combinedWF(_wave_table.TriSaw_8580, tmp, 1);	// tmp 12 MSB
+#else
 			outv = combinedWF(_wave_table.TriSaw_8580, _counter >> 12, 1);	// 12 MSB needed
+#endif
 		}
 				
 		// for the rest mix the oscillators with an AND operation as stated

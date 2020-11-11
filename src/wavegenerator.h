@@ -12,7 +12,10 @@
 
 #include "base.h"
 
-//#define USE_HERMIT_ANTIALIAS
+
+// XXX new resampling seems to cause problems: see We_Are_Demo_tune_2.sid!
+// other test cases: Synthesis.sid
+#define USE_HERMIT_ANTIALIAS
 
 class WaveGenerator {
 protected:

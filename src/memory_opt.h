@@ -5,7 +5,7 @@
 * purpose of slightly faster access in timing critical logic.
 *
 * It should not normally be used and the same functionality is available
-* via the regular memReadIO and memWriteIO API.
+* via the regular memFooBar APIs (corresponding to MEM_FOO_BAR).
 * 
 * Rationale: For very small functions (e.g. getters) the overhead involved
 * in a function call seems to be significant as compared to the run time
@@ -15,10 +15,11 @@
 * compilation (i.e. "inline" cannot be used here). Also function call overhead
 * may be higher than usual: It might be a contributing factor that some 
 * WebAssembly engines seem to perform stack consistency checks before every
-* function call. I similarly replaced respective small functions that are 
-* critical during single-cycle-clocking in other parts of the implementation 
-* (see cia and cpu). Whithout and functional changes this refactoring
-* alone lead to a decrease of run time by 10%. 
+* function call (Chrome seems to be worse affected than Firefox). I similarly 
+* replaced respective small functions that are critical during single-cycle-
+* clocking in other parts of the implementation (see cia and cpu). Whithout 
+* and functional changes this refactoring alone lead to a decrease of run time 
+* by 10%. 
 * 
 * <p>WebSid (c) 2020 Jürgen Wothke
 * <p>version 0.94
@@ -36,16 +37,37 @@
 extern "C" {
 #endif
 
-extern uint8_t* _io_area;		// MUST NOT BE USED DIRECTLY!
+// THESE MUST NOT BE USED DIRECTLY!
+extern uint8_t* _io_area;		
+extern uint8_t* _memory;
+extern void memSetIO(uint16_t addr, uint8_t value);
 
 #ifdef __cplusplus
 }
 #endif
 
+#define	MEM_READ_RAM(addr)\
+	_memory[addr]
+	
+#define	MEM_WRITE_RAM(addr, value)\
+	_memory[addr] = value;
+
 #define	MEM_READ_IO(addr)\
-	_io_area[addr - 0xd000]
+	_io_area[(addr) - 0xd000]
 	
 #define	MEM_WRITE_IO(addr, value)\
-	_io_area[addr - 0xd000] = value;
+	_io_area[(addr) - 0xd000] = value
 
+#define	MEM_SET_IO(addr, value)\
+	memSetIO(addr, value)
+	
+// Note: I had also tried to avoid additional memSet/memGet calls for RAM reads and
+// non IO writes by inlining the respective "if MEM_READ_RAM/MEM_WRITE_RAM" parts 
+// directly. However that did not seem have any consistent performance impact -
+// though it had very negative impact on code structure / added pitfalls since
+// expressions used as function params are potentially evaluated repeatedly in the 
+// macro context. That idea can therefore be savely abandonned.
+
+
+	
 #endif

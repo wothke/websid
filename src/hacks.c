@@ -19,6 +19,7 @@ static uint8_t (*_defaultStunFunc)(uint8_t x, uint16_t y, uint8_t cpr);
 
 /*
 * Immigrant_Song.sid: hardcore badline timing
+* I don't hear much of a difference.. might just ditch this one..
 */
 static void patchImmigrantSongIfNeeded(uint16_t init_addr) {
 	// the timing of this song is absolutely unforgiving.. if NMI fires 1 cycle to
@@ -26,7 +27,7 @@ static void patchImmigrantSongIfNeeded(uint16_t init_addr) {
 	uint8_t pattern[] = {0xd1,0x0b,0x20,0xcc,0x0c,0x20,0x39};
 	
 	if ((init_addr == 0x080d) && memMatch(0x0826, pattern, 7)) {	
-		// just disable the display (wich is causing the trouble in the first place)
+		// just disable the display (which is causing the trouble in the first place)
 		memWriteRAM(0x0821, 0x0b);	
 	}
 }

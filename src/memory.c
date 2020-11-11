@@ -28,7 +28,7 @@ extern uint8_t	vicReadMem(uint16_t addr);
 extern void		vicWriteMem(uint16_t addr, uint8_t value);
 
 
-static uint8_t _memory[MEMORY_SIZE];
+uint8_t*		_memory = 0;
 
 #define BASIC_SIZE 0x2000
 static uint8_t _basic_rom[BASIC_SIZE];		// mapped to $a000-$bfff
@@ -39,7 +39,7 @@ static uint8_t _kernal_rom[KERNAL_SIZE];	// mapped to $e000-$ffff
 #define IO_AREA_SIZE 0x1000
 static uint8_t _char_rom[IO_AREA_SIZE];		// mapped to $d000-$dfff
 
-uint8_t*		_io_area= 0;				// mapped to $d000-$dfff
+uint8_t*		_io_area = 0;				// mapped to $d000-$dfff
 
 
 /*
@@ -120,35 +120,31 @@ void memResetBanksPSID(uint16_t play_addr) {
 		setMemBank(0x37);
 	}
 }
+	
+/*
+* @return 0 if RAM is visible; 1 if KERNAL ROM is visible
+*/ 
+#define IS_KERNAL_VISIBLE() \
+	(_memory[0x0001] & 0x2)
 
 /*
-* @return 0 if RAM is visible; 1 if ROM is visible
+* @return 0 if RAM is visible; 1 if BASIC ROM is visible
 */ 
-static uint8_t isKernalRomVisible() {
-	return _memory[0x0001] & 0x2;
-}
-
+#define IS_BASIC_VISIBLE() \
+	((_memory[0x0001] & 0x3) == 3)
+	
 /*
-* @return 0 if RAM is visible; 1 if ROM is visible
+* @return 0 if RAM is visible; 1 if CHAR ROM is visible
 */ 
-static uint8_t isBasicRomVisible() {
-	return (_memory[0x0001] & 0x3) == 3;
-}
-
-/*
-* @return 0 if RAM is visible; 1 if ROM is visible
-*/ 
-static uint8_t isCharRomVisible() {
-	return !(_memory[0x0001] & 0x4) && (_memory[0x0001] & 0x3);
-}
+#define IS_CHARROM_VISIBLE() \
+	!(_memory[0x0001] & 0x4) && (_memory[0x0001] & 0x3)
 
 /*
 * @return 0 if RAM/ROM is visible; 1 if IO area is visible
 */ 
-static uint8_t isIoAreaVisible() {
-	uint8_t bits = _memory[0x0001] & 0x7;	
-	return ((bits & 0x4) != 0) && (bits != 0x4);
-}
+#define IS_IO_VISIBLE() \
+	((_memory[0x0001] & 0x4) != 0) && ((_memory[0x0001] & 0x7) != 0x4)
+
 
 uint8_t memReadIO(uint16_t addr) {
 	// mirrored regions not implemented for reads.. nobody
@@ -174,85 +170,107 @@ void memCopyFromRAM(uint8_t* dest, uint16_t src_addr, uint32_t len) {
 	memcpy(dest, &_memory[src_addr], len);
 }
 
+#define RETURN_RAM_AREA(addr) \
+	return  _memory[addr];
+
+#define RETURN_IO_AREA(addr) \
+	if (IS_IO_VISIBLE()) { \
+		if (addr < 0xd400) { \
+			return vicReadMem(addr); \
+		} else if (addr < 0xd800) { \
+			return sidReadMem(addr); \
+		} else if ((addr >= 0xdc00) && (addr < 0xde00)) { \
+			return ciaReadMem(addr); \
+		} else if ((addr >= 0xde00) && (addr < 0xdf00)) { /* exotic scenario last*/ \
+			return sidReadMem(addr); \
+		} \
+		return memReadIO(addr); \
+	} else if(IS_CHARROM_VISIBLE()) { \
+		return _char_rom[addr - 0xd000]; \
+	} else { \
+		return _memory[addr]; /* normal RAM access */ \
+	}
+
+#define RETURN_BASIC_AREA(addr) \
+	if (IS_BASIC_VISIBLE()) { \
+		return _basic_rom[addr - 0xa000]; \
+	} else { \
+		return _memory[addr]; /* normal RAM access */ \
+	}
+
+#define RETURN_KERNAL_AREA(addr) \
+	if (IS_KERNAL_VISIBLE()) { \
+		return _kernal_rom[addr - 0xe000]; \
+	} else { \
+		return _memory[addr]; /* normal RAM access */ \
+	}
+	
 uint8_t memGet(uint16_t addr) {
-	if ((addr < 0xa000) || ((addr >= 0xc000) && (addr < 0xd000))) {
-		// make this the "normal", i.e. least expensive path
-		return  _memory[addr];
-	} else if ((addr >= 0xd000) && (addr < 0xe000)) {	// handle I/O area 		
-		if (isIoAreaVisible()) {		
-			if ((addr >= 0xd000) && (addr < 0xd400)) {
-				return vicReadMem(addr);
-				
-			} else if (((addr >= 0xd400) && (addr < 0xd800)) || 
-						((addr >= 0xde00) && (addr < 0xdf00))) {
-				return sidReadMem(addr);
-				
-			} else if ((addr >= 0xdc00) && (addr < 0xde00)) {
-				return ciaReadMem(addr);
-			}
-			return memReadIO(addr);
-			
-		} else if(isCharRomVisible()) {
-			return _char_rom[addr - 0xd000];
-			
-		} else {
-			// normal RAM access
-			return _memory[addr];
-		}
-	} else if ((addr >= 0xa000) && (addr < 0xc000)) {	// handle basic ROM
-		if (isBasicRomVisible()) {
-			return _basic_rom[addr - 0xa000];
-			
-		} else {
-			// normal RAM access
-			return _memory[addr];
-		}
-	} else {											// handle kernal ROM
-		if (isKernalRomVisible()) {
-			return _kernal_rom[addr - 0xe000];
-			
-		} else {
-			// normal RAM access
-			return _memory[addr];
-		}
+	// performance opt: try to identify most often used areas with
+	// least number of comparisons (narrow down from top
+	// or bottom using ONE check per area)
+	
+	if (addr < 0xa000) {
+		RETURN_RAM_AREA(addr);
+	} else if (addr >= 0xe000) {
+		// presuming the IRQ/NMI vectors/handlers make this 
+		// more often used..
+		RETURN_KERNAL_AREA(addr);
+	} else if ((addr >= 0xd000)) {
+		// presuming that BASIC stuff is less relevant
+		// the IO comes next (not tested)
+		RETURN_IO_AREA(addr);
+	} else if (addr >= 0xc000) {
+		// for the 1000-2000 songs that are located here
+		// one test could be avoided by going straight for 
+		// it.. however that would slow down every IO or
+		// kernal access
+		RETURN_RAM_AREA(addr);
+	} else {
+		RETURN_BASIC_AREA(addr);
 	}
 }
 
-void memSet(uint16_t addr, uint8_t value) {
-	// normally all writes to IO areas should "write
-	// through" to RAM, however PSID garbage does not
-	// always seem to tolerate that (see Fighting_Soccer)
+// normal RAM or kernal ROM (even if the ROM is visible, 
+// writes always go to the RAM) example: Vikings.sid copied 
+// player data to BASIC ROM area while BASIC ROM is turned on..
+#define WRITE_RAM(addr, value) \
+	_memory[addr] = value;
 
-	if ((addr >= 0xd000) && (addr < 0xe000)) {	// handle I/O area 
-		if (isIoAreaVisible()) {
-			if ((addr >= 0xd000) && (addr < 0xd400)) {				// vic stuff
-				vicWriteMem(addr, value);
-				return;
-				
-			} else if (((addr >= 0xd400) && (addr < 0xd800)) || 
-						((addr >= 0xde00) && (addr < 0xdf00))) {	// SID stuff			
-				sidWriteMem(addr, value);
-				return;
-				
-			} else if ((addr >= 0xdc00) && (addr < 0xde00)) {		// CIA timers
-				ciaWriteMem(addr, value);
-				
-				// make sure at least timer latches can be retrieved from RAM..
-				_memory[addr] = value;	
-				return;
-			}
-			  
-			_io_area[addr - 0xd000] = value;
-		} else {
-			// normal RAM access
-			_memory[addr] = value;
-		}
+// normally all writes to IO areas should "write
+// through" to RAM, however PSID garbage does not
+// always seem to tolerate that (see Fighting_Soccer)
+#define WRITE_IO(addr, value) \
+	if (IS_IO_VISIBLE()) { \
+		if (addr < 0xd400) {									/* vic stuff */ \
+			vicWriteMem(addr, value); \
+			return; \
+		} else if (((addr >= 0xd400) && (addr < 0xd800)) ||  \
+					((addr >= 0xde00) && (addr < 0xdf00))) {	/* SID stuff */ \
+			sidWriteMem(addr, value); \
+			return; \
+		} else if ((addr >= 0xdc00) && (addr < 0xde00)) {		/* CIA timers */ \
+			ciaWriteMem(addr, value); \
+			/* hack: make sure timer latches can be retrieved from RAM */ \
+			_memory[addr] = value; /* write RAM */ \
+			return; \
+		} \
+		_io_area[addr - 0xd000] = value; \
+	} else { \
+		_memory[addr] = value; /* write RAM */ \
+	}
+	
+void memSetIO(uint16_t addr, uint8_t value) {
+	WRITE_IO(addr, value);
+}
+
+void memSet(uint16_t addr, uint8_t value) {
+	if (addr < 0xd000) {		// this most often used area should need the least comparisons
+		WRITE_RAM(addr, value);
+	} else if (addr < 0xe000) {	// handle I/O area
+		WRITE_IO(addr, value);
 	} else {
-		// normal RAM or kernal ROM (even if the ROM is visible, 
-		// writes always go to the RAM) example: Vikings.sid copied 
-		// player data to BASIC ROM area while BASIC ROM is turned on..
-		
-		_memory[addr] = value;
+		WRITE_RAM(addr, value);
 	}
 }
 
@@ -264,7 +282,10 @@ const static uint8_t _schedule_ta_FF6E[18] = {0xA9,0x81,0x8D,0x0D,0xDC,0xAD,0x0E
 const static uint8_t _serial_clock_hi_EE8E[9] = {0xAD,0x00,0xDD,0x09,0x10,0x8D,0x00,0xDD,0x60};
 #endif
 const static uint8_t _irq_handler_FF48[19] = {0x48,0x8A,0x48,0x98,0x48,0xBA,0xBD,0x04,0x01,0x29,0x10,0xF0,0x03,0xEA,0xEA,0xEA,0x6C,0x14,0x03};	// disabled BRK branch
-const static uint8_t _irq_handler_EA7B[12] = {0xE6,0xA2,0xEA, 0xAD,0x0D,0xDC,0x68,0xA8,0x68,0xAA,0x68,0x40};	// added "INC $a2" (i.e. "TOD" frame count); Double_Falcon.sid depends on the extra NOP
+const static uint8_t _irq_handler_EA75[18] = {0xa5,0x01,0x29,0x1f,0x85,0x01,0xE6,0xA2,0xEA, 0xAD,0x0D,0xDC,0x68,0xA8,0x68,0xAA,0x68,0x40};	// added "INC $a2" (i.e. "TOD" frame count); Double_Falcon.sid depends on the extra NOP
+
+// standard handler invoked via kernal 0xfffa/b NMI vector (that redirects via 0x0318 vector - which
+// by default points to the kernal 0xfe47 handler - which here is the puny RTI at the end..)
 const static uint8_t _nmi_handler_FE43[5] = {0x78,0x6c,0x18,0x03,0x40};
 const static uint8_t _irq_end_handler_FEBC[6] = {0x68,0xa8,0x68,0xaa,0x68,0x40};
 
@@ -309,23 +330,44 @@ void memInitTest() {
 
 	// environment needed for Wolfgang Lorenz's test suite
     memset(&_kernal_rom[0], 0x00, KERNAL_SIZE);					// BRK by default 
-    memcpy(&_kernal_rom[0x1f48], _irq_handler_test_FF48, 19);	// $ff48 irq routine
 	
 	memset(&_kernal_rom[0x0a31], 0xea, 0x4d);				// $ea31 fill some NOPs
-    memcpy(&_kernal_rom[0x0a7B], _irq_handler_EA7B, 12);	// $ea31 return sequence with added 0xa2 increment to sim time of day (see P_A_S_S_Demo_3.sid)
-    memcpy(&_kernal_rom[0x1e43], _nmi_handler_FE43, 5);		// $fe43 nmi handler
-    memcpy(&_kernal_rom[0x1ebc], _irq_end_handler_FEBC, 6);	// $febc irq return sequence (e.g. used by Contact_Us_tune_2)
-	
+    memcpy(&_kernal_rom[0x0a75], _irq_handler_EA75, 18);	// $ea31 return sequence with added 0xa2 increment to sim time of day (see P_A_S_S_Demo_3.sid)
+
 	// this is actuallly used by "oneshot" test
+    memcpy(&_kernal_rom[0x0e8e], _serial_clock_hi_EE8E, 9);			// $ee8e set serial clock line high
+	
     memcpy(&_kernal_rom[0x1d15], _irq_restore_vectors_FD15, 27);	// $fd15 restore I/O vectors
     memcpy(&_kernal_rom[0x1da3], _init_io_FDA3, 86);				// $fda3 initaliase I/O devices
     memcpy(&_kernal_rom[0x1f6e], _schedule_ta_FF6E, 18);			// $ff6e scheduling TA
-    memcpy(&_kernal_rom[0x0e8e], _serial_clock_hi_EE8E, 9);		// $ee8e set serial clock line high
+		
+    memcpy(&_kernal_rom[0x1e43], _nmi_handler_FE43, 5);		// $fe43 nmi handler
+    memcpy(&_kernal_rom[0x1ebc], _irq_end_handler_FEBC, 6);	// $febc irq return sequence (e.g. used by Contact_Us_tune_2)
+	
+    memcpy(&_kernal_rom[0x1f48], _irq_handler_test_FF48, 19);	// $ff48 irq routine
 
-	_kernal_rom[0x1ffe] = 0x48;
+	
+	// the mmufetch test relies on the below BASIC & KERNAL ROM snippets 
+	// to switch back the bank setting.. it is only interested in the
+	// one operation that is used to switch back the setting at $01	
+	_basic_rom[0x04E1] = 0x91;		// A4E1   91 24      STA ($24),Y
+	_basic_rom[0x04E2] = 0x24;
+	_basic_rom[0x182A] = 0x91;		// B82A   91 14      STA ($14),Y
+	_basic_rom[0x182B] = 0x14;
+	// already in _irq_handler_EA75:
+//	_kernal_rom[0x0a79] = 0x85;		// EA79   85 01      STA $01
+//	_kernal_rom[0x0a7a] = 0x01;
+	_kernal_rom[0x1d27] = 0x91;		// FD27   91 C3      STA ($C3),Y
+	_kernal_rom[0x1d28] = 0xc3;
+	_char_rom[0x0402] = 0x91;		// D402   91 91      STA ($91),Y
+	_char_rom[0x0403] = 0xc3;
+	
+	_kernal_rom[0x1ffa] = 0x43;	// NMI vector	(see "icr_01" test)
+	_kernal_rom[0x1ffb] = 0xfe;
+	_kernal_rom[0x1ffe] = 0x48;	// IRQ vector
 	_kernal_rom[0x1fff] = 0xff;
 	
-	memResetRAM(0);
+	memResetRAM(0, 0);
 //    memset(&_memory[0], 0x0, MEMORY_SIZE);
 
 	_memory[0xa003] = 0x80;
@@ -336,7 +378,12 @@ void memInitTest() {
 	// => memset 0 took care of those
 
 	setMemBank(0x37);
-		
+
+	// set cursor position for PETSCII output
+	_memory[0x00d3] = 0x1;	// X
+	_memory[0x00d6] = 0x0;	// Y
+
+	
     memcpy(&_memory[0xe000], _kernal_rom, KERNAL_SIZE);	// just in case there is a banking issue
 }
 #endif
@@ -383,10 +430,10 @@ void memResetKernelROM(uint8_t* rom) {
 		
 		memcpy(&_kernal_rom[0x1f48], _irq_handler_FF48, 19);	// $ff48 irq routine
 		memset(&_kernal_rom[0x0a31], 0xea, 0x4d);			// $ea31 fill some NOPs		(FIXME: nops may take longer than original..)
-		memcpy(&_kernal_rom[0x0a7B], _irq_handler_EA7B, 12);	// $ea31 return sequence with added 0xa2 increment to sim time of day (see P_A_S_S_Demo_3.sid)
+		memcpy(&_kernal_rom[0x0a75], _irq_handler_EA75, 18);	// $ea31 return sequence with added 0xa2 increment to sim time of day (see P_A_S_S_Demo_3.sid)
 		memcpy(&_kernal_rom[0x0eb3], _delay_handler_EEB3, 8);	// delay 1 milli
 
-		memcpy(&_kernal_rom[0x1e43], _nmi_handler_FE43, 5);	// $fe43 nmi handler
+		memcpy(&_kernal_rom[0x1e43], _nmi_handler_FE43, 5);	// $fe43 nmi handler; FIXME: RTI as handler may not be enough.. better add the DD0D handling too?
 		memcpy(&_kernal_rom[0x1ebc], _irq_end_handler_FEBC, 6);	// $febc irq return sequence (e.g. used by Contact_Us_tune_2)
 		
 		_kernal_rom[0x1ffe] = 0x48;
@@ -495,6 +542,8 @@ void memRsidMain(uint16_t free_space, uint16_t *init_addr) {
 }
 
 void memResetRAM(uint8_t is_ntsc, uint8_t is_psid) {
+	if (_memory == 0) _memory = (uint8_t*) calloc(1, MEMORY_SIZE);
+		
     memset(&_memory[0], 0x0, MEMORY_SIZE);
 
 	_memory[0x0314] = 0x31;		// standard IRQ vector

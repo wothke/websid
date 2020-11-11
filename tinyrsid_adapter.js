@@ -105,13 +105,11 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 			}
 		},
 		computeAudioSamples: function() {
-			/*
-			if (typeof window.sid_measure_runs == 'undefined') {
+			if (typeof window.sid_measure_runs == 'undefined' || !window.sid_measure_runs) {
 				window.sid_measure_sum= 0;
 				window.sid_measure_runs= 0;
 			}
 			var t = performance.now();
-			*/
 //			console.profile(); // if compiled using "emcc.bat --profiling"
 			
 			this._nextFrameCB(this);	// used for "interactive mode"
@@ -124,13 +122,23 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 			this.updateDigiMeta();
 			
 //			console.profileEnd();
-			/*
 			window.sid_measure_sum+= performance.now() - t;
 			if (window.sid_measure_runs++ == 100) {
-				console.log("time; " + window.sid_measure_sum/window.sid_measure_runs);
+				window.sid_measure = window.sid_measure_sum/window.sid_measure_runs;
+				
+//				console.log("time; " + window.sid_measure_sum/window.sid_measure_runs);
 				window.sid_measure_sum = window.sid_measure_runs = 0;
+				
+				
+				if (typeof window.sid_measure_avg_runs == 'undefined' || !window.sid_measure_avg_runs) {
+					window.sid_measure_avg_sum= window.sid_measure;
+					window.sid_measure_avg_runs= 1;
+				} else {
+					window.sid_measure_avg_sum+= window.sid_measure;
+					window.sid_measure_avg_runs+= 1;
+				}
+				window.sid_measure_avg= window.sid_measure_avg_sum/window.sid_measure_avg_runs;
 			}
-			*/
 			return 0;	
 		},
 		getPathAndFilename: function(filename) {
@@ -290,6 +298,9 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 		},
 		getRAM: function(offset) {
 			return this.Module.ccall('getRAM', 'number', ['number'], [offset]);
+		},
+		setRAM: function(offset, value) {
+			this.Module.ccall('setRAM', 'number', ['number', 'number'], [offset, value]);
 		},
 		setRegisterSID: function(offset, value) {
 			this.Module.ccall('setRegisterSID', 'number', ['number', 'number'], [offset, value]);

@@ -82,7 +82,8 @@ function loadFileError(filename) {
 function updateColor(p) {
 	switch (p) {
 		case 0x05:
-			window.color= 'white';	break;
+//			window.color= 'white';	break;
+			window.color= 'black';	break;	// incorrect but better
 		case 0x1c:
 			window.color= 'red';	break;
 		case 0x1e:
@@ -121,12 +122,35 @@ function updateColor(p) {
 	return true;
 }
 
+function getCurrentColor() {
+	// it seems the tests use the directly set cursor color
+	// rather than PETSCII based color controls
+	
+	var c= backend.getRAM(0x0286) & 0xf;	
+
+	switch (c) {
+		case 0:
+			return 'black';
+		case 2:
+			return 'red';
+		default: 
+			return 'green';	// just in case some fancy colors were actually used
+	}
+}
+
+backend= new SIDBackendAdapter();
+
 window.outputPETSCII= function(c) {	// see https://www.c64-wiki.com/wiki/control_character
 
-	// unfortunately the PETSCII generated the "CIA1TAB" seems to be total garbage 
-	// and the respective cell placement is so messsed up that there is no telling 
-	// if that test succeeded or failed (in any case there does not seem to be any 
-	// attempt to use coloring - even when the emulator has been deliberately crippled..)
+	// CAUTION: it seems that some tests manually patch the cursor position held in (zeropage $d3)
+	// and a positioning exclusively based on PETSCII controls is therefore doomed (see
+	// "CIA1TAB" which shifts back 3 positions to turn a sawtooth layout into a square table)
+	
+		if (typeof backend.setRAM != 'undefined') {	// backward compatibility when testing older versions
+			window.screenx = backend.getRAM(0x00d3);	// sync
+			window.screeny = backend.getRAM(0x00d6);	// sync
+		}
+	window.color = getCurrentColor();	
 	
 	if (!updateColor(c)) {
 		if (c == 4) { 								// WTF is this supposed to do?
@@ -140,12 +164,12 @@ window.outputPETSCII= function(c) {	// see https://www.c64-wiki.com/wiki/control
 			if (window.screeny<(window.screenh-1)) window.screeny++;
 									
 		} else if (c == 145) {											// cursor up
-			if (window.screeny>0) window.screeny--;
-			if (window.screenx < (window.screenw-1)) window.screenx++;	// ??
+		
+			// tests start with return (13) + up(145) sequence !
+			if (window.screeny>0) window.screeny--;			
 			
 		} else if (c == 17) { 											// cursor down
 			if (window.screeny<(window.screenh-1)) window.screeny++;
-			if (window.screenx < (window.screenw-1)) window.screenx++;	// ??
 			
 		} else if (c == 29) {	// cursor right
 			if (window.screenx < (window.screenw-1)) window.screenx++;
@@ -178,7 +202,7 @@ window.outputPETSCII= function(c) {	// see https://www.c64-wiki.com/wiki/control
 		} else {
 			var unicode= petsciiMap[c];
 			if (unicode == 0) {
-		//		console.log ("unknown code: "+c);
+				console.log ("unknown code: "+c);
 			}
 			
 			var u= String.fromCharCode(unicode);
@@ -196,6 +220,10 @@ window.outputPETSCII= function(c) {	// see https://www.c64-wiki.com/wiki/control
 				}
 			}
 		}
+		if (typeof backend.setRAM != 'undefined') {	// backward compatibility when testing older versions
+			backend.setRAM(0x00d3, window.screenx);	// sync back
+			backend.setRAM(0x00d6, window.screeny);	// sync back (probably not needed)
+		}
 		// render all
 		
 		var content= "";
@@ -208,6 +236,8 @@ window.outputPETSCII= function(c) {	// see https://www.c64-wiki.com/wiki/control
 		}
 		document.getElementById("log").innerHTML= content;
 		
+	} else {
+	console.log("color change");
 	}
 }
 
@@ -228,13 +258,13 @@ function doOnPlayerReady() {
 }
 
 function init() {
-		
 	// --------------------------- SID music player -----------------------
 	var basePath= '';		// not needed here
-	ScriptNodePlayer.createInstance(new SIDBackendAdapter(), basePath, [], true, doOnPlayerReady,
+	ScriptNodePlayer.createInstance(backend, basePath, [], true, doOnPlayerReady,
 										doOnTrackReadyToPlay, doOnTrackEnd, function(){});
 		
 	// --------------------------- UI - basic player controls --------------
+//	var songs = [
 	var instruction_tests_passed1 = [
 		// CPU instructions
 		'/cpu/ldab',
@@ -337,8 +367,8 @@ function init() {
 		'/cpu/sedn',
 		'/cpu/clin',
 		'/cpu/sein',
-		'/cpu/clvn',
-		'/cpu/adcb',
+		'/cpu/clvn', 
+		'/cpu/adcb',	// the DEC mode logic in below adc* & sbc* tests is being disabled 
 		'/cpu/adcz',
 		'/cpu/adczx',
 		'/cpu/adca',
@@ -443,73 +473,75 @@ function init() {
 		'/cpu/axsa',
 		'/cpu/axsix',
 		'/cpu/alrb',
-		'/cpu/arrb',
-		'/cpu/aneb',
-//		'/cpu/lxab',		// absolutely pointless.. highly machine dependent
+		'/cpu/arrb',	// the DEC mode logic in below arr test is being disabled 
+//ignore		'/cpu/aneb',		// absolutely pointless.. highly machine dependent
+//ignore		'/cpu/lxab',		// absolutely pointless.. highly machine dependent
 		'/cpu/sbxb',
-		'/cpu/shaay',
-	//	'/cpu/shaiy',		// another pointless OP
-	//	'/cpu/shxay',		// another pointless OP
-	//	'/cpu/shyax',		// another pointless OP
+		'/cpu/shaay',	// slow test
+		'/cpu/shaiy',		// pointless but works as designed	
+		'/cpu/shxay',		// pointless but works as designed
+		'/cpu/shyax',		// pointless but works as designed
 		'/cpu/shsay',
 		'/cpu/ancb',
 		'/cpu/lasay',
 		'/cpu/sbcb(eb)',
-		'/cpu/trap1',
-		'/cpu/trap2',
-		'/cpu/trap3',
-		'/cpu/trap4',
-		'/cpu/trap5',
-		'/cpu/trap6',
-		'/cpu/trap7',
-		'/cpu/trap8',
-		'/cpu/trap9',
-		'/cpu/trap10',
-		'/cpu/trap11',
-		'/cpu/trap12',
-		'/cpu/trap13',
-		'/cpu/trap14',
-		'/cpu/trap15',
-		'/cpu/trap16',
-		'/cpu/trap17',
-		'/cpu/branchwrap',		
+//ignore		'/cpu/trap1',	// no idea what exact scenarios those trap tests are supposed to test
+//ignore		'/cpu/trap2',	// and unfortunately there is no meaningful doc whatsoever..
+//ignore		'/cpu/trap3',	// probably irrelevant in the WebSid context
+//ignore		'/cpu/trap4',
+//ignore		'/cpu/trap5',
+//ignore		'/cpu/trap6',
+//ignore		'/cpu/trap7',
+//ignore		'/cpu/trap8',
+//ignore		'/cpu/trap9',
+//ignore		'/cpu/trap10',
+//ignore		'/cpu/trap11',
+//ignore		'/cpu/trap12',
+//ignore		'/cpu/trap13',
+//ignore		'/cpu/trap14',
+//ignore		'/cpu/trap15',
+//ignore		'/cpu/trap16',
+//ignore		'/cpu/trap17',
+		'/cpu/branchwrap',	
 	];
 	
 	
 	var songs = [
 		// system / CIAs
 		'/cpu/mmufetch',
-//ignore		'/cpu/mmu',			// processor port is not implemented
-//ignore		'/cpu/cpuport',
 		'/cpu/cputiming',
 		'/cpu/irq',
 		'/cpu/nmi',
 		'/cpu/cia1tb123',
 		'/cpu/cia2tb123',
-//ignore		'/cpu/cia1pb6',
-//ignore		'/cpu/cia1pb7',
-//ignore		'/cpu/cia2pb6',
-//ignore		'/cpu/cia2pb7',
-
-		'/cpu/cia1tab',		// output gibberish
-//ignore		'/cpu/loadth',		// fails only since CNT is not implemented "WRITING TH WHILE STARTED MAY NOT LOAD" error is OK
-//ignore		'/cpu/cnto2',		// CNT not implemented
-		'/cpu/icr01',
+		'/cpu/icr01',		
 		'/cpu/imr',
-//ignore	'/cpu/flipos',		// relies on CNT for setup
 		'/cpu/oneshot',
-		'/cpu/cntdef',
-//ignore		'/cpu/cia1ta',		// under construction? useless without FLAG-pin interrupt impl
-//ignore		'/cpu/cia1tb',		// under construction? useless without FLAG-pin interrupt impl
-		'/cpu/cia2ta',
-		'/cpu/cia2tb',
-		
+				
+//ignore	'/cpu/mmu',			// processor port is not implemented:
+//ignore	'/cpu/cpuport',
+//ignore	'/cpu/cia1pb6',
+//ignore	'/cpu/cia1pb7',
+//ignore	'/cpu/cia2pb6',
+//ignore	'/cpu/cia2pb7',
+//ignore	'/cpu/cia1tab',		// test uses chaining but also unimplemented PB functionality
+//ignore	'/cpu/loadth',		// fails only since CNT is not implemented "WRITING TH WHILE STARTED MAY NOT LOAD" error is OK
+//ignore	'/cpu/cntdef',		// CNT not implemented - testing a default therefor makes no sense
+//ignore	'/cpu/cnto2',		// CNT not implemented
+//ignore	'/cpu/flipos',		// relies on CNT for setup
+//ignore	'/cpu/cia1ta',		// under construction? useless without FLAG-pin interrupt impl
+//ignore	'/cpu/cia1tb',		// under construction? useless without FLAG-pin interrupt impl
+//ignore	'/cpu/cia2ta',		// under construction? useless without FLAG-pin interrupt impl
+//ignore	'/cpu/cia2tb',		// under construction? useless without FLAG-pin interrupt impl
 	];
 	
 	playerControls= new BasicPlayerControls(songs, false, true,
 				(function(someSong) {
 			
 					resetScreen();
+					
+					// ********* CAUTION: the respective backend_tinyrsid.js is in htdocs_test!!!!
+					// (NOT the regular htdocs folder)
 					
 					var url= '/websid_test/tests'+someSong;
 						

@@ -226,13 +226,23 @@ R/W/M = Read/Write/Modify
 Programs IRQ and NMI - CPU interrupts within commands
 
 Tested are all commands except HLTn. For a command of n cycles, a loop with the 
-interrupt occurring before cycle 1..n is performed. Rax/Ray/Riy addressing is tested 
+interrupt occurring before cycle 1..n is performed. Rax/Ray/Riy [i.e. READ] addressing is tested 
 with both the same page and a different page. Branches are tested not taken, taken to 
 the same page, and taken to a different page.
 
 Display:
 stack  <address>  <flags on stack& $14>  <flags in handler & $14>
 right  <address>  <flags on stack& $14>  <flags in handler & $14>
+
+[Why the fuck does it seem to be too difficult to explain what the bloody display text 
+means?! WTF is "stack".. which bloody opcode has the test failed for? what "address"? Totally 
+useless explanation.. back to reverse enginieering the uncommented assembly code.. :-( 
+
+IRQ handler looks up stack to log where exactly the MAIN was interrupted, i.e. if "stack <address>"  
+is larger than "right <address> then the code was interrupted to late. 
+
+Also the tests prints a "opcode/" line e.g. "01/" before the above mentioned display lines..
+]
 
 When an interrupt occurs 2 or more cycles before the current command ends, it is 
 executed immediately after the command. Otherwise, the CPU executes the next command 
@@ -331,6 +341,12 @@ ICR 00 01 01 01 01 01 01 01 03 83 83 83
 
 If one of the registers doesn't match this table, the program displays the wrong values with red color.
 
+[NOTE: above table shows the expected values. whereas the actual test would *first* show the measured
+values and then as a second row below the respective expected values - with discrepancies colored
+red in the 1st row!
+
+For WebSid this test is unusable/irrelevant since it depends on non-implemented 
+PB related functionality.]
 
 ///////////////////////////////////////////////////////////////////////////////
 Program LOADTH - Load timer high byte
@@ -412,8 +428,11 @@ test sequence:
 2) SET IMR CLOCK 3 -> "IMR=$81 NO IRQ IN CLOCK 3"
 3) CLEAR IMR		-> "IMR=$7F MAY NOT CLEAR INT"
 
-JW: unfortunately this test does not provide isolated check on CIA registers but includes
+[JW: unfortunately this test does not provide isolated check on CIA registers but includes
 IRQ scheduling/execution - thereby mixing different problem causes.
+ISSUE: the source code in imr.asm is obviously not in sync with the prebuilt version - 
+see missing "wait border" calls.. it is not clear when those missing "improvements" might cause
+problems]
 
 => i.e. +1 cycle delay before IRQ line is activated (old 6526) and +2 cycles before IRQ
 actually triggers (letting current OP complete 1st)
@@ -470,9 +489,9 @@ CNT must be high by default. This is tested with timer B cascaded mode CRB = $61
 ///////////////////////////////////////////////////////////////////////////////
 Programs CIA1TA to CIA2TB - CIA timers in sysclock mode
 
-JW: unclear what the test was doing exactely, what it expected, and what happend..
+[JW: unclear what the test was doing exactely, what it expected, and what happend..
     FUCKING USELESS .. 1st test aready depends on FLAG-pin interrupt.. what a braindead
-	test case design for something that supposedly tests sysclock mode
+	test case design for something that supposedly tests sysclock mode]
 
 		";COMBINATIONS TESTED
 		;BEFORE
@@ -505,7 +524,7 @@ JW: unclear what the test was doing exactely, what it expected, and what happend
 		
 		=> i.e. INT at FLAG-pin is used here and the respective state does not
 		match the expectation.. no surprise when FLAG-pin has not been implemented!
-
+]
 
 
 
