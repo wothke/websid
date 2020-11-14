@@ -73,6 +73,7 @@ extern "C" {
 #include "filter.h"
 
 #define MASK_DIGI_UNUSED 0x80
+#define CENTER_SAMPLE 0x80
 
 DigiDetector::DigiDetector(SID* sid) {
 	_sid = sid;
@@ -82,7 +83,7 @@ DigiDetector::DigiDetector(SID* sid) {
 	_is_rsid = 1;
 }
 
-void DigiDetector::routeDigiSignal(Filter *filter, int32_t *digi_out,
+int8_t DigiDetector::routeDigiSignal(Filter *filter, int32_t *digi_out,
 									int32_t *outf, int32_t *outo) {
 
 	if ((_used_digi_type != DigiNone) && _digi_enabled) {
@@ -104,8 +105,10 @@ void DigiDetector::routeDigiSignal(Filter *filter, int32_t *digi_out,
 				filter->routeSignal(digi_out, outf, outo,  getSource() - 1);
 
 				(*digi_out) >>= 1;	// scale down to match D418 signals
+				return getSource() - 1;
 		}
 	}
+	return -1;
 }
 
 DigiType DigiDetector::getType() {
@@ -148,22 +151,29 @@ uint8_t DigiDetector::getSource() {
 	return _current_digi_src;
 }
 
-
 void DigiDetector::recordSample(uint8_t sample, uint8_t voice) {
-
-	// SID emu will just use the last set value; for D418 technique digis
-	// need to be less loud.. (but not for voice specific techniques)
-
+	// D418-digis need to be less loud.. (but not voice specific digis)
 	uint8_t shift = (voice == 0) ? 1 : 0;
-
-	// optimization: calc here 1x instead of recalculating it for each output sample
-	// reduced max amplitude to reduce risk of overflows (see Batman-Mix.sid)
-
-	_current_digi_sample = (((int32_t)sample) * 0x101 - 0x8000) >> shift;
+	_current_digi_sample = ((int32_t)sample * 0x101 - 0x8000) >> shift;
 
 	_current_digi_src = voice;
-
 	_digi_count++;
+
+	// FIXME: it seems plausible to presume that updates done somewhere within
+	// the interval of the current audio sample will lead to some kind
+	// of aliasing, i.e. if the signal was "correctly" sampled every cycle
+	// then the average across the sample should be different from the "last
+	// written" value (which is currently used above).
+
+	// however there probably are additional electronic component effects,
+	// which I am currently not handling at all and which should play a
+	// role here as well (e.g. ramp-up/down / delay for signal changes)
+
+	// status: an attempt to improve audio quality by simply interpolating the
+	// value of the next rendered sample (by using the relative timing of the
+	// update with regard to the sample's duration - see _sample_cycles in
+	// core.cpp) failed spectacularly and added obvious distortions;
+	// testcase: MyLife.sid
 }
 
 uint8_t _use_non_nmi_D418 = 1;
@@ -235,23 +245,41 @@ uint8_t DigiDetector::isWithinFreqDetectTimeout(uint8_t voice) {
 	return (sysCycles() - _freq_detect_ts[voice]) < TB_TIMEOUT;
 }
 
+// test cases: Synthesis.sid, Soundcheck.sid
+
+// regular voice output should be disabled during sample playback:
+// the problem is best observed visually by looking at the respective
+// voice output and comparing it to the "raw" digi track (i.e.
+// the samples written by the digi player): while the digi-signal
+// is relatively fine grained, the voice output follows that signal
+// only in rather coarse steps (i.e. loosing information as well as
+// adding aliasing effects). The lack of oversampling in this
+// particular scenario leads to a very incorrect triangle signal
+// output. Though it might be that the written digi signal is still
+// expected to be somewhat distorted by the real hardware, it is
+// certainly preferable to use it directly rather than the even
+// more flawed voice output.
+
+// issue: some songs need the same voice for regular output at a
+// later stage (Storebror.sid) or even intermingled with digi (Synthesis.sid).
+
 uint8_t DigiDetector::recordFreqSample(uint8_t voice, uint8_t sample) {
-	if(assertSameSource(voice + 1)) recordSample(sample, voice + 1);
+	if(assertSameSource(voice + 1))  {
+		recordSample(sample, voice + 1);
 
-	// reset those SID regs before envelope generator does any damage.
-	// no longer needed with the cycle-emu.. causes problems: Synthesis.sid
-//	_sid->poke(voice * 7 + 4, 0);	// GATE
-//	_sid->poke(voice * 7 + 1, 0);	// freq HI
+		_freq_detect_state[voice] = FreqIdle;
+		_freq_detect_ts[voice] = 0;
 
-	_freq_detect_state[voice] = FreqIdle;
-	_freq_detect_ts[voice] = 0;
+		_used_digi_type = DigiFM;
 
-	// test-case: Storebror.sid (same voice is later used for regular output)
-	_fm_count++;
-	_sid->setMute(voice, 1);
+		// test-case: Storebror.sid (same voice is later used for regular output)
+		// test-case: Synthesis.sid (makes other settings on voice during digi-playback)
+		_fm_count++;
+		_sid->setMute(voice, 1);
 
-	_used_digi_type = DigiFM;
-	return 1;
+		return 1;
+	}
+	return 0;
 }
 
 uint8_t DigiDetector::handleFreqModulationDigi(uint8_t voice, uint8_t reg, uint8_t value) {
@@ -270,7 +298,7 @@ uint8_t DigiDetector::handleFreqModulationDigi(uint8_t voice, uint8_t reg, uint8
 	if (reg == 4) {	// waveform
 		value &= 0x19;	// mask all excess bits..
 		switch (value) {
-			case 0x11:	// triangle/GATE
+			case 0x11:	// triangle/GATE (this should always be the 1st step!)
 				// reset statemachine
 				_freq_detect_state[voice] = FreqPrep;	// may be start of a digi playback
 				_freq_detect_ts[voice] = sysCycles();
@@ -279,7 +307,7 @@ uint8_t DigiDetector::handleFreqModulationDigi(uint8_t voice, uint8_t reg, uint8
 			case 0x9:	// TEST/GATE
 				if ((_freq_detect_state[voice] == FreqPrep) && isWithinFreqDetectTimeout(voice)) {
 					_freq_detect_state[voice] = FreqSet;	// we are getting closer
-					_freq_detect_ts[voice] = sysCycles();
+		//XXX			_freq_detect_ts[voice] = sysCycles();
 				} else {
 					_freq_detect_state[voice] = FreqIdle;	// just to reduce future comparisons
 				}
@@ -288,7 +316,7 @@ uint8_t DigiDetector::handleFreqModulationDigi(uint8_t voice, uint8_t reg, uint8
 				if ((_freq_detect_state[voice] == FreqSet) && isWithinFreqDetectTimeout(voice)) {
 					// variant 1: sample set after GATE
 					_freq_detect_state[voice] = FreqVariant1;	// bring on that sample!
-					_freq_detect_ts[voice] = sysCycles();
+		//XXX			_freq_detect_ts[voice] = sysCycles();
 				} else if ((_freq_detect_state[voice] == FreqVariant2) && isWithinFreqDetectTimeout(voice)) {
 					// variant 2: sample set before GATE
 					return recordFreqSample(voice, _freq_detect_delayed_sample[voice]);
@@ -656,11 +684,26 @@ int32_t DigiDetector::genPsidSample(int32_t sample_in)
     return sample_in;
 }
 
+uint8_t _slow_down = 1;
 void DigiDetector::resetCount() {
+	_slow_down = !_slow_down;
+	if (_slow_down) {
+		// FIXME reminder: the below "resetting" hack may lead to clicking noises in
+		// respective songs and it should best be eliminated..
+		// test-cases: Banditti_2SID.sid
+
+		return;
+	}
 
 	if (_used_digi_type == DigiFM) {
 		if (!_fm_count) {
 			// test-case: Storebror.sid => switches back to other digi technique
+
+			// note: the temporary absence of detected FM digis is NOT a valid
+			// detection criteria for a regular use of the voice (the digi might
+			// just be temporarily suspended).. but it seems to be good enough for now
+
+			// testcase: Soundcheck.sid => sporadic blip due to "un-mute"
 			_sid->setMute(0, 0);
 			_sid->setMute(1, 0);
 			_sid->setMute(2, 0);
@@ -722,7 +765,8 @@ void DigiDetector::reset(uint32_t clock_rate, uint8_t is_rsid, uint8_t is_compat
 		_swallow_pwm[i] = 0;
 	}
 
-	_current_digi_sample = 0x80;	// center
+	_current_digi_sample = CENTER_SAMPLE * 0x101 - 0x8000;
+
 	_current_digi_src = 0;
 
 	_used_digi_type = DigiNone;
@@ -750,11 +794,22 @@ uint8_t DigiDetector::getD418Sample( uint8_t value) {
 	depended on the offset alone, where barely audible on newer SID models)
 	*/
 
+	if (_used_digi_type == DigiMahoneyD418) {
+		// better turn those voices back on
+		_sid->setMute(0, 0);
+		_sid->setMute(1, 0);
+		_sid->setMute(2, 0);
+	}
+
 	_used_digi_type = DigiD418;
 
 	return (value & 0xf) * 0x11;
 }
 
+// CAUTION: use of READ-MODIFY-WRITE OPs could mess up the detection since
+// same register is written 2x within same cycle (correctly the writes would
+// be sequential but that hasn't been implemented - testcase Soundcheck.sid
+// which used SAX to write WF register)
 uint8_t DigiDetector::detectSample(uint16_t addr, uint8_t value) {
 	if (SID::isExtMultiSidMode()) return 0;	// optimization for multi-SID
 

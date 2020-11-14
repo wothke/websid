@@ -486,16 +486,7 @@ void SID::synthSample(int16_t* buffer, int16_t** synth_trace_bufs, uint32_t offs
 		
 		if (wave_gen->isMuted() || _filter->isSilencedVoice3(voice_idx)) {
 			// mute voice while still using SID model specific "base voltage"
-			voice_out = (*scale) * ( 0xff * (0 + _wf_zero) + _dac_offset);
-			
-			if (_digi->isMahoneyDigi()) {	// expensive check should not hurt here
-				// filter would add a distortion that should better be avoided
-
-				// todo: check if the respective signal routing could always be
-				// removed when voice is muted - testcase? (keep for now to avoid extensive retesting)
-			} else {
-				_filter->routeSignal(&voice_out, &outf, &outo, voice_idx);	// route to either the non-filtered or filtered channel
-			}
+			voice_out = 0;
 		} else {
 			uint8_t env_out = _env_generators[voice_idx]->getOutput();
 			int32_t outv = wave_gen->getOutput();	// at this point an unsigned 16-bit value (see Hermit's impl)
@@ -520,19 +511,32 @@ void SID::synthSample(int16_t* buffer, int16_t** synth_trace_bufs, uint32_t offs
 			// checks here
 			int16_t *voice_trace_buffer = synth_trace_bufs[voice_idx];
 
-			int32_t o = 0, f = 0;	// isolated from other voices
-			uint8_t is_filtered = _filter->routeSignal(&voice_out, &f, &o, voice_idx);	// redundant.. see above
-			
-			*(voice_trace_buffer + offset)= (int16_t)_filter->simOutput(voice_idx, is_filtered, &f, &o);
+			if(wave_gen->isMuted()) {
+				// never filter
+				*(voice_trace_buffer + offset) = voice_out;
+			} else {
+				int32_t o = 0, f = 0;	// isolated from other voices
+				uint8_t is_filtered = _filter->routeSignal(&voice_out, &f, &o, voice_idx);	// redundant.. see above
+				
+				*(voice_trace_buffer + offset) = (int16_t)_filter->simOutput(voice_idx, is_filtered, &f, &o);
+			}			
 		}
 	}
 
 	int32_t digi_out = 0;
-	_digi->routeDigiSignal(_filter, &digi_out, &outf, &outo);
+	int8_t dvoice_idx = _digi->routeDigiSignal(_filter, &digi_out, &outf, &outo);
 	
 	if (synth_trace_bufs) {
 		int16_t *voice_trace_buffer = synth_trace_bufs[3];	// digi track
-		*(voice_trace_buffer + offset) = digi_out;			// save the trouble of filtering
+		if (dvoice_idx == -1) {
+			// non-filterable digi approach
+			*(voice_trace_buffer + offset) = digi_out;			// save the trouble of filtering
+		} else {
+			// digi approach based on a filterable voice (that voice should be muted, i.e. can use its simOutput) 
+			int32_t o = 0, f = 0;	// isolated from other voices
+			uint8_t is_filtered = _filter->routeSignal(&digi_out, &f, &o, dvoice_idx);	// redundant.. see above
+			*(voice_trace_buffer + offset) = (int16_t)_filter->simOutput(dvoice_idx, is_filtered, &f, &o);
+		}
 	}
 	
 	int32_t final_sample = _filter->getOutput(&outf, &outo, _cycles_per_sample);	// note: external filter is included here

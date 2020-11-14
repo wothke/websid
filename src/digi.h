@@ -64,7 +64,7 @@ protected:
 	* @param outf	filtered output that digi_out is added to if necessary
 	* @param outo	unfiltered output that digi_out is added to if necessary
 	*/
-	void routeDigiSignal(class Filter* filter, int32_t* digi_out, int32_t* outf, int32_t* outo);
+	int8_t routeDigiSignal(class Filter* filter, int32_t* digi_out, int32_t* outf, int32_t* outo);
 	
 	// diagnostics
 	DigiType getType();
