@@ -61,7 +61,7 @@ static uint8_t (*_stunFunc)(uint8_t x, uint16_t y, uint8_t cpr);
 // default impl
 static uint8_t intBadlineStun(uint8_t x, uint16_t y, uint8_t cpr) {
 	if (_badline_den) {	
-		// optimization?: the _y-pos and "& 0x7" checks could be cached
+		// FIXME optimization?: the _y-pos and "& 0x7" checks could be cached
 		// - avoiding re-checks on each cycle - but at a cost for the 
 		// vicClock() logic; better keep the extra cost limited to 
 		// those few songs that use it
@@ -94,7 +94,7 @@ void vicSetModel(uint8_t ntsc_mode) {
 	// emulation only supports new PAL & NTSC model (none of 
 	// the special models)
 		
-	_x = _y = 0;
+//	_x = _y = 0; redundant see below
 	
 	// note: clocking is derived from the targetted video standard.
 	// 14.31818MHz (NTSC) respectively of 17.734475MHz (PAL) -
@@ -263,12 +263,7 @@ static void writeD019(uint8_t value) {
 	
 	// test-case: some songs only clear the "RASTER" but not the "IRQ"
 	// flag (e.g. Ozone.sid)
-	
-	// BUG: Utopia_tune_6.sid uses the same ACKN as Ozone.sid but it
-	// "expects" the IRQ to be immediately retriggered.. what's the
-	// difference in this long running IRQ handler? XXX some special
-	// case does not seem to be handled correctly yet!
-	
+		
 	uint8_t v =  memReadIO(0xd019);
 	v = v & (~value);					// clear (source) flags directly
 	
