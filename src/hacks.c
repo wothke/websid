@@ -35,6 +35,12 @@ static void patchImmigrantSongIfNeeded(uint16_t init_addr) {
 /*
 * Thats_All_Folks.sid: still some problem with nested IRQs
 * (todo: emu should be able to cope with this)
+*
+* It seems that even with the latest IRQ timing fixes (which finally
+* make all of Lorenz's tests happy) there still is an issue with this
+* song left that needs to be investigated (song uses SEI,CLI.. PLP sequences
+* that probably fail since no special handling has yet been implemented
+* for CLI and PLP...).
 */
 static void patchThatsAllFolksIfNeeded(uint16_t init_addr) {
 	if ((init_addr == 0x4800) && (memReadRAM(0x4806)==0x48)) {	
