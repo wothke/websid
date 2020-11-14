@@ -678,17 +678,23 @@ uint32_t SidFileLoader::load(uint8_t* input_file_buffer, uint32_t in_buf_size, c
 	
 	memResetKernelROM((uint8_t*)kernal_ROM);
 	
-	setRsidMode((input_file_buffer[0x00] != 0x50) ? 1 : 0);
-	
-	// dummy env that still may be overridden by hard RESET used for BASIC progs
-	memResetRAM(FileLoader::getNTSCMode(), !FileLoader::isRSID());	
-	
+	uint8_t is_rsid = (input_file_buffer[0x00] != 0x50) ? 1 : 0;
+	setRsidMode(is_rsid);
+		
 	_sid_file_version = input_file_buffer[0x05];
 			
 	uint16_t flags = (_sid_file_version > 1) ? 
 					(((uint16_t)input_file_buffer[0x77]) | (((uint16_t)input_file_buffer[0x77]) << 8)) : 0x0;
-			
-	_basic_prog= (FileLoader::isRSID() && (flags & 0x2));	// a C64 BASIC program needs to be started..
+
+	uint8_t ntsc_mode = (_sid_file_version >= 2) && (flags & 0x8); // NTSC bit
+	FileLoader::setNTSCMode(ntsc_mode);
+	
+	_compatibility = ( (_sid_file_version & 0x2) &&  ((flags & 0x2) == 0));
+
+	// dummy env that still may be overridden by hard RESET used for BASIC progs
+	memResetRAM(ntsc_mode, !is_rsid);	
+	
+	_basic_prog= (is_rsid && (flags & 0x2));	// a C64 BASIC program needs to be started..
 
 	if (_basic_prog) {
 		// only  needed for BASIC progs
@@ -699,10 +705,7 @@ uint32_t SidFileLoader::load(uint8_t* input_file_buffer, uint32_t in_buf_size, c
 		}
 	}
 	
-	if (FileLoader::isRSID()) memResetCharROM((uint8_t *)char_ROM);
-
-	_compatibility = ( (_sid_file_version & 0x2) &&  ((flags & 0x2) == 0));
-	uint8_t ntsc_mode = (_sid_file_version >= 2) && (flags & 0x8); // NTSC bit
+	if (is_rsid) memResetCharROM((uint8_t *)char_ROM);
 	
 	FileLoader::configureSids(flags, &(input_file_buffer[0x7a]));
 				
@@ -721,8 +724,6 @@ uint32_t SidFileLoader::load(uint8_t* input_file_buffer, uint32_t in_buf_size, c
 	
 	if (_basic_prog) startFromBasic(&_init_addr, basic_ROM && kernal_ROM, load_size);
 	
-	// global settings that depend on the loaded music file
-	FileLoader::setNTSCMode(ntsc_mode);
 	
 	storeFileInfo();
 	return 0;
