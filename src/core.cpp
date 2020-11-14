@@ -36,12 +36,9 @@ extern "C" {
 
 #include <emscripten.h>
 
-//#define TIMING_TRACE
-
 // the clocks used in the emulation do not usually match the used audio
 // output sample rate and fractional overflows are handled here:
 static double _sample_cycles;
-
 
 static void resetDefaults(uint32_t sample_rate, uint8_t is_rsid, 
 							uint8_t is_ntsc, uint8_t is_compatible) {
@@ -122,9 +119,6 @@ void runEmulation(uint8_t is_simple_sid_mode, int16_t* synth_buffer,
 	
 	double scale = SID::getScale();	// avoid recalc within loop
 
-#ifdef TIMING_TRACE
-	EM_ASM_({ window['start'] = performance.now(); });
-#endif	
 	if (is_simple_sid_mode) {
 		for (int i= 0; i<samples_per_call; i++) {
 			while(_sample_cycles < n) {
@@ -150,21 +144,6 @@ void runEmulation(uint8_t is_simple_sid_mode, int16_t* synth_buffer,
 			SID::synthSampleStripped(synth_buffer, synth_trace_bufs, &scale, i);
 		}
 	}
-#ifdef TIMING_TRACE
-	EM_ASM_({ 
-		window['start'] = performance.now() - window['start'];
-		if (typeof window['count'] == 'undefined') { window['count'] = 0; window['sum'] = 0; }
-		
-		window['sum'] += window['start'];
-		window['count'] += 1;
-		
-		if (window['count'] == 1000) {
-			console.log("t: " + window['sum'] / 1000);
-			 window['count'] = 0; 
-			 window['sum'] = 0;
-		}			
-	});
-#endif
 }
 
 uint8_t Core::runOneFrame(uint8_t is_simple_sid_mode, uint8_t speed, int16_t* synth_buffer, 
