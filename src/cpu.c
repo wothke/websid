@@ -25,6 +25,10 @@
 *    be correctly modeled for all special cases.
 *  - flag handling in BCD mode is not implemented (see
 *    http://www.oxyron.de/html/opcodes02.html)
+*  - unhandled: "When an NMI occurs before clock 4 of a BRKn command, the BRK is
+*    finished as a NMI. In this case, BFlag on the stack will not be cleared."
+*  - BRK instruction handling is not implemented and a BRK is considered to be 
+*    a non-recoverable error
 *
 *
 * HW clock timing info:
@@ -120,23 +124,35 @@ static uint8_t _s; 				// stack pointer
 
 #define FLAG_N 128
 #define FLAG_V 64
-#define FLAG_B1 32
-#define FLAG_B0 16
+#define FLAG_B1 32	// unused
+#define FLAG_B0 16	// Break Command Flag
 #define FLAG_D 8
 #define FLAG_I 4
 #define FLAG_Z 2
 #define FLAG_C 1
 
-static uint8_t _p;				// status register (see above flags)
+static uint8_t _p;					// status register (see above flags)
+static uint8_t _no_flag_i;
 
 #define IRQ_LEAD_DEFAULT 2
 
-// compiler used by EMSCRIPTEN is actually too dumb to even use
-// "inline" for the below local function!
+// compiler used by EMSCRIPTEN is actually too dumb to even properly use
+// "inline" for the below local function (using macros as a workaround now)!
 
+// CAUTION: do NOT use this for FLAG_I - use SETFLAG_I below!
 #define SETFLAGS(flag, cond) \
     if (cond) _p |= (int32_t)flag;\
     else _p &= ~(int32_t)flag;
+
+#define SETFLAG_I(cond) \
+    if (cond) { \
+		_no_flag_i = 0; /* better cache this since checked every cycle */\
+		_p |= (int32_t)FLAG_I;\
+    } else {  \
+		_no_flag_i = 1; \
+		_p &= ~(int32_t)FLAG_I; \
+	}
+
 
 
 // ---- interrupt handling ---
@@ -157,22 +173,11 @@ static uint8_t _p;				// status register (see above flags)
 // of the branch command; the normal rule says before clock 2. Branches to a
 // different page or branches not taken are behaving normal."
 
-
 // line "detectors" run in ø2 phase and activate the respective internal
 // signal in next ø1, i.e. the next system clock cycle.
-static uint8_t _interrupt_lead_time = IRQ_LEAD_DEFAULT;
 
-
-// ---- CIA handling ---
-static uint8_t _irq_committed = 0;	// CPU is committed to running the IRQ
-static uint32_t _irq_line_ts = 0;
-
-// #define TRACE_IRQ_TIMING
-
-#ifdef TRACE_IRQ_TIMING
-uint32_t _irq_start;
-#endif
-
+// => like so many docs the above claim is closer to the truth but still
+// incomplete. There are more special cases involving the FLAG_I...
 
 // how the 6502's pipline affects the handling of the I-flag:
 
@@ -191,54 +196,106 @@ uint32_t _irq_start;
 // the IRQ handler."
 
 // as long as the IRQ line stays active new IRQ will trigger as soon
-// as the I-flag is cleared .. let's presume that the I-flag masking
-// is done initially and once committed it will no longer matter
-// (like in the NMI case)
+// as the I-flag is cleared ..
+
+// Note on interrupt handling (see http://6502.org/tutorials/interrupts.html):
+// an interrupt triggers a 7-clock cycles "virtual OP". An interrupt allows
+// the previous OP to complete (it seems reasonable to presume that BRK uses
+// the exact same sequence - and JSR does the same just without pushing the
+// processor status):
+//					2 cycles internal
+//					1 cycle push stack: return addr-hi
+//					1 cycle push stack: return addr-lo
+//					1 cycle push stack: processor status regigster
+//				=> BTW: these are the max. 3 consecutive writes that may
+//                  occur on a 6502 (see badline handling) - whereas for
+//                  the other OPs (except JSR) the writes seem to be at the
+//                  end of the OP they are in the middle here..
+//					1 cycle pc-lo: get vector
+//					1 cycle pc-hi: get vector
 
 
-// test-case: Humphrey_Bogart.sid, Monster_Museum.sid
 
-// IRQ will still trigger during 1st cycle of an SEI but be blocked during 2nd
-// (_exe_instr_opcode is the previous - if completed - or the currently executed
-// op-code. this SEI_OP check is flawed since FLAG_I might already have been set
-// before the sei operation)
-#define EXECUTING_SEI_LAST_CYCLE \
-	((_exe_instr_opcode == SEI_OP ) && (_exe_instr_cycles_remain == 1))
-
-// open issue: there should be special handling for RTI as well (i.e. RTI clears the FLAG_I
-// early enough so that new IRQ triggered during RTI will be executed directly after the RTI.)
-// however.. the test suite does not complain and an attempt to add respective logic has
-// made things worse.. I must be overlooking something..
-// used rule: FLAG_I must not be set - except if it's been set by a SEI no longer than 1 cycle ago..
-#define CHECK_FOR_IRQ() \
-	if ( ( (!(_p & FLAG_I)) && !EXECUTING_SEI_LAST_CYCLE ) \
-			&& (vicIRQ() || ciaIRQ()) ) { \
-		/* test-case: Vicious_SID_2-Escos (needs FLAG_I check)*/ \
-	 \
-		if (!_irq_line_ts) { \
-			_irq_committed = 1;			/* there is no way back now */ \
-			_irq_line_ts = sysCycles();	/* ts when line was activated */ \
-		} \
-	} else { \
-		if (!_irq_committed) _irq_line_ts = 0;	/* IRQ flag really relevant here? (see mandatory check in IS_IRQ_PENDING()) */ \
-	}
-
+// ---- IRQ handling ---
 
 // relevant test suites: "irq", "imr"
-// test-cases: Vaakataso.sid, Vicious_SID_2-Carmina_Burana.sid
-//            depend on the FLAG_I re-test!
+// test-case: Humphrey_Bogart.sid, Monster_Museum.sid, Double_Falcon.sid,
+// (use SEI in the IRQ handler after the flag already had been set)
+// Vaakataso.sid, Vicious_SID_2-Carmina_Burana.sid
 
-// default: require regular lead-time except in special case "sei"
-// this check is done at beginning of new cycle after previous op has
-// been completed (i.e. _exe_instr_opcode has been reset)
-#define AFTER_SEI \
-	(_opc == SEI_OP)
+
+static uint8_t _interrupt_lead_time = IRQ_LEAD_DEFAULT;
+
+static uint8_t _irq_committed = 0;	// CPU is committed to running the IRQ
+static uint32_t _irq_line_ts = 0;
+
+// required special handling for SEI operation: on the real hardware the operation
+// would block interrupts in its 2nd cycle but not the 1st. And due the special
+// sequence of "check 1st then update flag" an IRQ that slips through the SEI
+// will even benefit from a shorter 1 cycle lead time, i.e. the IRQ will trigger
+// immediately after SEI has completed.
+
+// the special SEI handling here is divided into two parts: 1) the FLAG_I will be
+// set immediately during the "prefetch" of the SEI operation. 2) the
+// below code then compensates to handle the special scenarios correctly.
+
+// note: the SEI_OP below can only show up in its 2nd cycle due to the way the
+// CHECK_FOR_IRQ() is currently performed at the start of each cycle (during the
+// 1st cycle _exe_instr_opcode will not yet be set when the check is done.. the
+// sei operation is selected after the check and will implicitly
+// complete its 1st step during that cycle.. )
+
+typedef enum {
+	BLOCKED = 0,
+	POTENTIAL_SLIP = 1,
+	SLIPPED_SEI = 2
+} slip_status_t;
+
+slip_status_t _slip_status;
+
+#define COMMIT_TO_IRQ() \
+	if (!_irq_line_ts) { \
+		_irq_committed = 1;	/* there will be an IRQ.. but will another op be run 1st? */ \
+		_irq_line_ts = SYS_CYCLES();	/* ts when line was activated */ \
+	}
+
+// FIXME correctly the IRQ check should be performed 1x, at the right moment, within each
+// executed command! i.e. the number of checks could be reduced by a factor of 2-4! also
+// that would avoid having to do post mortem analysis of what may or may not have happened
+// before - hence avoiding all the delay calculations used below... it would also automatically
+// handle the case of a stunned CPU
+
+// note: on the real HW the respective check happends in ø2 phase of the previous CPU cycle
+// and the respective internal interrupt signal then goes high in the ø1 phase after (the
+// potential problem of the below impl is that by performing the test here, it might
+// incorrectly pick up some CIA change that has just happend in the ø1 phase)
+
+#define CHECK_FOR_IRQ() \
+	if ( vicIRQ() || ciaIRQ()) { \
+		if (_no_flag_i) { /* this will also let pass the 1st cycle of a SEI */\
+			COMMIT_TO_IRQ(); \
+		} else if (_exe_instr_opcode == SEI_OP) { \
+			/* the IRQ may already have been commited during the 1st cycle of the SEI,
+			but this was done without knowledge of the corresponding reduced lead time
+			which must be corrected here */\
+			if (_irq_committed && (SYS_CYCLES() - _irq_line_ts == 1)) { \
+				_slip_status = SLIPPED_SEI; \
+				_interrupt_lead_time = 1; \
+			} \
+			if (!_irq_committed) _irq_line_ts = 0; \
+		} else if (!_irq_committed) _irq_line_ts = 0; \
+	} else if (!_irq_committed) _irq_line_ts = 0;
+
+
+
+// The below check is done at beginning of new cycle after previous op has
+// been completed (i.e. _exe_instr_opcode has already been reset)
 
 #define IS_IRQ_PENDING() \
 	(_irq_committed ?  \
-		( AFTER_SEI && ((sysCycles() - _irq_line_ts) >= 1) ) || \
-			( !(_p & FLAG_I) && ((sysCycles() - _irq_line_ts) >= _interrupt_lead_time) )  \
-		: 0) // test-case: "IMR"
+		( (_no_flag_i || (_slip_status == SLIPPED_SEI)) \
+			&& ((SYS_CYCLES() - _irq_line_ts) >= _interrupt_lead_time) )  \
+		: 0)
 
 
 	// ---- NMI handling ---
@@ -266,7 +323,7 @@ static uint32_t _nmi_line_ts = 0;		// for scheduling
 		if (!_nmi_line) { \
 			_nmi_committed = 1;			/* there is no way back now */ \
 			_nmi_line = 1;				/* using 1 to model HW line "low" signal */ \
-			_nmi_line_ts = sysCycles(); \
+			_nmi_line_ts = SYS_CYCLES(); \
 			 \
 			/* "If both an NMI and an IRQ are pending at the end of an \
 			   instruction, the NMI will be handled and the pending \
@@ -288,7 +345,7 @@ static uint32_t _nmi_line_ts = 0;		// for scheduling
 	}
 
 #define IS_NMI_PENDING()\
-	(_nmi_committed ? (sysCycles() - _nmi_line_ts) >= _interrupt_lead_time : 0)
+	(_nmi_committed ? (SYS_CYCLES() - _nmi_line_ts) >= _interrupt_lead_time : 0)
 
 
 uint8_t cpuIsValidPcPSID() {
@@ -426,8 +483,48 @@ static const int32_t _opbase_write_cycle[256] = {
 	0,0,0,7,0,0,5,5,0,0,0,6,0,0,6,6
 };
 
+// The real CPU would perform different steps of an operation in each
+// clock cycle. The timing of the respective intra operation steps is
+// NOT handled accurately in this emulation but instead everything is
+// just updated in one cycle. For most practical purposes this should
+// not be a problem: Ops run atomically and nobody else can (for example)
+// look at the stack to notice that it should already have been
+// updated some cycles earlier. However there is one exception: The
+// Flag_I is relevant for the precise timing of what may or may not
+// happen directly after the current operation. If an operation clears
+// the flag some cycles before its end then this may allow an interrupt
+// to be handled immediately after the operation has completed - but if
+// this clearing is delayed then that interrupt will also be incorrectly
+// delayed.
+
+// The below trigger serves as a "poor man's" workaround here and allows
+// to control the cycle at which the updates are performed for each
+// operation (i.e. how many cycles before its end the updates should be
+// performed) CAUTION: only works ops woth more than 2 cycles and the
+// 1. cycle cannot be addressed here (due to where the test is performed).
+static const int32_t _opbase_write_trigger[256] = {
+	0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,	// irq call
+	0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,	// nmi call
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+	2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,	// rti
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,	// sei's "check IRQ then update Flag_I" requires special handling (not here)
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+};
+
 
 // gets hi-byte of addr; used for some obscure illegal ops
+// CAUTION: This must be called before processing the additional
+// op bytes, i.e. before the _pc has been incremented!
 static uint8_t getH1(const int32_t *mode) {
     static uint16_t ad;  // avoid reallocation
     switch(*mode) {
@@ -506,6 +603,46 @@ static uint8_t getInput(const int32_t *mode) {
     return 0;
 }
 
+// perf opt: todo validate effect (based on copy of setOutput)
+static int32_t getOutputAddr(const int32_t *mode) {
+    static uint16_t ad;  // avoid reallocation
+    switch(*mode) {
+        case acc:
+            return -1;
+        case abs:
+            ad = memGet(_pc - 2) | (memGet(_pc - 1) << 8);
+            return ad;
+        case abx:
+            ad = (memGet(_pc - 2) | (memGet(_pc - 1) << 8)) + _x;
+            return ad;
+        case aby:
+            ad = (memGet(_pc - 2) | (memGet(_pc - 1) << 8)) + _y;
+            return ad;
+        case zpg:
+            ad = memGet(_pc - 1);
+            return ad;
+        case zpx:
+            ad = memGet(_pc - 1) + _x;
+			ad &= 0xff;
+            return ad;
+        case zpy:
+            ad = memGet(_pc - 1) + _y;
+			ad &= 0xff;
+            return ad;
+        case idx:
+			// indexed indirect, e.g. LDA ($10,X)
+            ad = memGet(_pc - 1) + _x;
+            ad = memGet(ad & 0xff) | (memGet((ad + 1) & 0xff) << 8);
+            return ad;
+        case idy:
+			// indirect indexed, e.g. LDA ($20),Y
+            ad = memGet(_pc - 1);
+            ad = (memGet(ad) | (memGet((ad + 1) & 0xff) << 8)) + _y;
+            return ad;
+    }
+    return -2;
+}
+
 static void setOutput(const int32_t *mode, uint8_t val) {
 	// note: only used after "getInput", i.e. the _pc
 	// is already pointing to the next command
@@ -558,8 +695,8 @@ static void setOutput(const int32_t *mode, uint8_t val) {
 
 
 #define ABS_INDEXED_ADDR(ad, ad2, reg) \
-	ad = memGet((*pc)++); \
-	ad |= memGet((*pc)++) <<8; \
+	ad = memGet((*pc)); \
+	ad |= memGet((*pc) + 1) <<8; \
 	ad2 = ad + reg
 
 #define CHECK_BOUNDARY_CROSSED(ad, ad2) \
@@ -568,13 +705,13 @@ static void setOutput(const int32_t *mode, uint8_t val) {
 	}
 
 #define INDIRECT_INDEXED_ADDR(ad, ad2) \
-	ad = memGet((*pc)++); \
+	ad = memGet((*pc)); \
 	ad2 = memGet(ad); \
 	ad2 |= memGet((ad + 1) & 0xff) << 8; \
 	ad = ad2 + _y;
 
 
-static uint8_t adjustPageBoundaryCrossing(uint16_t* pc, int32_t mode) {
+static uint8_t adjustPageBoundaryCrossing(const uint16_t* pc, int32_t mode) {
 
 	// only relevant/called in abx/aby/idy mode and depending
 	// on the operation some of these modes may not exist, e.g.
@@ -604,15 +741,15 @@ static uint8_t adjustPageBoundaryCrossing(uint16_t* pc, int32_t mode) {
 	return adjustment;
 }
 
-static uint8_t adjustBranchTaken(uint16_t* pc, uint8_t opc, uint8_t* lead_time) {
+static uint8_t adjustBranchTaken(const uint16_t* pc, uint8_t opc, uint8_t* lead_time) {
 	static uint16_t wval;	// avoid reallocation
 
-    int8_t dist = (int8_t)memGet((*pc)++);	// like getInput(opc, imm)
-    wval = (*pc) + dist;
+    int8_t dist = (int8_t)memGet((*pc));	// like getInput(opc, imm)
+    wval = ((*pc) + 1) + dist;
 
 	// + 1 cycle if branches to same page
 	// + 2 cycles if branches to different page
-	uint8_t adjustment = (((*pc) & 0x100) != (wval & 0x100)) ? 2 : 1;
+	uint8_t adjustment = ((((*pc) + 1) & 0x100) != (wval & 0x100)) ? 2 : 1;
 
 	// special case IRQ lead time.. (applies only when on same page)
 	if (adjustment == 1) {
@@ -621,16 +758,24 @@ static uint8_t adjustBranchTaken(uint16_t* pc, uint8_t opc, uint8_t* lead_time) 
 	return adjustment;
 }
 
-// determine next operation with its duration and interrupt lead time
-static void prefetchOperation( int16_t* opcode, int8_t* cycles, uint8_t* lead_time) {
+#define INIT_OP(opc, dest_opcode, dest_cycles, dest_lead_time, dest_trigger) \
+	(dest_opcode) = opc; \
+	(dest_cycles) = _opbase_frame_cycles[opc]; \
+	(dest_lead_time) = IRQ_LEAD_DEFAULT;	\
+	(dest_trigger) = _opbase_write_trigger[opc];
 
-	uint16_t pc = _pc;
-    uint8_t opc = memGet(pc++);
+
+// determine next operation with its duration and interrupt lead time
+static void prefetchOperation( int16_t* opcode, int8_t* cycles, uint8_t* lead_time, uint8_t* trigger) {
+
+    uint8_t opc = memGet(_pc++);	// no need to skip this same byte again later
+
+	// NOTE: prefetch must leave the _pc pointing to the 1st byte after the opcode!
+	// i.e. the below code MUST NOT update the _pc!
+
     int32_t mode = _modes[opc];
 
-	(*opcode) = opc;
-	(*cycles) = _opbase_frame_cycles[opc];	// get base cycles
-	(*lead_time) = IRQ_LEAD_DEFAULT;		// default
+	INIT_OP(opc, (*opcode), (*cycles), (*lead_time), (*trigger));
 
 	// calc adjustments
 	switch (_mnemonics[opc]) {
@@ -656,38 +801,49 @@ static void prefetchOperation( int16_t* opcode, int8_t* cycles, uint8_t* lead_ti
 		case nop:	// see 2: only abx exits
         case ora:
 		case sbc:
-			(*cycles) += adjustPageBoundaryCrossing(&pc, mode);
+			(*cycles) += adjustPageBoundaryCrossing(&_pc, mode);
             break;
 
         case bcc:
-            if (!(_p & FLAG_C)) (*cycles) += adjustBranchTaken(&pc, opc, lead_time);
+            if (!(_p & FLAG_C)) (*cycles) += adjustBranchTaken(&_pc, opc, lead_time);
             break;
         case bcs:
-            if (_p & FLAG_C) (*cycles) += adjustBranchTaken(&pc, opc, lead_time);
+            if (_p & FLAG_C) (*cycles) += adjustBranchTaken(&_pc, opc, lead_time);
             break;
         case bne:
-            if (!(_p & FLAG_Z)) (*cycles) += adjustBranchTaken(&pc, opc, lead_time);
+            if (!(_p & FLAG_Z)) (*cycles) += adjustBranchTaken(&_pc, opc, lead_time);
             break;
         case beq:
-            if (_p & FLAG_Z) (*cycles) += adjustBranchTaken(&pc, opc, lead_time);
+            if (_p & FLAG_Z) (*cycles) += adjustBranchTaken(&_pc, opc, lead_time);
             break;
         case bpl:
-            if (!(_p & FLAG_N)) (*cycles) += adjustBranchTaken(&pc, opc, lead_time);
+            if (!(_p & FLAG_N)) (*cycles) += adjustBranchTaken(&_pc, opc, lead_time);
             break;
         case bmi:
-            if (_p & FLAG_N) (*cycles) += adjustBranchTaken(&pc, opc, lead_time);
+            if (_p & FLAG_N) (*cycles) += adjustBranchTaken(&_pc, opc, lead_time);
             break;
         case bvc:
-            if (!(_p & FLAG_V)) (*cycles) += adjustBranchTaken(&pc, opc, lead_time);
+            if (!(_p & FLAG_V)) (*cycles) += adjustBranchTaken(&_pc, opc, lead_time);
             break;
         case bvs:
-            if (_p & FLAG_V) (*cycles) += adjustBranchTaken(&pc, opc, lead_time);
+            if (_p & FLAG_V) (*cycles) += adjustBranchTaken(&_pc, opc, lead_time);
             break;
+		case sei:
+			// special case SEI: the Flag_I would be set between the operation's 2 cycles but the timing
+			// of when the IRQ is checked is also special (as compared to other ops), i.e. it doesn't fit
+			// into this emulators impl of checking the IRQ condition at the start of each cycle..
+			_slip_status = (_p & FLAG_I) ? BLOCKED : POTENTIAL_SLIP;	// only possible if flag wasn't already set before
 
+			// perform the op immediately (i.e. the FLAG_I is blocked too soon and this must be
+			// compensated for in the respective IRQ checks later)
+			SETFLAG_I(1);	// instead of in runPrefetchedOp() this op is directly run now!
+
+			break;
 		default:
 			break;
     }
 }
+
 
 #ifdef DEBUG
 uint16_t cpuGetPC() {
@@ -707,7 +863,7 @@ void cpuPsidDebug(uint16_t play_addr) {
 }
 #endif
 
-// CAUTION: advances the _pc as a side-effect
+// handles a "STx" type operation and advances the _pc to the next operation
 static void operationSTx(const int32_t* mode, uint8_t val) {
     static uint16_t ad;  // avoid reallocation
 
@@ -782,6 +938,7 @@ static void branch(uint8_t is_taken) {
 static int16_t _exe_instr_opcode;
 static int8_t _exe_instr_cycles;
 static int8_t _exe_instr_cycles_remain;
+static int8_t _exe_write_trigger;
 
 #ifdef PSID_DEBUG_ADSR
 static uint16_t _frame_count;
@@ -791,6 +948,7 @@ extern void sidDebug(int16_t frame_count);
 static void cpuRegReset() {
     _a =_x =_y = 0;
     _p = 0;
+	_no_flag_i = 1;
     _s = 0xff;
     _pc = 0;
 }
@@ -805,14 +963,59 @@ void cpuSetProgramCounter(uint16_t pc, uint8_t a) {
 }
 
 void cpuIrqFlagPSID(uint8_t on) {
-	SETFLAGS(FLAG_I, on);
+	SETFLAG_I(on);
 }
+
+// perf optimization to avoid repeated address resolution and updates:
+// the CPU's "read-modify-write feature" (i.e. that the target memory location present
+// content is re-written before the actually supplied value is written) is only
+// relevant for io-area
+
+// this optimization causes a ~5% speedup (for single-SID emulation)
+
+// CAUTION: This macro can only be used in a context which allows it to declare a
+// temp var named "rmw_addr", i.e. it cannot be used more than once in the same
+// context.
+
+// USAGE: the supplied 'r' is the variable that the read result is stored in and
+// 'w' is the variable used for the final result to be written and the __VA_ARGS__
+// argument is the code that is executed in order to calculate that result - i.e.
+// it is run between the the read and the final write. (it is the only macro
+// expansion syntax that I found to work for the purpose of propagating a
+// respective code-block). DO NOT use expressions for r or w since that may
+// lead to weird bugs.
+
+// actual usecases?:
+// - the READ_MODIFY_WRITE is well known to be used with d019 (as a shortcut to ACKN RASTER IRQ)
+// - respective ops are actually used in the context of SID WF register (see Soundcheck.sid),
+//   but re-setting the existing value in the 1st write should NOT have any effect on the SID
+//   and it is merely used to save a cycle on a combined AND/STA (however use of the 2x
+//   write will break the current digi detection logic for PWM and FM!)
+// - DC0D/DD0D might be a problem here.. depending on the status read from the register,
+//   the 1st write may enable or disable mask bits.. unrelated to whatever the 2nd write may
+//   still be changing later.. also there is a timing issue since the 2 writes are normally
+//   performed with a certain delay (1 cycle?) whereas here everything is done instantly
+//   which may well upset the correct CIA behavior.. (=> in any case it is nothing that the
+//   current test-suite would detect.. or currently complains about)
+
+#define READ_MODIFY_WRITE(mode, r, w, ...) /* r added  */ \
+    r = getInput(mode); \
+	int32_t rmw_addr= getOutputAddr(mode);\
+	if (rmw_addr == 0xd019) { /* only relevant usecase */\
+		MEM_SET_IO(rmw_addr, r); \
+		__VA_ARGS__ \
+		MEM_SET_IO(rmw_addr, w); \
+	} else { \
+		__VA_ARGS__ \
+		if(rmw_addr < 0) { _a = w; } /* acc mode.. no need to recheck */  \
+		else { memSet(rmw_addr, w); } \
+	}
 
 #ifdef TEST
 char _load_filename[32];
 #endif
 static void runPrefetchedOp() {
-	// avoid reallocation of these tmp vars; todo: perftest and quantify benefit of this ugly hack
+	// avoid reallocation of these tmp vars; FIXME: perftest and quantify benefit of this ugly hack
 	static uint8_t bval;
 	static uint16_t wval;
 	static int32_t c;  		// temp for "carry"
@@ -838,7 +1041,7 @@ static void runPrefetchedOp() {
 	}
 #endif
 
-    _pc++;						// skip the opcode byte
+	// "prefetch" already loaded the opcode (_pc already points to next byte):
 	_opc = _exe_instr_opcode;	// use what was actually valid at the 1st cycle of the op
 
     switch (_mnemonics[_opc]) {
@@ -932,11 +1135,9 @@ static void runPrefetchedOp() {
             break;
         case asl: {
 			const int32_t *mode = &(_modes[_opc]);
-            wval = getInput(mode);
-
-            setOutput(mode, (uint8_t)wval);	// "read-modify-write"
-            wval <<= 1;
-            setOutput(mode, (uint8_t)wval);
+			READ_MODIFY_WRITE(mode, wval, (uint8_t)wval, {
+				wval <<= 1;
+			});
 
             SETFLAGS(FLAG_Z, !(wval & 0xff));
             SETFLAGS(FLAG_N, wval & 0x80);
@@ -1045,7 +1246,7 @@ static void runPrefetchedOp() {
 			_pc = memGet(0xfffe);
 			_pc |= memGet(0xffff) << 8;		// somebody might finger the IRQ vector or the BRK vector at 0316/0317 to use this?
 
-			SETFLAGS(FLAG_I, 1);
+			SETFLAG_I(1);
             break;
         case clc:
             SETFLAGS(FLAG_C, 0);
@@ -1054,7 +1255,7 @@ static void runPrefetchedOp() {
             SETFLAGS(FLAG_D, 0);
             break;
         case cli:
-            SETFLAGS(FLAG_I, 0);
+            SETFLAG_I(0);
 
 			// known limitation: this op should have a similar delay as "sei"
 			// just in the other direction.. not implemented since it
@@ -1090,12 +1291,11 @@ static void runPrefetchedOp() {
             break;
         case dcp: {		// used by: Clique_Baby.sid, Musik_Run_Stop.sid
 			const int32_t *mode = &(_modes[_opc]);
-            bval = getInput(mode);
+			READ_MODIFY_WRITE(mode, bval, bval, {
+				// dec
+				bval--;
+			});
 
-            setOutput(mode, bval);	// "read-modify-write"
-			// dec
-            bval--;
-            setOutput(mode, bval);
 			// cmp
             wval = (uint16_t)_a - bval;
             SETFLAGS(FLAG_Z, !wval);
@@ -1104,11 +1304,7 @@ static void runPrefetchedOp() {
 			} break;
         case dec: {
 			const int32_t *mode = &(_modes[_opc]);
-            bval = getInput(mode);
-
-            setOutput(mode, bval);	// "read-modify-write"
-            bval--;
-            setOutput(mode, bval);
+			READ_MODIFY_WRITE(mode, bval, bval, { bval--; });
 
 			SETFLAGS(FLAG_Z, !bval);
             SETFLAGS(FLAG_N, bval & 0x80);
@@ -1132,11 +1328,9 @@ static void runPrefetchedOp() {
             break;
         case inc: {
 			const int32_t *mode = &(_modes[_opc]);
-            bval = getInput(mode);
-
-			setOutput(mode, bval);	// "read-modify-write"
-            bval++;
-            setOutput(mode, bval);
+			READ_MODIFY_WRITE(mode, bval, bval, {
+				bval++;
+			});
 
 			SETFLAGS(FLAG_Z, !bval);
             SETFLAGS(FLAG_N, bval & 0x80);
@@ -1156,11 +1350,9 @@ static void runPrefetchedOp() {
         case isb: {	// aka ISC; see 'insz' tests
 			// inc
 			const int32_t *mode = &(_modes[_opc]);
-            bval = getInput(mode);
-
-			setOutput(mode, bval);	// "read-modify-write"
-            bval++;
-            setOutput(mode, bval);
+			READ_MODIFY_WRITE(mode, bval, bval, {
+				bval++;
+			});
 
 			SETFLAGS(FLAG_Z, !bval);
             SETFLAGS(FLAG_N, bval & 0x80);
@@ -1258,12 +1450,10 @@ static void runPrefetchedOp() {
             break;
         case lsr: {
 			const int32_t *mode = &(_modes[_opc]);
-            bval = getInput(mode);
-
-            setOutput(mode, bval);	// "read-modify-write"
-			wval = (uint8_t)bval;
-            wval >>= 1;
-            setOutput(mode, (uint8_t)wval);
+			READ_MODIFY_WRITE(mode, bval, (uint8_t)wval, {
+				wval = (uint8_t)bval;
+				wval >>= 1;
+			});
 
             SETFLAGS(FLAG_Z, !wval);
             SETFLAGS(FLAG_N, wval & 0x80);	// always clear?
@@ -1295,6 +1485,7 @@ static void runPrefetchedOp() {
         case plp: {
 			bval = pop();
             _p = bval & ~(FLAG_B0 | FLAG_B1);
+			_no_flag_i = !(_p & FLAG_I);
 
 			// known limitation: see sei/cli delay regarding FLAG_I (applies here too)
 
@@ -1304,14 +1495,12 @@ static void runPrefetchedOp() {
         case rla: {				// see Spasmolytic_part_6.sid
 			// rol
 			const int32_t *mode = &(_modes[_opc]);
-            bval = getInput(mode);
-
-            setOutput(mode, bval);	// "read-modify-write"
-            c = !!(_p & FLAG_C);
-            SETFLAGS(FLAG_C, bval & 0x80);
-			bval <<= 1;
-            bval |= c;
-            setOutput(mode, bval);
+			READ_MODIFY_WRITE(mode, bval, bval, {
+				c = !!(_p & FLAG_C);
+				SETFLAGS(FLAG_C, bval & 0x80);
+				bval <<= 1;
+				bval |= c;
+			});
 
 			// + and
             _a &= bval;
@@ -1320,28 +1509,24 @@ static void runPrefetchedOp() {
 			} break;
         case rol:  {
 			const int32_t *mode = &(_modes[_opc]);
-            bval = getInput(mode);
-
-            setOutput(mode, bval);	// "read-modify-write"
-            c = !!(_p & FLAG_C);
-            SETFLAGS(FLAG_C, bval & 0x80);
-			bval <<= 1;
-            bval |= c;
-            setOutput(mode, bval);
+			READ_MODIFY_WRITE(mode, bval, bval, {
+				c = !!(_p & FLAG_C);
+				SETFLAGS(FLAG_C, bval & 0x80);
+				bval <<= 1;
+				bval |= c;
+			});
 
             SETFLAGS(FLAG_N, bval & 0x80);
             SETFLAGS(FLAG_Z, !bval);
 			} break;
         case ror: {
 			const int32_t *mode = &(_modes[_opc]);
-            bval = getInput(mode);
-
-            setOutput(mode, bval);	// "read-modify-write"
-            c = !!(_p & FLAG_C);
-            SETFLAGS(FLAG_C, bval & 1);
-            bval >>= 1;
-            bval |= 0x80 * c;
-            setOutput(mode, bval);
+			READ_MODIFY_WRITE(mode, bval, bval, {
+				c = !!(_p & FLAG_C);
+				SETFLAGS(FLAG_C, bval & 1);
+				bval >>= 1;
+				bval |= 0x80 * c;
+			});
 
 			SETFLAGS(FLAG_N, bval & 0x80);
             SETFLAGS(FLAG_Z, !bval);
@@ -1349,14 +1534,12 @@ static void runPrefetchedOp() {
         case rra: {
 			// ror
 			const int32_t *mode = &(_modes[_opc]);
-            bval = getInput(mode);
-
-            setOutput(mode, bval);	// "read-modify-write"
-            c = !!(_p & FLAG_C);
-            SETFLAGS(FLAG_C, bval & 1);
-            bval >>= 1;
-            bval |= 0x80 * c;
-            setOutput(mode, bval);
+			READ_MODIFY_WRITE(mode, bval, bval, {
+				c = !!(_p & FLAG_C);
+				SETFLAGS(FLAG_C, bval & 1);
+				bval >>= 1;
+				bval |= 0x80 * c;
+			});
 
 			// + adc
 			uint8_t in1 = _a;
@@ -1383,22 +1566,20 @@ static void runPrefetchedOp() {
 					break;
 			}
 
-			bval = pop();
+			// note: within the RTI's 6 cycle-interval, _p is restored
+			// in cycle #4, i.e. after that moment the FLAG_I should be clear!
+			// the execution of the logic here is times accordingly via the
+			// _exe_write_trigger
+
+			bval = pop();	// status before the FLAG_I had been set
             _p = bval & ~(FLAG_B0 | FLAG_B1);
+			_no_flag_i = !(_p & FLAG_I);
 
             wval = pop();
             wval |= pop() << 8;
             _pc = wval;	// not like 'rts'! correct address is expected here!
 
 			sysSetNMIMarker(0);	// hack to improve digi output
-
-#ifdef TRACE_IRQ_TIMING
-			if (_irq_start) {
-				_irq_start = sysCycles() - _irq_start;
-				EM_ASM_({ console.log('irq t: ' + ($0).toString(16));}, _irq_start);
-				_irq_start = 0;
-			}
-#endif
             break;
         case rts:
             wval = pop();
@@ -1418,46 +1599,33 @@ static void runPrefetchedOp() {
             SETFLAGS(FLAG_Z, !_a);
             SETFLAGS(FLAG_N, _a & 0x80);
 			SETFLAGS(FLAG_V, (~(in1 ^ in2)) & (in1 ^ _a) & 0x80);
-			}
-            break;
+			} break;
         case sha:    {	// aka AHX; for the benefit of the 'SHAAY' test (etc).. have yet to find a song that uses this
 			const int32_t *mode = &(_modes[_opc]);
 			uint8_t h = getH1(mode);
-            bval = getInput(mode);
-
-            setOutput(mode, bval);	// "read-modify-write"
-			bval= _a & _x & h;
-			setOutput(mode, bval);
-			}
-            break;
+			READ_MODIFY_WRITE(mode, bval, bval, {
+				bval = _a & _x & h;
+			});
+			} break;
         case shx:    {	// for the benefit of the 'SHXAY' test (etc).. have yet to find a song that uses this
 			const int32_t *mode = &(_modes[_opc]);
 			uint8_t h = getH1(mode);
-            bval = getInput(mode);
-
-            setOutput(mode, bval);	// "read-modify-write"
-			bval= _x & h;
-			setOutput(mode, bval);
-			}
-            break;
+			READ_MODIFY_WRITE(mode, bval, bval, {
+				bval = _x & h;
+			});
+			} break;
         case shy:    {	// for the benefit of the 'SHYAY' test (etc).. have yet to find a song that uses this
 			const int32_t *mode = &(_modes[_opc]);
 			uint8_t h = getH1(mode);		// who cares about this OP
-            bval = getInput(mode);
-
-            setOutput(mode, bval);	// "read-modify-write"
-			bval= _y & h;
-			setOutput(mode, bval);
-			}
-            break;
-        case sax: {				// aka AXS; e.g. Vicious_SID_2-15638Hz.sid, Kukle.sid
+			READ_MODIFY_WRITE(mode, bval, bval, {
+				bval = _y & h;
+			});
+			} break;
+        case sax: {				// aka AXS; e.g. Vicious_SID_2-15638Hz.sid, Kukle.sid, Synthesis.sid, Soundcheck.sid
 			const int32_t *mode = &(_modes[_opc]);
-			getInput(mode);	 // make sure the PC is advanced correctly
-
-            setOutput(mode, bval);	// "read-modify-write"
-			bval = _a & _x;
-			setOutput(mode, bval);
-			
+			READ_MODIFY_WRITE(mode, bval, bval, {
+				bval = _a & _x;
+			});
 			// no flags are affected; registers unchanged
 			} break;
 		case sbx: // somtimes called SAX; used in Kukle.sid, Artefacts.sid, Whats_Your_Lame_Excuse.sid, Probing_the_Crack_with_a_Hook.sid
@@ -1478,18 +1646,11 @@ static void runPrefetchedOp() {
             SETFLAGS(FLAG_D, 1);
             break;
         case sei:
-			// This operation (like CLI and PLP) is timing critical since it affects IRQ
-			// execution via the FLAG_I. It would NOT prevent an IRQ to still be triggered
-			// during its 1st cycle - effectively reducing the IRQs "lead time"
-			// to 1 cycle, i.e. the IRQ would be executed immediately after the SEI.
+			// Since SEI is handled specially, the below logic has already been executed directly
+			// after the "prefetch" (i.e. too early) and there is nothing left to do now, i.e. at the
+			// end of SEI's 2 cycle duration (see special handlng in CHECK_IS_IRQ()).
 
-			// WebSid's approach of setting all the results of an operation at the end the op's last cycle
-			// (i.e. cycle 2 here) in this case is somewhat off with regards to timing of the flag
-			// change. Since IRQ polling in this emulation is always handled at the start of a new cycle,
-			// the set flag will only be observed in the cycle after SEI has completed (which must be
-			// compensated for in respective IRQ timing calculation).
-
-            SETFLAGS(FLAG_I, 1);
+            // SETFLAG_I(1);
             break;
 		case shs: {	// 	aka TAS
 			// instable op; hard to think of a good reason why
@@ -1498,21 +1659,16 @@ static void runPrefetchedOp() {
 
 			const int32_t *mode = &(_modes[_opc]);
 			uint8_t h = getH1(mode);
-			bval = getInput(mode); 	// make sure the PC is advanced correctly
-
-			setOutput(mode, bval);
-			bval = _s&h;
-			setOutput(mode, bval);
-
+			READ_MODIFY_WRITE(mode, bval, bval, {
+				bval = _s&h;
+			});
 			} break;
         case slo: {			// see Spasmolytic_part_6.sid
 			const int32_t *mode = &(_modes[_opc]);
-            bval = getInput(mode);
-
-            setOutput(mode, bval);	// "read-modify-write"
-			wval = (uint8_t)bval;
-            wval <<= 1;
-            setOutput(mode, (uint8_t)wval);
+			READ_MODIFY_WRITE(mode, bval, (uint8_t)wval, {
+				wval = (uint8_t)bval;
+				wval <<= 1;
+			});
 
             SETFLAGS(FLAG_C, wval & 0x100);
 			// + ora
@@ -1526,12 +1682,10 @@ static void runPrefetchedOp() {
 
 			// copied section from 'lsr'
 			const int32_t *mode = &(_modes[_opc]);
-            bval = getInput(mode);
-
-            setOutput(mode, bval);	// "read-modify-write"
-			wval = (uint8_t)bval;
-            wval >>= 1;
-            setOutput(mode, (uint8_t)wval);
+			READ_MODIFY_WRITE(mode, bval, (uint8_t)wval, {
+				wval = (uint8_t)bval;
+				wval >>= 1;
+			});
 
             SETFLAGS(FLAG_Z, !wval);
             SETFLAGS(FLAG_N, wval & 0x80);
@@ -1633,49 +1787,49 @@ static void runPrefetchedOp() {
 		is_stunned = 0; \
 	}
 
+void runIRQ() {
+	push(_pc >> 8);		// where to resume after the interrupt
+	push(_pc & 0xff);
+
+	if (_opc == SEI_OP /*&& (_slip_status == SLIPPED_SEI)*/) {	// XXX 2nd test should be redundant
+		// if IRQ occurs while SEI is executing then the Flag_I should also
+		// be pushed to the stack, i.e. it RTI will then NOT clear Flag_I!
+		SETFLAG_I(1);
+	}
+
+	push(_p | FLAG_B1);	// only in the stack copy ( will clear Flag_I upon RTI...)
+
+	SETFLAG_I(1);
+
+	_pc = memGet(0xfffe);			// IRQ vector
+	_pc |= memGet(0xffff) << 8;
+}
+
+void runNMI() {
+	push(_pc >> 8);	// where to resume after the interrupt
+	push(_pc & 0xff);
+	push(_p | FLAG_B1);	// only in the stack copy
+
+	// "The 6510 will set the IFlag on NMI, too. 6502 untested." (docs of test suite)
+	// seems the kernal developers did not know thst... see SEI in FE43 handler..
+	SETFLAG_I(1);
+
+	_pc = memGet(0xfffa);			// NMI vector
+	_pc |= memGet(0xfffb) << 8;
+}
+
 // cpuClock function pointer
 void (*cpuClock)();
 
 /*
-* Simulate what the CPU does within the next system clock cycle.
-*
-* Note on interrupt handling (see http://6502.org/tutorials/interrupts.html):
-* an interrupt triggers a 7-clock cycles "virtual OP". An interrupt allows
-* the previous OP to complete (it seems reasonable to presume that BRK uses
-* the exact same sequence - and JSR does the same just without pushing the
-* processor status):
-*					2 cycles internal
-*					1 cycle push stack: return addr-hi
-*					1 cycle push stack: return addr-lo
-*					1 cycle push stack: processor status regigster
-*				=> BTW: these are the max. 3 consecutive writes that may
-*                  occur on a 6502 (see badline handling) - whereas for
-*                  the other OPs (except JSR) the writes seem to be at the
-*                  end of the OP they are in the middle here..
-*					1 cycle pc-lo: get vector
-*					1 cycle pc-hi: get vector
-*
-* special cases:
-*
-* unhandled: "When an IRQ occurs while SEIn is executing, the IFlag on
-*            the stack will be set." => WTF is this supposed to mean?
-* unhandled: "When an NMI occurs before clock 4 of a BRKn command, the
-*            BRK is finished as a NMI. In this case, BFlag on the stack
-*            will not be cleared."
+* Simulates what the CPU does within the next system clock cycle.
 */
 static void cpuClockRSID() {
-	// note: on the real HW the respective check happends in ø2 phase
-	// of the previous CPU cycle and the respective internal interrupt
-	// signal then goes high in the ø1 phase after (the potential
-	// problem of the below impl is that by performing the test here,
-	// it might incorrectly pick up some CIA change that has just
-	// happend in the ø1 phase)
-
 	CHECK_FOR_IRQ();	// check 1st (so NMI can overrule if needed)
 	CHECK_FOR_NMI();
 
 	uint8_t is_stunned;
-	CHECK_FOR_VIC_STUN(is_stunned);
+	CHECK_FOR_VIC_STUN(is_stunned);		// todo: check if some processing could be saved checking this 1st
 	if (is_stunned) return;
 
 	if (_exe_instr_opcode < 0) {	// get next instruction
@@ -1684,26 +1838,24 @@ static void cpuClockRSID() {
 
 			// some old PlaySID files (with recorded digis) files actually
 			// use NMI settings that must not be used here
-			sysSetNMIMarker(1);
+			sysSetNMIMarker(1);	// fixme: with PSID handled separately this should no longer be needed here?
 
 			_nmi_committed = 0;
 
 			// make that same trigger unusable (interrupt must be
 			// acknowledged before a new one can be triggered)
 			_nmi_line_ts = 0;
-			_exe_instr_opcode = START_NMI_OP;
-			_exe_instr_cycles = _opbase_frame_cycles[_exe_instr_opcode];
+
+			INIT_OP(START_NMI_OP,_exe_instr_opcode, _exe_instr_cycles, _interrupt_lead_time, _exe_write_trigger);
 
 		} else if (IS_IRQ_PENDING()) {	// interrupts are like a BRK command
 
 			_irq_committed = 0;
-			_exe_instr_opcode = START_IRQ_OP;
-
-			_exe_instr_cycles = _opbase_frame_cycles[_exe_instr_opcode];
+			INIT_OP(START_IRQ_OP,_exe_instr_opcode, _exe_instr_cycles, _interrupt_lead_time, _exe_write_trigger);
 
 		} else {
-			// default: start execution of next instruction (determine exact timing)
-			prefetchOperation( &_exe_instr_opcode, &_exe_instr_cycles, &_interrupt_lead_time);
+			// default: start execution of next instruction (i.e. determine the "exact" timing)
+			prefetchOperation( &_exe_instr_opcode, &_exe_instr_cycles, &_interrupt_lead_time, &_exe_write_trigger);
 		}
 		// since there are no 1-cycle ops nothing else needs to be done right now
 		_exe_instr_cycles_remain =  _exe_instr_cycles - 1;	// we already are in 1st cycle here
@@ -1712,45 +1864,23 @@ static void cpuClockRSID() {
 		// handle "current" instruction
 		_exe_instr_cycles_remain--;
 
-		if(_exe_instr_cycles_remain == 0) {
-			// complete current instruction
+		if(_exe_instr_cycles_remain == _exe_write_trigger) {
+			// output results of current instruction (may be before op ends)
 
 			if (_exe_instr_opcode == START_IRQ_OP) {
-				push(_pc >> 8);		// where to resume after the interrupt
-				push(_pc & 0xff);
-
-				// known limitation: special case not handled yet: if IRQ occurs
-				// while SEI is executing then the Flag_I is here also pushed to the stack
-				//
-
-				push(_p | FLAG_B1);	// only in the stack copy ( will clear Flag_I upon RTI...)
-
-				SETFLAGS(FLAG_I, 1);
-
-				_pc = memGet(0xfffe);			// IRQ vector
-				_pc |= memGet(0xffff) << 8;
-#ifdef TRACE_IRQ_TIMING
-				_irq_start = sysCycles();
-#endif
+				runIRQ();
 			} else if (_exe_instr_opcode == START_NMI_OP) {
-				push(_pc >> 8);	// where to resume after the interrupt
-				push(_pc & 0xff);
-				push(_p | FLAG_B1);	// only in the stack copy
-
-				// "The 6510 will set the IFlag on NMI, too. 6502 untested." (docs of test suite)
-				// seems the kernal developers did not know thst... see SEI in FE43 handler..
-				SETFLAGS(FLAG_I, 1);
-
-				_pc = memGet(0xfffa);			// NMI vector
-				_pc |= memGet(0xfffb) << 8;
+				runNMI();
 
 			} else if (_exe_instr_opcode == NULL_OP) {
 				// just burn cycles
 			} else {
 				runPrefetchedOp();	// use old impl that runs a complete instruction
 			}
+		}
+		if(_exe_instr_cycles_remain == 0) {
+			// current operation has been completed.. get something new to do in the next cycle
 			_exe_instr_opcode = -1;	// completed current OP
-			_exe_instr_cycles_remain = _exe_instr_cycles = 0;
 		}
 	}
 }
@@ -1761,16 +1891,20 @@ static void cpuClockPSID() {
 
 	CHECK_FOR_IRQ();	// check 1st (so NMI can overrule if needed)
 
+	uint8_t is_stunned;
+	CHECK_FOR_VIC_STUN(is_stunned);		// todo: check if some processing could be saved checking this 1st
+	if (is_stunned) return;
+
 	if (_exe_instr_opcode < 0) {	// get next instruction
 
 		if (IS_IRQ_PENDING()) {	// interrupts are like a BRK command
+
 			_irq_committed = 0;
-			_exe_instr_opcode = START_IRQ_OP;
-			_exe_instr_cycles = _opbase_frame_cycles[_exe_instr_opcode];
+			INIT_OP(START_IRQ_OP,_exe_instr_opcode, _exe_instr_cycles, _interrupt_lead_time, _exe_write_trigger);
 
 		} else {
-			// default: start execution of next instruction (determine exact timing)
-			prefetchOperation( &_exe_instr_opcode, &_exe_instr_cycles, &_interrupt_lead_time);
+			// default: start execution of next instruction (i.e. determine the "exact" timing)
+			prefetchOperation( &_exe_instr_opcode, &_exe_instr_cycles, &_interrupt_lead_time, &_exe_write_trigger);
 		}
 		// since there are no 1-cycle ops nothing else needs to be done right now
 		_exe_instr_cycles_remain =  _exe_instr_cycles - 1;	// we already are in 1st cycle here
@@ -1779,28 +1913,20 @@ static void cpuClockPSID() {
 		// handle "current" instruction
 		_exe_instr_cycles_remain--;
 
-		if(_exe_instr_cycles_remain == 0) {
-			// complete current instruction
+		if(_exe_instr_cycles_remain == _exe_write_trigger) {
+			// output results of current instruction (may be before op ends)
 
 			if (_exe_instr_opcode == START_IRQ_OP) {
-				push(_pc >> 8);		// where to resume after the interrupt
-				push(_pc & 0xff);
-				push(_p | FLAG_B1);	// only in the stack copy ( will clear I-flag upon RTI...)
-
-				SETFLAGS(FLAG_I, 1);
-
-				_pc = memGet(0xfffe);			// IRQ vector
-				_pc |= memGet(0xffff) << 8;
-#ifdef TRACE_IRQ_TIMING
-				_irq_start = sysCycles();
-#endif
+				runIRQ();
 			} else if (_exe_instr_opcode == NULL_OP) {
 				// just burn cycles
 			} else {
 				runPrefetchedOp();	// use old impl that runs a complete instruction
 			}
+		}
+		if(_exe_instr_cycles_remain == 0) {
+			// current operation has been completed.. get something new to do in the next cycle
 			_exe_instr_opcode = -1;	// completed current OP
-			_exe_instr_cycles_remain = _exe_instr_cycles = 0;
 		}
 	}
 }
@@ -1810,8 +1936,10 @@ void cpuInit(uint8_t is_rsid) {
 
 	// cpu status
 	_pc = _a = _x = _y = _s = _p = 0;
+	_no_flag_i = 1;
 
-	_exe_instr_cycles = _exe_instr_cycles_remain = 0;
+
+	_exe_instr_cycles = _exe_instr_cycles_remain = _exe_write_trigger = 0;
 	_exe_instr_opcode = -1;
 
 	_irq_line_ts = _irq_committed = 0;
@@ -1828,6 +1956,8 @@ void cpuInit(uint8_t is_rsid) {
 	push(0);
 
 	_p = 0x00;	// idiotic advice to set I-flag! (see "irq" tests)
+	_no_flag_i = 1;
+
 	_pc = 0x0801;
 
 #endif
@@ -1841,5 +1971,5 @@ void cpuInit(uint8_t is_rsid) {
 void cpuSetProgramCounterPSID(uint16_t pc) {
 	_pc= pc;
 
-   SETFLAGS(FLAG_I, 0);		// make sure the IRQ isn't blocked
+   SETFLAG_I(0);		// make sure the IRQ isn't blocked
 }

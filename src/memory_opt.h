@@ -19,8 +19,16 @@
 * replaced respective small functions that are critical during single-cycle-
 * clocking in other parts of the implementation (see cia and cpu). Whithout 
 * and functional changes this refactoring alone lead to a decrease of run time 
-* by 10%. 
-* 
+* by 10% (in my preliminary tests). 
+*
+* CAUTION: With the big swings of response-times caused by whatever else
+* might be happening on the CPU and/or in the browser, the relatively small
+* benefits of inlining are hard to quantify reliably. It may always be that some
+* supposed speedup was just an "accidental" pause in browser GC activity.
+* I will use the below macros for now - such that a simple search/replace 
+* can be used in case I might drop the idea at a later stage.  Use 
+* OPT_USE_INLINE_ACCESS define to toggle inlining.
+*
 * <p>WebSid (c) 2020 Jürgen Wothke
 * <p>version 0.94
 * 
@@ -33,6 +41,21 @@
 
 #include "base.h"
 
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// THESE MUST NOT BE USED DIRECTLY!
+extern void memSetIO(uint16_t addr, uint8_t value);
+
+#ifdef __cplusplus
+}
+#endif
+
+
+#ifdef OPT_USE_INLINE_ACCESS
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -40,7 +63,6 @@ extern "C" {
 // THESE MUST NOT BE USED DIRECTLY!
 extern uint8_t* _io_area;		
 extern uint8_t* _memory;
-extern void memSetIO(uint16_t addr, uint8_t value);
 
 #ifdef __cplusplus
 }
@@ -68,6 +90,23 @@ extern void memSetIO(uint16_t addr, uint8_t value);
 // expressions used as function params are potentially evaluated repeatedly in the 
 // macro context. That idea can therefore be savely abandonned.
 
+#else
+	
+#define	MEM_READ_RAM(addr)\
+	memReadRAM(addr)
+	
+#define	MEM_WRITE_RAM(addr, value)\
+	memWriteRAM((addr), value)
 
+#define	MEM_READ_IO(addr)\
+	memReadIO((addr))
+	
+#define	MEM_WRITE_IO(addr, value)\
+	memWriteIO((addr), value)
+
+#define	MEM_SET_IO(addr, value)\
+	memSetIO((addr), value)
+	
+#endif
 	
 #endif

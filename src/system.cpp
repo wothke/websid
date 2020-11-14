@@ -26,7 +26,7 @@ extern "C" {
 
 // ----------- system clock -----------
 
-static uint32_t _cycles = 0;		// counter of elapsed cycles
+uint32_t _cycles = 0;		// counter of elapsed cycles
 
 extern "C" void sysReset() {
 	_cycles = 0;

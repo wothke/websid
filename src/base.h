@@ -12,6 +12,9 @@ typedef signed long int32_t;
 typedef unsigned long uint32_t;
 
 
+
+#define OPT_USE_INLINE_ACCESS
+
 //#define DEBUG
 
 /*

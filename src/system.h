@@ -31,4 +31,21 @@ uint32_t	sysGetClockRate(uint8_t is_ntsc);
 void	 	sysSetNMIMarker(uint8_t m);
 uint8_t 	sysCheckNMIMarker();
 
+
+
+// -------------------- performance optimization --------------------------
+
+
+#ifdef OPT_USE_INLINE_ACCESS
+extern uint32_t _cycles; 	// MUST NOT BE USED DIRECTLY
+
+#define SYS_CYCLES() \
+	_cycles
+
+#else
+	
+#define SYS_CYCLES() \
+	sysCycles()
+#endif	
+	
 #endif

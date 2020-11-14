@@ -769,6 +769,10 @@ static void initMem(uint16_t addr, uint8_t value) {
 	if (!_is_rsid) {			// needed by MasterComposer crap
 		memWriteRAM(addr, value);
 	}
+	
+	// FIXME since timers are later bootstrapped with settings
+	// from IO memory area the previous update of timer state via 
+	// ciaWriteMem here does not make any sense.. (leave cleanup for next retesting)	
 	ciaWriteMem(addr, value);	// also write RO defaults, e.g. dc01
 	
 	memWriteIO(addr, value);
@@ -795,7 +799,6 @@ void ciaReset(uint8_t is_rsid, uint8_t is_ntsc) {
 
 	_is_rsid = is_rsid;
 
-//	initMem(0xdc00, 0x10);	 	// fire botton NOT pressed (see Alter_Digi_Piece.sid)
 	initMem(0xdc00, 0x7f);	 	// S_W_A_F_2_tune_1.sid
 	initMem(0xdc01, 0xff);	 	// Master_Blaster_intro.sid/instantfunk.sid actually check this
 	
