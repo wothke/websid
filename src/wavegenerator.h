@@ -13,8 +13,12 @@
 #include "base.h"
 
 
-// XXX new resampling seems to cause problems: see We_Are_Demo_tune_2.sid!
+// FIXME new resampling seems to cause problems: see We_Are_Demo_tune_2.sid!
 // other test cases: Synthesis.sid
+// note: performance wise the difference between the 2 impls seems to be neglegible,
+// i.e. for 8-SID song the new impl is ~1% faster in total.
+// maybe Hermit's impl deliberately tries to also model some additional D/A
+// conversion effect - which my interpolation doesn't?
 #define USE_HERMIT_ANTIALIAS
 
 class WaveGenerator {

@@ -6,6 +6,11 @@
 * here - scaled using the output of the envelope generator and may be optionally processed via the SIDs
 * internal filter.)
 *
+* FIXME: Updates that are performed within the current sample (e.g. oscillator reset, WF, pulsewidth 
+* or frequency change) are not handled correctly. The wave output calculation does not currently 
+* consider the part which correctly should still be based on the previous setting. The flaw is most 
+* relevant in FM/PWM digis (see Soundcheck.sid) but should not matter much in regular playback.
+*
 * WebSid (c) 2020 Jürgen Wothke
 * version 0.93
 *
