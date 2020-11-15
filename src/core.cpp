@@ -235,7 +235,7 @@ void Core::startupTune(uint32_t sample_rate, uint8_t selected_track,
 		cpuPsidDebug(play_addr);
 #endif
 		cpuSetProgramCounterPSID(main);	// just install an endless loop for main
-			
+
 		ciaSetDefaultsPSID(is_timer_driven_psid);
 		vicSetDefaultsPSID(is_timer_driven_psid);
 		

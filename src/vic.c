@@ -43,12 +43,19 @@
 #include "cpu.h"
 
 
+#include "system.h"	// only needed for PSID optimization
+
+
 static double _fps;
 static uint8_t _cycles_per_raster;
 static uint16_t _lines_per_screen;
 
 static uint8_t _x;	// in cycles
 static uint16_t _y;	// in rasters
+
+// performance optimization PSID
+static uint32_t _cycles_per_screen;
+static uint32_t _cycles_next_irq_PSID;
 
 static uint8_t _signal_irq;	// redundant to (memReadIO(0xd019) & 0x80)
 
@@ -114,6 +121,7 @@ void vicSetModel(uint8_t ntsc_mode) {
 		_cycles_per_raster = 63;	
 		_lines_per_screen = 312;	// with 504 pixels
 	}
+	_cycles_per_screen = _cycles_per_raster * _lines_per_screen; // PSID performance opt
 
 	// init to very end so that next clock will create a raster 0 IRQ...
 	_x = _cycles_per_raster - 1;
@@ -140,7 +148,11 @@ void vicSetModel(uint8_t ntsc_mode) {
 		MEM_WRITE_IO(0xd019, latch); \
 	}
 
-void vicClock() {
+
+// vicClock function pointer
+void (*vicClock)();
+	
+void vicClockRSID() {
 	_x += 1;
 	
 	if ((_x == 1) && !_y) {	// special case: in line 0 it is cycle 1		
@@ -157,6 +169,25 @@ void vicClock() {
 		}
 				
 		if (_y) { CHECK_IRQ(); }	// normal case: check in cycle 0				
+	}
+}
+
+// PSID performance optimization: disable what isn't used anyway
+// see Pipes, Eye_of_tiger: ca. 7% faster 
+void vicClockDisabledPSID() {
+	// completely removing the vicClock() call by using a dedicated
+	// play loop in system might save some more cycles but I'd rather
+	// limit the number of places that use PSID special handling..
+}
+void vicClockPSID() {
+	// still more expensive than the old emulator since it is checked
+	// every cycle.. but cheaper than correct handling.. as long as 
+	// PSID does no D012 or D011 polling, this should be OK
+	if (SYS_CYCLES() >= _cycles_next_irq_PSID) {
+		_cycles_next_irq_PSID = SYS_CYCLES() + _cycles_per_screen;
+		
+		_signal_irq = 0x80;
+		MEM_WRITE_IO(0xd019, 0x81);
 	}
 }
 
@@ -207,6 +238,8 @@ static void cacheRasterLatch() {
 }
 
 void vicReset(uint8_t is_rsid, uint8_t ntsc_mode) {
+	
+	vicClock = &vicClockRSID;	// default
 	_stunFunc = &intBadlineStun;
 	
 	vicSetModel(ntsc_mode); 
@@ -227,6 +260,8 @@ void vicReset(uint8_t is_rsid, uint8_t ntsc_mode) {
 	} else {
 		memWriteIO(0xd011, 0x1B);
 		memWriteIO(0xd012, 0x0); 	// raster must be below 0x100
+		
+		_cycles_next_irq_PSID = 0; // trigger it right away
 	}
 	_badline_den = 1;	// see d011-defaults above
 	
@@ -241,9 +276,10 @@ void vicSetDefaultsPSID(uint8_t timerDrivenPSID) {
 		
 	if (timerDrivenPSID) {
 //		memWriteIO(0xd019, 0x81);	// no need since not active before
-		
+		vicClock = &vicClockDisabledPSID;
 	} else {		
 		memWriteIO(0xd01a, 0x81);	// enable RASTER IRQ
+		vicClock = &vicClockPSID;
 	}
 }
 

@@ -18,7 +18,8 @@ void		vicSetModel(uint8_t ntsc_mode);
 void 		vicSetDefaultsPSID(uint8_t timerDrivenPSID);
 
 // clocking
-void		vicClock();
+//void		vicClock();
+extern void (*vicClock)();		// vicClock function pointer (crappy C requires different syntax here)
 
 // CPU interactions
 uint8_t		vicStunCPU();	// 0: no stun; 1: allow "bus write"; 2: stun

@@ -109,18 +109,16 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 				window.sid_measure_sum= 0;
 				window.sid_measure_runs= 0;
 			}
-			var t = performance.now();
-//			console.profile(); // if compiled using "emcc.bat --profiling"
-			
 			this._nextFrameCB(this);	// used for "interactive mode"
 			
+			var t = performance.now();
+//			console.profile(); // if compiled using "emcc.bat --profiling"
+						
 			var len= this.Module.ccall('computeAudioSamples', 'number');
 			if (len <= 0) {
 				this.resetDigiMeta();
 				return 1; // >0 means "end song"
-			}
-			this.updateDigiMeta();
-			
+			}			
 //			console.profileEnd();
 			window.sid_measure_sum+= performance.now() - t;
 			if (window.sid_measure_runs++ == 100) {
@@ -139,6 +137,7 @@ SIDBackendAdapter = (function(){ var $this = function (basicROM, charROM, kernal
 				}
 				window.sid_measure_avg= window.sid_measure_avg_sum/window.sid_measure_avg_runs;
 			}
+			this.updateDigiMeta();
 			return 0;	
 		},
 		getPathAndFilename: function(filename) {

@@ -21,7 +21,8 @@ void 		ciaReset(uint8_t is_rsid, uint8_t is_ntsc);
 void 		ciaSetDefaultsPSID(uint8_t is_timer_driven);
 
 // clocking
-void 		ciaClock();
+//void 		ciaClock();
+extern void (*ciaClock)();		// ciaClock function pointer (crappy C requires different syntax here)
 
 // CPU interactions
 uint8_t 	ciaNMI();

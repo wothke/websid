@@ -271,7 +271,7 @@ slip_status_t _slip_status;
 // incorrectly pick up some CIA change that has just happend in the ø1 phase)
 
 #define CHECK_FOR_IRQ() \
-	if ( vicIRQ() || ciaIRQ()) { \
+	if ( vicIRQ() || ciaIRQ() ) { \
 		if (_no_flag_i) { /* this will also let pass the 1st cycle of a SEI */\
 			COMMIT_TO_IRQ(); \
 		} else if (_exe_instr_opcode == SEI_OP) { \
@@ -998,7 +998,7 @@ void cpuIrqFlagPSID(uint8_t on) {
 //   which may well upset the correct CIA behavior.. (=> in any case it is nothing that the
 //   current test-suite would detect.. or currently complains about)
 
-#define READ_MODIFY_WRITE(mode, r, w, ...) /* r added  */ \
+#define READ_MODIFY_WRITE(mode, r, w, ...) \
     r = getInput(mode); \
 	int32_t rmw_addr= getOutputAddr(mode);\
 	if (rmw_addr == 0xd019) { /* only relevant usecase */\
@@ -1891,10 +1891,11 @@ static void cpuClockPSID() {
 
 	CHECK_FOR_IRQ();	// check 1st (so NMI can overrule if needed)
 
+	/* if a PSID depends on badline timing then by definition it MUST be an RSID!
 	uint8_t is_stunned;
 	CHECK_FOR_VIC_STUN(is_stunned);		// todo: check if some processing could be saved checking this 1st
 	if (is_stunned) return;
-
+	*/
 	if (_exe_instr_opcode < 0) {	// get next instruction
 
 		if (IS_IRQ_PENDING()) {	// interrupts are like a BRK command
