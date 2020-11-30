@@ -1,20 +1,20 @@
 /*
 * Handles the wave output of a single voice of the C64's "MOS Technology SID" (see 6581, 8580 or 6582).
 *
-* This includes handling of the involved oscillators and the actual output generation 
-* based on the selected waveform(s) and operating mode. (The resulting wave-output is later - not 
+* This includes handling of the involved oscillators and the actual output generation
+* based on the selected waveform(s) and operating mode. (The resulting wave-output is later - not
 * here - scaled using the output of the envelope generator and may be optionally processed via the SIDs
 * internal filter.)
 *
-* FIXME: Updates that are performed within the current sample (e.g. oscillator reset, WF, pulsewidth 
-* or frequency change) are not handled correctly. The wave output calculation does not currently 
-* consider the part which correctly should still be based on the previous setting. The flaw is most 
+* FIXME: Updates that are performed within the current sample (e.g. oscillator reset, WF, pulsewidth
+* or frequency change) are not handled correctly. The wave output calculation does not currently
+* consider the part which correctly should still be based on the previous setting. The flaw is most
 * relevant in FM/PWM digis (see Soundcheck.sid) but should not matter much in regular playback.
 *
 * WebSid (c) 2020 Jürgen Wothke
 * version 0.93
 *
-* Terms of Use: This software is licensed under a CC BY-NC-SA 
+* Terms of Use: This software is licensed under a CC BY-NC-SA
 * (http://creativecommons.org/licenses/by-nc-sa/4.0/).
 */
 
@@ -42,7 +42,7 @@
 #define NOISE_TRIGGER 0x80000		// threshold that triggers shift of the noise register
 #define NOISE_RESET 0x7ffffc		// which one is correct? 0x7ffff8?
 
-#ifdef USE_HERMIT_ANTIALIAS	
+#ifdef USE_HERMIT_ANTIALIAS
 const double SCALE_12_16 = ((double)0xffff) / 0xfff;
 #endif
 
@@ -112,37 +112,39 @@ static WaveformTables _wave_table;		// only need one instance of this
 // by EXORing it with the MSB of the respective previous oscillator:
 #define GET_RINGMOD_COUNTER() \
 	_ring_bit ? _counter ^ (_sid->getWaveGenerator(PREV_IDX(_voice_idx))->_counter & 0x800000) : _counter;
-	
-	
+
+
 // ------------------------ WaveGenerator impl ----------------------------------------
 
 WaveGenerator::WaveGenerator(SID* sid, uint8_t voice_idx) {
 	_sid = sid;
 	_voice_idx = voice_idx;
 
-	reset();
+//	reset();
 }
 
-void WaveGenerator::reset() {
+void WaveGenerator::reset(double cycles_per_sample) {
+	_cycles_per_sample = cycles_per_sample;
+
     _counter = _freq = _msb_rising = _ctrl = _test_bit = _sync_bit = _ring_bit = 0;
 	_pulse_width = 0;
-	
-#ifdef USE_HERMIT_ANTIALIAS	
+
+#ifdef USE_HERMIT_ANTIALIAS
 	_pulse_out = _freq_pulse_base = _freq_pulse_step = _freq_saw_step = 0;
 #else
-	_freq_inc_sample_inv = _ffff_freq_inc_sample_inv = 0;
+	_freq_inc_sample_inv = _ffff_freq_inc_sample_inv = _ffff_cycles_per_sample_inv = 0;
 	_pulse_width12 = _pulse_width12_neg = _pulse_width12_plus = 0;
 #endif
-	
+
 	_noise_oversample = _noisepos = _noiseout = 0;
 	_freq_inc_sample = _prev_wav_data = 0;
-	
+
 #ifdef PSID_DEBUG_ADSR
 	setMute(i != PSID_DEBUG_VOICE);
 #else
 	setMute(0);
 #endif
-	
+
 	_prev_wave_form_out = 0x7fff;	// use center to avoid distortions through envelope scaling
 	_noise_LFSR = NOISE_RESET;
 }
@@ -157,7 +159,7 @@ uint8_t	WaveGenerator::isMuted() {
 
 void WaveGenerator::setWave(uint8_t val) {
 	_ctrl = val;
-	
+
 	// performance optimization: read much more often then written
 	_test_bit = val & TEST_BITMASK;
 	_sync_bit = val & SYNC_BITMASK;
@@ -167,7 +169,7 @@ void WaveGenerator::setWave(uint8_t val) {
 void WaveGenerator::setPulseWidthLow(uint8_t val) {
 	_pulse_width = (_pulse_width & 0x0f00) | val;
 
-#ifdef USE_HERMIT_ANTIALIAS	
+#ifdef USE_HERMIT_ANTIALIAS
 	// 16 MSB pulse needed (input is 12-bit)
 	_pulse_out = (uint32_t)(_pulse_width * SCALE_12_16);
 #else
@@ -178,7 +180,7 @@ void WaveGenerator::setPulseWidthLow(uint8_t val) {
 void WaveGenerator::setPulseWidthHigh(uint8_t val) {
 	_pulse_width = (_pulse_width & 0xff) | ((val & 0xf) << 8);
 
-#ifdef USE_HERMIT_ANTIALIAS	
+#ifdef USE_HERMIT_ANTIALIAS
 	// 16 MSB pulse needed (input is 12-bit)
 	_pulse_out = (uint32_t)(_pulse_width * SCALE_12_16);
 #else
@@ -194,43 +196,44 @@ void WaveGenerator::updatePulseCache() {
 }
 #endif
 
-void WaveGenerator::updateFreqCache(double cycles_per_sample) {
-	_freq_inc_sample = cycles_per_sample * _freq;	// per 1-sample interval (e.g. ~22 cycles)
+void WaveGenerator::updateFreqCache() {
+	_freq_inc_sample = _cycles_per_sample * _freq;	// per 1-sample interval (e.g. ~22 cycles)
 #ifndef USE_HERMIT_ANTIALIAS
 	_freq_inc_sample_inv = 1.0 / _freq_inc_sample; 	// use faster multiplications later
-	_ffff_freq_inc_sample_inv = 0xffff / _freq_inc_sample;
+	_ffff_freq_inc_sample_inv = ((double)0xffff) / _freq_inc_sample;
+	_ffff_cycles_per_sample_inv = ((double)0xffff) / _cycles_per_sample;
 
 	// optimization for saw
-	uint16_t saw_sample_step = ((uint32_t)_freq_inc_sample) >> 8;
-	_saw_range = 0xffff - saw_sample_step;		
+	uint16_t saw_sample_step = ((uint32_t)_freq_inc_sample) >> 8;	// less than 16-bits
+	_saw_range = 0xffff - saw_sample_step;
 	_saw_base = saw_sample_step + _saw_range;		// includes  +saw_sample_step/2 error (same as in regular signal)
 #endif
-	
+
 	// oversample high freq noise to avoid excessive loudness (testcase: Empty.sid)
 	// at ~22 cycles per sample, frequencies above 0xBA2E should trigger noise recalc
 	// 2x within same sample and with 0xFFFF it should be almost 3x..
 	_noise_oversample = (uint8_t)round(_freq_inc_sample / NOISE_TRIGGER);
 	if (!_noise_oversample) _noise_oversample = 1;
-	
+
 #ifdef USE_HERMIT_ANTIALIAS
-	// optimization for Hermit's waveform generation:	
+	// optimization for Hermit's waveform generation:
 	_freq_saw_step = _freq_inc_sample / 0x1200000;			// for SAW
-	
+
 	_freq_pulse_base = ((uint32_t)_freq_inc_sample) >> 9;	// for PULSE: 15 MSB needed
 	_freq_pulse_step = 256 / (((uint32_t)_freq_inc_sample) >> 16);	// testcase: Dirty_64, Ice_Guys
 #else
 	updatePulseCache();
-#endif	
+#endif
 }
 
-void WaveGenerator::setFreqLow(uint8_t val, double cycles_per_sample) {
+void WaveGenerator::setFreqLow(uint8_t val) {
 	_freq = (_freq & 0xff00) | val;
-	updateFreqCache(cycles_per_sample);	// perf opt
+	updateFreqCache();	// perf opt
 }
 
-void WaveGenerator::setFreqHigh(uint8_t val, double cycles_per_sample) {
+void WaveGenerator::setFreqHigh(uint8_t val) {
 	_freq = (_freq & 0xff) | (val << 8);
-	updateFreqCache(cycles_per_sample);	// perf opt
+	updateFreqCache();	// perf opt
 }
 
 uint8_t WaveGenerator::getWave() {
@@ -249,10 +252,10 @@ void WaveGenerator::clockOscillator() {
 	// output is also reset and the pulse waveform output is
 	// held at a DC level; test bit has no influence on the envelope generator
 	// whatsoever!
-	
+
 	if (_test_bit) {
 		_counter = 0;
-		
+
 		// known limitation: reset would correctly occur AFTER a certain delay
 		// before which the original _noise_LFSR would just "decay" towards 0..
 		_noisepos = 0;
@@ -261,7 +264,7 @@ void WaveGenerator::clockOscillator() {
 		uint32_t prev_counter = _counter;
 
 		_counter = (_counter + _freq) & 0xffffff;
-		
+
 		// base for hard sync
 		_msb_rising = (_counter & 0x800000) > (prev_counter & 0x800000);
 	}
@@ -276,22 +279,22 @@ void WaveGenerator::syncOscillator() {
 	// voice 2 early on.. for some reason the instrument that starts on voice 1
 	// at about 45 secs (some combined waveform?) does not sound as crisp as it
 	// should.. (neither in Hermit's player)
-		
+
 	// intro noise in Martin Galway's Roland's Rat Race
 	// (https://www.youtube.com/watch?v=Zc91S1lrU1I) music.
-	
+
 	// the below logic is from the "previous oscillator" perspective
-	
+
 	if (!_freq) return;
-	
+
 	if (_msb_rising) {	// perf opt: use nested "if" to avoid unnecessary calcs up front
 		WaveGenerator *dest_voice = _sid->getWaveGenerator(NEXT_IDX(_voice_idx));
 		uint8_t dest_sync = dest_voice->_sync_bit;	// sync requested?
-		
+
 		if (dest_sync) {
 			// exception: when sync source is itself synced in the same cycle then
 			// destination is NOT synced (based on analysis performed by reSID team)
-						
+
 			if (!(_sync_bit && _sid->getWaveGenerator(PREV_IDX(_voice_idx))->_msb_rising)) {
 				dest_voice->_counter = 0;
 			}
@@ -308,14 +311,14 @@ void WaveGenerator::syncOscillator() {
 
 uint16_t WaveGenerator::combinedWF(double* wfarray, uint16_t index, uint8_t differ6581) {
 	//on 6581 most combined waveforms are essentially halved 8580-like waves
-	
+
 	if (differ6581 && _sid->_is_6581) index &= 0x7ff;	// todo: add getter for _sid var or replicate into WaveGenerator
 	/* orig
 	double combiwf = (wfarray[index] + _prev_wav_data) / 2;
 	_prev_wav_data = wfarray[index];
 	return (uint16_t)round(combiwf);
 	*/
-	
+
 	// optimization?
 	uint32_t combiwf = ((uint32_t)(wfarray[index] + _prev_wav_data)) >> 1;	// missing rounding might not make much of a difference
 	_prev_wav_data = wfarray[index];
@@ -331,19 +334,19 @@ uint16_t WaveGenerator::createTriangleOutput() {
 uint16_t WaveGenerator::createSawOutput() {	// test-case: Super_Huey.sid (2 saw voices), Alien.sid, Kawasaki_Synthesizer_Demo.sid
 	// WebSid renders output at the END of a (e.g. ~22 cycles) sample-interval (more correctly the output
 	// should actually use the average value between start/end - or actually oversample)
-	
-	// the raw output valid at this cycle will be systematically too high most of the time (since it only takes 
+
+	// the raw output valid at this cycle will be systematically too high most of the time (since it only takes
 	// the end-point of a usually rising curve).. since the error is a fixed offset this should not make any audible
 	// difference... but due to the fact that the curve's discontinuity (end of tooth) may occur
-	// anywhere *within* the sample-interval some kind of anti-aliasing should be added to avoid undesirable 
+	// anywhere *within* the sample-interval some kind of anti-aliasing should be added to avoid undesirable
 	// aliasing effects at the end of each saw-tooth
-//	return _counter >> 8;	// top 16-bits (actual saw output valid at this exatc clock cycle)
+	// return _counter >> 8;	// plain saw: top 16-bits (actual saw output valid at this exact clock cycle)
 
 
 #ifdef USE_HERMIT_ANTIALIAS
-	// Hermit's "anti-aliasing" seems to be quite a hack: I just compared the output to a "correctly averaged" result
-	// based on cycle-by-cycle oversampling. Hermit makes the curve steeper than it should be and his anti-aliasing
-	// at the discuntinuity is then also quite off (as compared to the oversampled curve). 
+	// Hermit's "anti-aliasing" seems to be quite a hack compared to the output of a "correctly averaged" result
+	// based on cycle-by-cycle oversampling: Hermit makes the curve steeper than it should be and his anti-aliasing
+	// at the discuntinuity is then also quite off (as compared to the oversampled curve).
 
 	double wfout = _counter >> 8;	// top 16-bits (actual saw output valid at this exatc clock cycle)
 	wfout += wfout * _freq_saw_step;	// Hermit uses a lookahead scheme! i.e. his output is off by 22 cycles/1 sample..
@@ -352,24 +355,24 @@ uint16_t WaveGenerator::createSawOutput() {	// test-case: Super_Huey.sid (2 saw 
 	}
 	return wfout;
 #else
-	// also should be faster than Hermit's impl
+	// this should also be slightly faster than Hermit's impl
 	if (_counter < _freq_inc_sample) {
 		// we are at the end of 1st step of a new sawtooth: but this sample still contains a part of the end
 		// of the previous sawtooth (i.e. the reset of the saw signal occured within this sample).. interpolate
 		// the respective parts to avoid aliasing effects
-					
+
 		double prop_down = _counter * _freq_inc_sample_inv; 	// proportion after reset
 
 		// the range that does not require interpolation is [_saw_sample_step/2 to 0xffff-_saw_sample_step/2],
-		// i.e. the available interpolation range is 0xffff-_saw_sample_step and the correct base would be 
+		// i.e. the available interpolation range is 0xffff-_saw_sample_step and the correct base would be
 		// _saw_sample_step/2
-		
-		// the below calc contains a deliberate excess offset of _saw_sample_step/2 so that the antialiased 
+
+		// the below calc contains a deliberate excess offset of _saw_sample_step/2 so that the antialiased
 		// sample here uses the same error as the regular samples generated in the "else" branch
-		
+
 //		return _saw_sample_step + (0xffff-_saw_sample_step)*(1-prop_down);
-		return  _saw_base - _saw_range * prop_down;	// same as above just using precalculated stuff
-	
+		return  _saw_base - _saw_range * prop_down;     // same as above just using precalculated stuff
+
 	} else {
 		// regular step-up of rising curve.. (result could be adjusted
 		// via freq specific offset to get to the "correct" average, i.e. half
@@ -381,10 +384,11 @@ uint16_t WaveGenerator::createSawOutput() {	// test-case: Super_Huey.sid (2 saw 
 
 #ifdef USE_HERMIT_ANTIALIAS
 void WaveGenerator::calcPulseBase(uint32_t* tmp, uint32_t* pw) {
+
 	// based on Hermit's impl
 	(*pw) = _pulse_out;				// 16 bit
 	(*tmp) = _freq_pulse_base;		// 15 MSB needed
-	
+
 	if ((0 < (*pw)) && ((*pw) < (*tmp))) { (*pw) = (*tmp); }
 	(*tmp) ^= 0xffff;
 	if ((*pw) > (*tmp)) { (*pw) = (*tmp); }
@@ -393,21 +397,21 @@ void WaveGenerator::calcPulseBase(uint32_t* tmp, uint32_t* pw) {
 
 uint16_t WaveGenerator::createPulseOutput(uint32_t tmp, uint32_t pw) {	// elementary pulse
 	if (_test_bit) return 0xffff;	// pulse start position
-	
+
 //	1) int32_t wfout = ((_counter>>12 >= _pulse_width))? 0 : 0xffff; // plain impl - inverted compared to resid
 //	2) int32_t wfout = ((_counter>>12 < _pulse_width))? 0 : 0xffff; // plain impl
-	
+
 	// Hermit's "anti-aliasing" pulse
-	
+
 	// note: the smaller the step, the slower the phase shift, e.g. ramp-up/-down
 	// rather than immediate switch (current setting does not cause much of an
 	// effect - use "0.1*" to make it obvious ) larger steps cause "sizzling noise"
-		
+
 	// test-case: Touch_Me.sid - for some reason avoiding the "division by zero"
 	// actually breaks this song..
-	
+
 //	double step = ((double)256.0) / (v->freq_inc_sample / (1<<16));	// Hermit's original shift-impl was prone to division-by-zero
-	
+
 	// simple pulse, most often used waveform, make it sound as clean as possible without oversampling
 	double lim;
 	int32_t wfout;
@@ -429,80 +433,68 @@ uint16_t WaveGenerator::createPulseOutput(uint32_t tmp, uint32_t pw) {	// elemen
 #else
 uint16_t WaveGenerator::createPulseOutput() {
 	if (_test_bit) return 0xffff;	// pulse start position
-	
-	// note: at the usual sample-rates (<50kHz) the shortest 
-	// pulse repetition interval takes about 10 samples, i.e. 
-	// a sample depends on data from (usually) one or at most two such 
-	// intervals. The smallest spikes that can be selected via 
+
+	// note: at the usual sample-rates (<50kHz) the shortest
+	// pulse repetition interval takes about 10 samples, i.e.
+	// a sample depends on data from (usually) one or at most two such
+	// intervals. The smallest spikes that can be selected via
 	// the pulse-width are significantly shorter, i.e. they may last
 	// just one clock-cycle and easily fit within a sample
-	// (a respective spike may then be surrounded on both 
+	// (a respective spike may then be surrounded on both
 	// sides by the respective inverted signal). The below impl
-	// tries to generate output that mimicks the results that would 
+	// tries to generate output that mimicks the results that would
 	// be achived when brute-force oversampling the output cycle-by-cycle.
-	
+
 	// there still are some relatively small errors as compared to the
 	// resampled signal (maybe due to the variing integer cycles per sample
-	// e.g. alternating 22/23 cycles, or some other rounding and/or precision 
-	// issue. errors seem to be largest when lowest pulsewidth nibble is >9 
-	// and bigger. but it looks good enough
-	
-	
+	// e.g. alternating 22/23 cycles, or some other rounding and/or precision
+	// issue.
+
 	// handle start of a new pulse (i.e. high to low toggle)
-	
-	// XXX issue: at the very start of a pulse something still seems to go wrong: see Slapshot_1989
-	// which just re-gates a Pulse waveform (with a PW FFFF).. what is and what should be happending here?	
-	// is it a FFF specific issue or due to the 0 counter?? what is the base for that digi anyway??
-	// plötzlich läuft Slapshot auch so.... aber We_Are_Demo braucht Hermit...
-	
-	
+
 	if (_counter < _freq_inc_sample) {
-		
 		// pulse was reset less than _freq_inc_sample ago:
 		// i.e. transition from high to low within this sample
-		
+
 		if(_counter < _pulse_width12) {
 			// 1a) new pulse is still low (i.e. it was high for some time
-			// during the previous pulse and until now has been low 
+			// during the previous pulse and until now still has been low
 			// for the current pulse
-			
-			uint32_t prev_pulse_high = _freq_inc_sample - _counter; 	// total time spent in previous pulse
-			if (_pulse_width12_neg < prev_pulse_high) {	// previous may not have been high all the time
-				prev_pulse_high = _pulse_width12_neg;
-			}
 
-			// issue: with PW 0xfff output stays 0 where it should be 10 (i.e. 20 samples
-			// average with a single 0xff signal).. with smaller PW the signal (too) slowly
-			// detaches from from 0 (testcase; _freq = 0xffff;_pulse_width = 0xffe;)
-			// interestingly the opposite effect seems to occur with very small PW (see below)				
+			// _counter reflects the freq increments that have already been
+			// applied so far:
+			uint32_t np = _counter / _freq;		// number of clocks spent in the new pulse
+			double op = _cycles_per_sample - np;// number of clocks spent in the old pulse
 
-			return (uint16_t)(prev_pulse_high * _ffff_freq_inc_sample_inv);	// pretty close to correct
+			// how many clocks can the PULSE be HIGH with the current FREQ?
+			double highc = _pulse_width12_neg / _freq;
+			if (highc > op) highc = op;
+
+			return highc * _ffff_cycles_per_sample_inv;
 		} else {
-			// 1b) pulse already toggeled back to HIGH containing a short
-			// LOW spike (the relevant part of the previous pulse must
-			// have been HIGH) (testcase: _freq = 0xffff;_pulse_width = 0xff;)
-			
-			uint32_t time_high1 = _counter - _pulse_width12; 	// time high in this pulse
-			uint32_t time_high2 = (uint32_t)_freq_inc_sample - _counter;	// total time spent in previous pulse XXX provide a cached int version?
-			
-			// issue: testcase; _freq = 0xffff;	_pulse_width = 0x8; the curve should stay
-			// at 0xff but it incorrectly moves (a little) aways with rising pulsewidth
-			// with 0x10 the average starts and is identical result 
-			
-			return (uint16_t)((time_high1 + time_high2) * _ffff_freq_inc_sample_inv) ;	// somewhat off
+			// 1b) pulse already toggeled back to HIGH, i.e. there was but a
+			// short LOW-spike during the start of this sample (since even the
+			// shortest PULSE-duration is multipe samples long, the signal must have
+			// been HIGH for all of the previous sample)
+			// (testcase: _freq = 0xffff;_pulse_width = 0xff;)
+
+			uint32_t lowc = _pulse_width12 / _freq;
+			double highc = _cycles_per_sample - lowc;
+
+			return highc * _ffff_cycles_per_sample_inv;
 		}
 	}
-	
-	// handle lo/hi transition within the current pulse (the 2 "new pulse" scenarios 
+
+	// handle lo/hi transition within the current pulse (the 2 "new pulse" scenarios
 	// are already covered above, i.e. the only scenario left here is the signal toggle
-	// from low to hi based on the pulse-width.. (this also means that here the 
+	// from low to hi based on the pulse-width.. (this also means that here the
 	// signal was already low during the previous sample)
 	else if ((_counter > _pulse_width12) && (_counter  < _pulse_width12_plus)) {
-					
-		uint32_t time_high = _counter - _pulse_width12;			// time that signal was high
-		return (uint16_t)(time_high * _ffff_freq_inc_sample_inv);		// this calc seems to be off the most
+
+		double highc = (_counter - _pulse_width12) / _freq;
+		return highc * _ffff_cycles_per_sample_inv;
 	}
-	
+
 //	return (_counter >> 12) < _pulse_width ? 0 : 0xffff;	// plain pulse
 	return _counter < _pulse_width12 ? 0 : 0xffff;	// plain pulse
 }
@@ -516,26 +508,26 @@ static const uint32_t COMBINED_NOISE_MASK = ~((1<<22)|(1<<20)|(1<<16)|(1<<13)|(1
 uint16_t WaveGenerator::createNoiseOutput(uint16_t outv, uint8_t is_combined) {
 	// "random values are output through the waveform generator according to the
 	// frequency setting" (http://www.ffd2.com/fridge/blahtune/SID.primer)
-	
+
 	// known limitation of current impl: 1) "_noise_LFSR" shift register is only
 	// updated when noise is actually used (correctly it should always be clocked -
 	// but given the rather expensive _noiseout calculation it seems acceptable to
 	// do both on demand only)
-			
+
 	// testcase: Kettle.sid >> 19 is to fast
 	uint32_t p = _counter >> 20;	// check complete "prefix" (not just bit 19) so as not to miss 2x updates..
-		
+
 	if (_noisepos != p) {
 		_noisepos = p;
-		
+
 		// impl consistent with: http://www.sidmusic.org/sid/sidtech5.html
 		// doc here is probably wrong: http://www.oxyron.de/html/registers_sid.html
-		
+
 		uint32_t noiseout = 0;
 		for (uint8_t i= 0; i<_noise_oversample; i++) {
 			// clock the noise shift register
 			_noise_LFSR = (_noise_LFSR << 1) | (GET_BIT(_noise_LFSR, 22) ^ GET_BIT(_noise_LFSR, 17));
-			
+
 			// extract bits used for wave-output
 			//                          src-bit-pos - dest-bit-pos
 			uint32_t o = ((_noise_LFSR >> (22          - 7) ) & 0x80 ) |
@@ -547,27 +539,27 @@ uint16_t WaveGenerator::createNoiseOutput(uint16_t outv, uint8_t is_combined) {
 						 ((_noise_LFSR >> (4           - 1) ) & 0x02 ) |
 						 ((_noise_LFSR >> (2           - 0) ) & 0x01 );
 
-			noiseout += o;			
-						
+			noiseout += o;
+
 			if (is_combined) {
 				// test-case: Hollywood_Poker_Pro.sid (also Wizax_demo.sid, Billie_Jean.sid)
-				
+
 				// The wave-output of the SOASC recording of the above song (at the very
 				// beginning) shows a pulse-wave that is overlayed with a combined "triangle-
 				// noise" waveform (without the below there would be strong noise that
 				// doesn't belong there)
-				
+
 				// according to resid team's analysis "waveform bits are and-ed into the
 				// shift register via the shift register outputs" and thereby the noise
 				// zeros-out after a few cycles"
-				
+
 				// (as long as noise is not actually used there does not seem to be a point
 				// to calculate the respective feedback loop.. eventhough other combined
 				// waveforms could squelch the noise by the same process, requiring a GATE
 				// to re-activate it.. have yet to find a song that would use that approach)
-				
+
 				o &= outv >> 8;	// result of the combined waveform (here the bits are cleared)
-				
+
 				uint32_t feedback = (GET_BIT(o, 7) << 22) |
 									(GET_BIT(o, 6) << 20) |
 									(GET_BIT(o, 5) << 16) |
@@ -576,13 +568,39 @@ uint16_t WaveGenerator::createNoiseOutput(uint16_t outv, uint8_t is_combined) {
 									(GET_BIT(o, 2) << 7) |
 									(GET_BIT(o, 1) << 4) |
 									(GET_BIT(o, 0) << 2);
-				
+
 				_noise_LFSR &= COMBINED_NOISE_MASK | feedback;	// feed back into shift register
 			}
-		}		
+		}
 		_noiseout = (noiseout * 0x101) / _noise_oversample;	// scale 8-bit to 16-bit
 	}
 	return _noiseout;
+}
+
+uint8_t	WaveGenerator::getOsc() {
+	// What is commonly/incorrectly referred to as the "value of the oscillator" (which is
+	// returned in register D41B).. this value is NOT the oscillator but it is actually WF dependent!
+	// For practical purposes combined WFs seem to be irrelevant here and the below incorrect
+	// approximation seems to be good enough.
+
+	uint16_t outv = 0xffff;
+
+	if (_ctrl & TRI_BITMASK) {
+		outv &= createTriangleOutput();
+	}
+	// CAUTION: anti-aliasing MUST NOT be used here  (testcase; we_are_demo_tune_2)
+	if (_ctrl & SAW_BITMASK) {
+		outv &= _counter >> 8;							// plain saw
+	}
+	if (_ctrl & PULSE_BITMASK) {
+		outv &= _counter < _pulse_width12 ? 0 : 0xffff;	// plain pulse
+	}
+
+	if (_ctrl & NOISE_BITMASK)   {
+		outv &= createNoiseOutput(outv, _ctrl & 0x70);
+	}
+
+	return outv >> 8;
 }
 
 uint16_t WaveGenerator::getOutput() {
@@ -590,94 +608,87 @@ uint16_t WaveGenerator::getOutput() {
 
 	// FIXME would it be faster to install wf specific handler functions when wf is set? saving some
 	// repeated ifs below? but how slow is the function call?
-	
-	/* XXX this seems to be redundant - see test in calling method (except for stripped multi-SID impl - which doesn't matter)
-	if (!_is_muted) {
-	*/
-		int8_t combined = 0;	// flags specifically handled "combined waveforms" (not all)
-		
-		// use special handling for certain combined waveforms
-		uint16_t plsout;
-		if ((_ctrl & PULSE_BITMASK)) {
+
+	int8_t combined = 0;	// flags specifically handled "combined waveforms" (not all)
+
+	// use special handling for certain combined waveforms
+	uint16_t plsout;
+	if ((_ctrl & PULSE_BITMASK)) {
 #ifdef USE_HERMIT_ANTIALIAS
-			uint32_t tmp, pw;	// 16 bits used
-			calcPulseBase(&tmp, &pw);
+		uint32_t tmp, pw;	// 16 bits used
+		calcPulseBase(&tmp, &pw);
 #endif
-			
-			if (((_ctrl & 0xf0) == PULSE_BITMASK)) {
-				// pulse only
+
+		if (((_ctrl & 0xf0) == PULSE_BITMASK)) {
+			// pulse only
 #ifdef USE_HERMIT_ANTIALIAS
-				plsout = createPulseOutput(tmp, pw);
+			plsout = createPulseOutput(tmp, pw);
 #else
-				plsout = createPulseOutput();
+			plsout = createPulseOutput();
 #endif
-			} else {
-				// combined waveforms with pulse (all except noise)
-				
-#ifdef USE_HERMIT_ANTIALIAS
-				plsout =  ((tmp >= pw) || _test_bit) ? 0xffff : 0; //(this would be enough for simple but aliased-at-high-pitches pulse)
-#else
-				// FIXME why does Hermit not use the regular pulse output? maybe better just use the raw pulse logik again?
-				plsout = createPulseOutput();
-	//			plsout =  ((_counter >> 12 >= _pulse_width) || _test_bit) ? 0xffff : 0;
-#endif
-				
-				if ((_ctrl & TRI_BITMASK) && ++combined)  {
-					if (_ctrl & SAW_BITMASK) {	// PULSE & TRIANGLE & SAW	- like in Lenore.sid
-#ifdef USE_HERMIT_ANTIALIAS
-						outv = plsout ? combinedWF(_wave_table.PulseTriSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
-#else
-						outv = plsout ? combinedWF(_wave_table.PulseTriSaw_8580, _counter >> 12, 1) : 0;	// 12 MSB needed
-#endif
-					} else {
-						// PULSE & TRIANGLE - like in Kentilla, Convincing, Clique_Baby, etc
-						// a good test is Last_Ninja:6 voice 1 at 35secs; here Hermit's
-						// original PulseSaw settings seem to be lacking: the respective
-						// sound has none of the crispness nor volume of the original
-						
-						uint32_t c = GET_RINGMOD_COUNTER();
-						outv = plsout ? combinedWF(_wave_table.PulseTri_8580, (c ^ (c & 0x800000 ? 0xffffff : 0)) >> 11, 0) : 0;	// either on or off						
-					}
-				} else if ((_ctrl & SAW_BITMASK) && ++combined)  {	// PULSE & SAW - like in Defiler.sid, Neverending_Story.sid
-#ifdef USE_HERMIT_ANTIALIAS
-					outv = plsout ? combinedWF(_wave_table.PulseSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
-#else
-					outv = plsout ? combinedWF(_wave_table.PulseSaw_8580, _counter >> 12, 1) : 0;	// 12 MSB needed
-#endif
-				}
-			}
-		} else if ((_ctrl & TRI_BITMASK) && (_ctrl & SAW_BITMASK) && ++combined) {	// TRIANGLE & SAW - like in Garden_Party.sid
-#ifdef USE_HERMIT_ANTIALIAS
-			uint32_t tmp = _counter >> 12;
-			outv = combinedWF(_wave_table.TriSaw_8580, tmp, 1);	// tmp 12 MSB
-#else
-			outv = combinedWF(_wave_table.TriSaw_8580, _counter >> 12, 1);	// 12 MSB needed
-#endif
-		}
-				
-		// for the rest mix the oscillators with an AND operation as stated
-		// in the SID's reference manual - even if this is absolutely wrong
-		if (!combined) {			
-			if (_ctrl & TRI_BITMASK)	outv &= createTriangleOutput();			
-			if (_ctrl & SAW_BITMASK)	outv &= createSawOutput();
-			if (_ctrl & PULSE_BITMASK)	outv &= plsout;
-		}
-		
-		// handle noise last - since it may depend on the effect of the other waveforms
-		if (_ctrl & NOISE_BITMASK)   {
-			outv &= createNoiseOutput(outv, _ctrl & 0x70);
-		}
-		
-		// emulate waveform 00 floating wave-DAC
-		if (_ctrl & 0xf0) {	// TODO: find testcase song where this is relevant..
-			_prev_wave_form_out = outv;
 		} else {
-			// no waveform set
-			outv = _prev_wave_form_out;
+			// combined waveforms with pulse (all except noise)
+
+#ifdef USE_HERMIT_ANTIALIAS
+			plsout =  ((tmp >= pw) || _test_bit) ? 0xffff : 0; //(this would be enough for simple but aliased-at-high-pitches pulse)
+#else
+			// FIXME why does Hermit not use the regular pulse output? maybe better just use the raw pulse logik again?
+			plsout = createPulseOutput();
+//			plsout =  ((_counter >> 12 >= _pulse_width) || _test_bit) ? 0xffff : 0;
+#endif
+
+			if ((_ctrl & TRI_BITMASK) && ++combined)  {
+				if (_ctrl & SAW_BITMASK) {	// PULSE & TRIANGLE & SAW	- like in Lenore.sid
+#ifdef USE_HERMIT_ANTIALIAS
+					outv = plsout ? combinedWF(_wave_table.PulseTriSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
+#else
+					outv = plsout ? combinedWF(_wave_table.PulseTriSaw_8580, _counter >> 12, 1) : 0;	// 12 MSB needed
+#endif
+				} else {
+					// PULSE & TRIANGLE - like in Kentilla, Convincing, Clique_Baby, etc
+					// a good test is Last_Ninja:6 voice 1 at 35secs; here Hermit's
+					// original PulseSaw settings seem to be lacking: the respective
+					// sound has none of the crispness nor volume of the original
+
+					uint32_t c = GET_RINGMOD_COUNTER();
+					outv = plsout ? combinedWF(_wave_table.PulseTri_8580, (c ^ (c & 0x800000 ? 0xffffff : 0)) >> 11, 0) : 0;	// either on or off
+				}
+			} else if ((_ctrl & SAW_BITMASK) && ++combined)  {	// PULSE & SAW - like in Defiler.sid, Neverending_Story.sid
+#ifdef USE_HERMIT_ANTIALIAS
+				outv = plsout ? combinedWF(_wave_table.PulseSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
+#else
+				outv = plsout ? combinedWF(_wave_table.PulseSaw_8580, _counter >> 12, 1) : 0;	// 12 MSB needed
+#endif
+			}
 		}
-	/*
+	} else if ((_ctrl & TRI_BITMASK) && (_ctrl & SAW_BITMASK) && ++combined) {	// TRIANGLE & SAW - like in Garden_Party.sid
+#ifdef USE_HERMIT_ANTIALIAS
+		uint32_t tmp = _counter >> 12;
+		outv = combinedWF(_wave_table.TriSaw_8580, tmp, 1);	// tmp 12 MSB
+#else
+		outv = combinedWF(_wave_table.TriSaw_8580, _counter >> 12, 1);	// 12 MSB needed
+#endif
+	}
+
+	// for the rest mix the oscillators with an AND operation as stated
+	// in the SID's reference manual - even if this is absolutely wrong
+	if (!combined) {
+		if (_ctrl & TRI_BITMASK)	outv &= createTriangleOutput();
+		if (_ctrl & SAW_BITMASK)	outv &= createSawOutput();
+		if (_ctrl & PULSE_BITMASK)	outv &= plsout;
+	}
+
+	// handle noise last - since it may depend on the effect of the other waveforms
+	if (_ctrl & NOISE_BITMASK)   {
+		outv &= createNoiseOutput(outv, _ctrl & 0x70);
+	}
+
+	// emulate waveform 00 floating wave-DAC
+	if (_ctrl & 0xf0) {	// TODO: find testcase song where this is relevant..
+		_prev_wave_form_out = outv;
 	} else {
-		outv = 0;	// no signal
-	}*/
+		// no waveform set
+		outv = _prev_wave_form_out;
+	}
 	return outv;
 }

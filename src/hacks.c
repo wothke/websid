@@ -204,7 +204,7 @@ static uint8_t weAreDemoStun(uint8_t x, uint16_t y, uint8_t cpr) {
 	// would need to be handled differently (see "line-break" at cycle 58)
 
 	if (memReadIO(0xd015) == 0xff) {
-		// flaw: for line 67 sprite 2 would need to akready have been read
+		// flaw: for line 67 sprite 2 would need to already have been read
 		// in line 66, etc (see other boundary lines)
 		if (y >= 67 && y < 88) {
 			// sprites 2,3,4; i.e. cycles 62,63//1,2//3,4

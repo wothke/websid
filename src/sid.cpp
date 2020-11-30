@@ -209,7 +209,7 @@ void SID::resetEngine(uint32_t sample_rate, uint8_t is_6581, uint32_t clock_rate
 	_cycles_per_sample = ((double)clock_rate) / sample_rate;	// corresponds to Hermit's clk_ratio
 
 	for (uint8_t i= 0; i<3; i++) {
-		_wave_generators[i]->reset();
+		_wave_generators[i]->reset(_cycles_per_sample);
 	}
 	
 	// reset envelope generator
@@ -347,8 +347,8 @@ uint8_t SID::readMem(uint16_t addr) {
 	uint16_t offset = addr - _addr;
 	
 	switch (offset) {
-	case 0x1b:	// oscillator
-		return _wave_generators[2]->getOutput() >> 8;
+	case 0x1b:	// "oscillator" .. docs once again are wrong since this is WF specific!
+		return _wave_generators[2]->getOsc();
 		
 	case 0x1c:	// envelope
 		return _env_generators[2]->getOutput();
@@ -396,12 +396,12 @@ void SID::poke(uint8_t reg, uint8_t val) {
     switch (reg) {
         case 0x0: {
 			WaveGenerator* wave_gen = _wave_generators[voice_idx];
-			wave_gen->setFreqLow(val, _cycles_per_sample);
+			wave_gen->setFreqLow(val);
             break;
         }
         case 0x1: {
 			WaveGenerator* wave_gen = _wave_generators[voice_idx];
-			wave_gen->setFreqHigh(val, _cycles_per_sample);
+			wave_gen->setFreqHigh(val);
             break;
         }
         case 0x2: {

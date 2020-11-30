@@ -13,13 +13,10 @@
 #include "base.h"
 
 
-// FIXME new resampling seems to cause problems: see We_Are_Demo_tune_2.sid!
-// other test cases: Synthesis.sid
-// note: performance wise the difference between the 2 impls seems to be neglegible,
-// i.e. for 8-SID song the new impl is ~1% faster in total.
-// maybe Hermit's impl deliberately tries to also model some additional D/A
-// conversion effect - which my interpolation doesn't?
-#define USE_HERMIT_ANTIALIAS
+// Hermit's impls are quite a bit off as compared to respective oversampled
+// signals. My new impl now should be much closer to the real thing. For
+// now I am keeping Hermits code to ease potential cross-checks.
+//#define USE_HERMIT_ANTIALIAS
 
 class WaveGenerator {
 protected:
@@ -27,7 +24,7 @@ protected:
 	
 	WaveGenerator(class SID* sid, uint8_t voice_idx);
 	
-	void reset();
+	void reset(double cycles_per_sample);
 	
 	// oscillator handling
 	void		clockOscillator();
@@ -44,16 +41,17 @@ protected:
 	void		setPulseWidthHigh(uint8_t val);
 	uint16_t	getPulse();
 
-	void		setFreqLow(uint8_t val, double cycles_per_sample);
-	void		setFreqHigh(uint8_t val, double cycles_per_sample);
+	void		setFreqLow(uint8_t val);
+	void		setFreqHigh(uint8_t val);
 	uint16_t	getFreq();
 	
 	// waveform generation
 	uint16_t	getOutput();
+	uint8_t		getOsc();
 	
 private:
 	// utils for waveform generation
-	void		updateFreqCache(double cycles_per_sample);
+	void		updateFreqCache();
 	uint16_t	combinedWF(double* wfarray, uint16_t index, uint8_t differ6581);
 	uint16_t	createTriangleOutput();
 	uint16_t	createSawOutput();
@@ -70,6 +68,7 @@ private:
 private:
 	class SID*	_sid;
 	uint8_t		_voice_idx;
+	double		_cycles_per_sample;
 
 	uint8_t		_is_muted;			// player's separate "mute" feature
 	
@@ -94,18 +93,19 @@ private:
 	uint32_t	_freq_pulse_base;	// Hermit's "anti-aliasing"
 	double		_freq_pulse_step;	// Hermit's "anti-aliasing"
 	
-	// saw waveform
+		// saw waveform
 	double		_freq_saw_step;		// Hermit's "anti-aliasing"	
 #else
 	double		_freq_inc_sample_inv;
 	double		_ffff_freq_inc_sample_inv;
+	double		_ffff_cycles_per_sample_inv;
 	uint32_t	_pulse_width12;
 	uint32_t	_pulse_width12_neg;
 	uint32_t	_pulse_width12_plus;
 	
 		// saw waveform
 	uint16_t	_saw_range;
-	uint16_t	_saw_base;
+	uint32_t	_saw_base;
 #endif
 
 		// noise waveform

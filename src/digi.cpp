@@ -87,7 +87,8 @@ int8_t DigiDetector::routeDigiSignal(Filter *filter, int32_t *digi_out,
 									int32_t *outf, int32_t *outo) {
 
 	if ((_used_digi_type != DigiNone) && _digi_enabled) {
-		(*digi_out) = getSample();
+	
+		(*digi_out) = getSample();	// used for "scope"
 
 		// note: _used_digi_type can change within same song.. (see Storebror.sid)
 
@@ -163,7 +164,8 @@ void DigiDetector::recordSample(uint8_t sample, uint8_t voice) {
 	// the interval of the current audio sample will lead to some kind
 	// of aliasing, i.e. if the signal was "correctly" sampled every cycle
 	// then the average across the sample should be different from the "last
-	// written" value (which is currently used above).
+	// written" value (which is currently used above). Distortions are probably
+	// worst where the modulated signal has been anti-aliased!
 
 	// however there probably are additional electronic component effects,
 	// which I am currently not handling at all and which should play a
@@ -307,7 +309,6 @@ uint8_t DigiDetector::handleFreqModulationDigi(uint8_t voice, uint8_t reg, uint8
 			case 0x9:	// TEST/GATE
 				if ((_freq_detect_state[voice] == FreqPrep) && isWithinFreqDetectTimeout(voice)) {
 					_freq_detect_state[voice] = FreqSet;	// we are getting closer
-		//XXX			_freq_detect_ts[voice] = sysCycles();
 				} else {
 					_freq_detect_state[voice] = FreqIdle;	// just to reduce future comparisons
 				}
@@ -316,7 +317,6 @@ uint8_t DigiDetector::handleFreqModulationDigi(uint8_t voice, uint8_t reg, uint8
 				if ((_freq_detect_state[voice] == FreqSet) && isWithinFreqDetectTimeout(voice)) {
 					// variant 1: sample set after GATE
 					_freq_detect_state[voice] = FreqVariant1;	// bring on that sample!
-		//XXX			_freq_detect_ts[voice] = sysCycles();
 				} else if ((_freq_detect_state[voice] == FreqVariant2) && isWithinFreqDetectTimeout(voice)) {
 					// variant 2: sample set before GATE
 					return recordFreqSample(voice, _freq_detect_delayed_sample[voice]);
@@ -476,6 +476,7 @@ uint8_t DigiDetector::isMahoneyDigi() {
 
 	// song using this from main-loop - test-case: Acid_Flashback.sid
 
+	// FIXME why not use memReadIO directly?
 	if ( (SID::peek(_base_addr + 0x17) == 0x3) && 	// voice 1&2 through filter
 		 (SID::peek(_base_addr + 0x15) == 0xff) &&
 		 (SID::peek(_base_addr + 0x16) == 0xff) &&		// correct filter cutoff
@@ -495,10 +496,8 @@ uint8_t DigiDetector::isMahoneyDigi() {
 			_sid->setMute(1, 1);
 			_sid->setMute(2, 1);
 
-			return 1;	// XXX FIXME why was it below?!!!
+			return 1;
 		}
-
-//		return 1;
 	}
 	return 0;
 }
@@ -704,9 +703,11 @@ void DigiDetector::resetCount() {
 			// just be temporarily suspended).. but it seems to be good enough for now
 
 			// testcase: Soundcheck.sid => sporadic blip due to "un-mute"
+
 			_sid->setMute(0, 0);
 			_sid->setMute(1, 0);
 			_sid->setMute(2, 0);
+
 			_digi_source = 0;			// restart detection
 			_used_digi_type = DigiNone;
 		} else {
@@ -834,7 +835,7 @@ uint8_t DigiDetector::detectSample(uint16_t addr, uint8_t value) {
 	if (_is_rsid && (addr == (_base_addr + 0x18))) {
 		if(assertSameSource(0)) recordSample(isMahoneyDigi() ? _mahoneySample[value] : getD418Sample(value), 0);	// this may lead to false positives..
 	}
-	if (!_is_compatible) {	// XXX avoid repeated check.. see above.. cleanup!
+	if (!_is_compatible) {	// FIXME avoid repeated check.. see above.. cleanup!
 		handlePsidDigi(addr, value);
 	}
 	return 0;
