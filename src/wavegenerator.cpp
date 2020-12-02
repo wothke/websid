@@ -6,7 +6,7 @@
 * here - scaled using the output of the envelope generator and may be optionally processed via the SIDs
 * internal filter.)
 *
-* FIXME: Updates that are performed within the current sample (e.g. oscillator reset, WF, pulsewidth
+* Limitation: Updates that are performed within the current sample (e.g. oscillator reset, WF, pulsewidth
 * or frequency change) are not handled correctly. The wave output calculation does not currently
 * consider the part which correctly should still be based on the previous setting. The flaw is most
 * relevant in FM/PWM digis (see Soundcheck.sid) but should not matter much in regular playback.
@@ -607,7 +607,7 @@ uint16_t WaveGenerator::getOutput() {
 	uint16_t outv = 0xffff;
 
 	// FIXME would it be faster to install wf specific handler functions when wf is set? saving some
-	// repeated ifs below? but how slow is the function call?
+	// repeated ifs below? or at least handle via switch/case?
 
 	int8_t combined = 0;	// flags specifically handled "combined waveforms" (not all)
 
@@ -632,7 +632,7 @@ uint16_t WaveGenerator::getOutput() {
 #ifdef USE_HERMIT_ANTIALIAS
 			plsout =  ((tmp >= pw) || _test_bit) ? 0xffff : 0; //(this would be enough for simple but aliased-at-high-pitches pulse)
 #else
-			// FIXME why does Hermit not use the regular pulse output? maybe better just use the raw pulse logik again?
+			// FIXME maybe better just use the raw pulse logik again?
 			plsout = createPulseOutput();
 //			plsout =  ((_counter >> 12 >= _pulse_width) || _test_bit) ? 0xffff : 0;
 #endif

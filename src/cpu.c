@@ -60,7 +60,7 @@
 * added structuring elements. However, riddiculous as it may seem, the WebAssembly
 * implementations of certain browsers (e.g. Google Chrome) are significantly slowed
 * down by additional function call nesting (it doesn't seem to affect Firefox that
-* much though). It actually seems to be useful to remove certain function calls and
+* much though). It actually seems to be useful to remove certain function calls
 * and instead inline the code via macros. Eventhough high-end mobile phones have
 * become fast enough in the past couple of years to run the emulator without a
 * hitch, there are quite a few users with somewhat older hardware that is already
@@ -134,7 +134,6 @@ static uint8_t _s; 				// stack pointer
 static uint8_t _p;					// status register (see above flags)
 static uint8_t _no_flag_i;
 
-#define IRQ_LEAD_DEFAULT 2
 
 // compiler used by EMSCRIPTEN is actually too dumb to even properly use
 // "inline" for the below local function (using macros as a workaround now)!
@@ -152,7 +151,6 @@ static uint8_t _no_flag_i;
 		_no_flag_i = 1; \
 		_p &= ~(int32_t)FLAG_I; \
 	}
-
 
 
 // ---- interrupt handling ---
@@ -223,7 +221,8 @@ static uint8_t _no_flag_i;
 // (use SEI in the IRQ handler after the flag already had been set)
 // Vaakataso.sid, Vicious_SID_2-Carmina_Burana.sid
 
-
+// required lead time in cycles before IRQ can trigger
+#define IRQ_LEAD_DEFAULT 2
 static uint8_t _interrupt_lead_time = IRQ_LEAD_DEFAULT;
 
 static uint8_t _irq_committed = 0;	// CPU is committed to running the IRQ
@@ -259,7 +258,7 @@ slip_status_t _slip_status;
 		_irq_line_ts = SYS_CYCLES();	/* ts when line was activated */ \
 	}
 
-// FIXME correctly the IRQ check should be performed 1x, at the right moment, within each
+// FIXME: correctly the IRQ check should be performed 1x, at the right moment, within each
 // executed command! i.e. the number of checks could be reduced by a factor of 2-4! also
 // that would avoid having to do post mortem analysis of what may or may not have happened
 // before - hence avoiding all the delay calculations used below... it would also automatically
@@ -380,14 +379,12 @@ enum {
 	plp, rla, rol, ror, rra, rti, rts, sax, sbc, sbx, sec, sed, sei, sha, shs, shx,
 	shy, slo, sre, sta, stx, sty, tax, tay, tsx, txa, txs, tya,
 	// added pseudo OPs (replacing unusable JAM OPs):
-	sti, stn, nul
+	sti, stn
 };
 
-// artificial OPs patched in the positions of unsable JAM ops to ease impl:
-
-const static uint8_t START_IRQ_OP = 0x02;	// "sti" pseudo OP for interrupt handling
-const static uint8_t START_NMI_OP = 0x12;	// "stn"             "
-const static uint8_t NULL_OP = 0x22;		// "nul" means "empty main"
+// pseudo OPs patched in the positions of unsable JAM ops to ease handling:
+const static uint8_t START_IRQ_OP = 0x02;	// "sti" pseudo OP for IRQ handling
+const static uint8_t START_NMI_OP = 0x12;	// "stn" pseudo OP for NMI handling
 
 const static uint8_t SEI_OP = 0x78;			// regular opcode
 
@@ -397,7 +394,7 @@ static uint8_t _opc;						// last executed opcode
 static const int32_t _mnemonics[256] = {
 	brk,ora,sti,slo,nop,ora,asl,slo,php,ora,asl,anc,nop,ora,asl,slo,
 	bpl,ora,stn,slo,nop,ora,asl,slo,clc,ora,nop,slo,nop,ora,asl,slo,
-	jsr,and,nul,rla,bit,and,rol,rla,plp,and,rol,anc,bit,and,rol,rla,
+	jsr,and,jam,rla,bit,and,rol,rla,plp,and,rol,anc,bit,and,rol,rla,
 	bmi,and,jam,rla,nop,and,rol,rla,sec,and,nop,rla,nop,and,rol,rla,
 	rti,eor,jam,sre,nop,eor,lsr,sre,pha,eor,lsr,alr,jmp,eor,lsr,sre,
 	bvc,eor,jam,sre,nop,eor,lsr,sre,cli,eor,nop,sre,nop,eor,lsr,sre,
@@ -966,10 +963,45 @@ void cpuIrqFlagPSID(uint8_t on) {
 	SETFLAG_I(on);
 }
 
+void runIRQ() {
+	push(_pc >> 8);		// where to resume after the interrupt
+	push(_pc & 0xff);
+
+	if (_opc == SEI_OP /*&& (_slip_status == SLIPPED_SEI)*/) {	// 2nd test should be redundant
+		// if IRQ occurs while SEI is executing then the Flag_I should also
+		// be pushed to the stack, i.e. it RTI will then NOT clear Flag_I!
+		SETFLAG_I(1);
+	}
+
+	push(_p | FLAG_B1);	// only in the stack copy ( will clear Flag_I upon RTI...)
+
+	SETFLAG_I(1);
+
+	_pc = memGet(0xfffe);			// IRQ vector
+	_pc |= memGet(0xffff) << 8;
+}
+
+void runNMI() {
+	push(_pc >> 8);	// where to resume after the interrupt
+	push(_pc & 0xff);
+	push(_p | FLAG_B1);	// only in the stack copy
+
+	// "The 6510 will set the IFlag on NMI, too. 6502 untested." (docs of test suite)
+	// seems the kernal developers did not know thst... see SEI in FE43 handler..
+	SETFLAG_I(1);
+
+	_pc = memGet(0xfffa);			// NMI vector
+	_pc |= memGet(0xfffb) << 8;
+}
+
+// note:  Read-Modify-Write instructions (ASL, LSR, ROL, ROR, INC,
+// DEC, SLO, SRE, RLA, RRA, ISB, DCP) write the originally read
+// value before they then write the updated value. This is used
+// by some programs to acknowledge/clear interrupts - since the
+// 1st write will clear all the originally set bits.
+
 // perf optimization to avoid repeated address resolution and updates:
-// the CPU's "read-modify-write feature" (i.e. that the target memory location present
-// content is re-written before the actually supplied value is written) is only
-// relevant for io-area
+// the CPU's "read-modify-write feature" is only relevant for io-area
 
 // this optimization causes a ~5% speedup (for single-SID emulation)
 
@@ -1020,12 +1052,6 @@ static void runPrefetchedOp() {
 	static uint16_t wval;
 	static int32_t c;  		// temp for "carry"
 
-	// note:  Read-Modify-Write instructions (ASL, LSR, ROL, ROR, INC,
-	// DEC, SLO, SRE, RLA, RRA, ISB, DCP) write the originally read
-	// value before they then write the updated value. This is used
-	// by some programs to acknowledge/clear interrupts - since the
-	// 1st write will clear all the originally set bits.
-
 //	if (_pc == 0xEA79) fprintf(stderr, "%x %x\n", memGet(0xEA79), memGet(0xEA7a));	// warmstart
 
 	// The operation MUST BE fetched in the 1st cycle (i.e. when
@@ -1052,6 +1078,15 @@ static void runPrefetchedOp() {
 		// here so it has no clue what might be the most used OPs)..
 		// let's just hope it is using some constant time access scheme.
 
+		// pseudo ops
+        case sti:
+				runIRQ();
+			break;
+        case stn:
+				runNMI();
+			break;
+		
+		// regular ops
         case adc: {
 			uint8_t in1 = _a;
 			uint8_t in2 = getInput(&(_modes[_opc]));
@@ -1578,8 +1613,6 @@ static void runPrefetchedOp() {
             wval = pop();
             wval |= pop() << 8;
             _pc = wval;	// not like 'rts'! correct address is expected here!
-
-			sysSetNMIMarker(0);	// hack to improve digi output
             break;
         case rts:
             wval = pop();
@@ -1787,36 +1820,6 @@ static void runPrefetchedOp() {
 		is_stunned = 0; \
 	}
 
-void runIRQ() {
-	push(_pc >> 8);		// where to resume after the interrupt
-	push(_pc & 0xff);
-
-	if (_opc == SEI_OP /*&& (_slip_status == SLIPPED_SEI)*/) {	// XXX 2nd test should be redundant
-		// if IRQ occurs while SEI is executing then the Flag_I should also
-		// be pushed to the stack, i.e. it RTI will then NOT clear Flag_I!
-		SETFLAG_I(1);
-	}
-
-	push(_p | FLAG_B1);	// only in the stack copy ( will clear Flag_I upon RTI...)
-
-	SETFLAG_I(1);
-
-	_pc = memGet(0xfffe);			// IRQ vector
-	_pc |= memGet(0xffff) << 8;
-}
-
-void runNMI() {
-	push(_pc >> 8);	// where to resume after the interrupt
-	push(_pc & 0xff);
-	push(_p | FLAG_B1);	// only in the stack copy
-
-	// "The 6510 will set the IFlag on NMI, too. 6502 untested." (docs of test suite)
-	// seems the kernal developers did not know thst... see SEI in FE43 handler..
-	SETFLAG_I(1);
-
-	_pc = memGet(0xfffa);			// NMI vector
-	_pc |= memGet(0xfffb) << 8;
-}
 
 // cpuClock function pointer
 void (*cpuClock)();
@@ -1835,10 +1838,6 @@ static void cpuClockRSID() {
 	if (_exe_instr_opcode < 0) {	// get next instruction
 
 		if(IS_NMI_PENDING()) {				// has higher prio than IRQ
-
-			// some old PlaySID files (with recorded digis) files actually
-			// use NMI settings that must not be used here
-			sysSetNMIMarker(1);	// fixme: with PSID handled separately this should no longer be needed here?
 
 			_nmi_committed = 0;
 
@@ -1866,17 +1865,7 @@ static void cpuClockRSID() {
 
 		if(_exe_instr_cycles_remain == _exe_write_trigger) {
 			// output results of current instruction (may be before op ends)
-
-			if (_exe_instr_opcode == START_IRQ_OP) {
-				runIRQ();
-			} else if (_exe_instr_opcode == START_NMI_OP) {
-				runNMI();
-
-			} else if (_exe_instr_opcode == NULL_OP) {
-				// just burn cycles
-			} else {
-				runPrefetchedOp();	// use old impl that runs a complete instruction
-			}
+			runPrefetchedOp();
 		}
 		if(_exe_instr_cycles_remain == 0) {
 			// current operation has been completed.. get something new to do in the next cycle
@@ -1916,14 +1905,7 @@ static void cpuClockPSID() {
 
 		if(_exe_instr_cycles_remain == _exe_write_trigger) {
 			// output results of current instruction (may be before op ends)
-
-			if (_exe_instr_opcode == START_IRQ_OP) {
-				runIRQ();
-			} else if (_exe_instr_opcode == NULL_OP) {
-				// just burn cycles
-			} else {
-				runPrefetchedOp();	// use old impl that runs a complete instruction
-			}
+			runPrefetchedOp();
 		}
 		if(_exe_instr_cycles_remain == 0) {
 			// current operation has been completed.. get something new to do in the next cycle
@@ -1945,8 +1927,6 @@ void cpuInit(uint8_t is_rsid) {
 
 	_irq_line_ts = _irq_committed = 0;
 	_nmi_line = _nmi_line_ts = _nmi_committed = 0;
-
-	sysSetNMIMarker(0);
 
 #ifdef TEST
 	test_running = 1;

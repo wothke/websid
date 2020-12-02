@@ -68,6 +68,7 @@
 extern "C" {
 #include "system.h"		// sysCycles()
 #include "memory.h"		// only needed for PSID crap
+#include "memory_opt.h"
 }
 #include "sid.h"
 #include "filter.h"
@@ -197,6 +198,8 @@ uint8_t DigiDetector::assertSameSource(uint8_t voice_plus) {
 	// assumption: if some "voice specific" approach is used any D418 write
 	// will NOT be interpreted as "sample output"..
 
+	// FIXME: check if this legacy version impl can be ditched
+	
 	if (_digi_source != voice_plus) {
 		if (_digi_source & MASK_DIGI_UNUSED) {
 			_digi_source = voice_plus;		// correct it later if necessary
@@ -216,20 +219,6 @@ uint8_t DigiDetector::assertSameSource(uint8_t voice_plus) {
 			}
 		}
 	} else {
-		// hack: many NMI digi players still seem to make one volume reset
-		// from their IRQ.. when interpreted as a digi-sample this causes
-		// annoying clicks.. however there are also songs that play from
-		// IRQ and from NMI: test-case: Vicious_SID_2-Blood_Money.sid
-
-		if (voice_plus == 0) {
-			if (!sysCheckNMIMarker()) {
-				_non_nmi_count_D418++;
-
-				if (!_use_non_nmi_D418) {
-					return 0;
-				}
-			}
-		}
 		// same source is OK
 	}
 	return 1;
@@ -476,18 +465,17 @@ uint8_t DigiDetector::isMahoneyDigi() {
 
 	// song using this from main-loop - test-case: Acid_Flashback.sid
 
-	// FIXME why not use memReadIO directly?
-	if ( (SID::peek(_base_addr + 0x17) == 0x3) && 	// voice 1&2 through filter
-		 (SID::peek(_base_addr + 0x15) == 0xff) &&
-		 (SID::peek(_base_addr + 0x16) == 0xff) &&		// correct filter cutoff
-		 (SID::peek(_base_addr + 0x06) == SID::peek(_base_addr + 0x0d)) &&
-		 (SID::peek(_base_addr + 0x06) == SID::peek(_base_addr + 0x14)) &&	// all same SR
-		 (SID::peek(_base_addr + 0x04) == 0x49) &&
-		 (SID::peek(_base_addr + 0x0b) == 0x49) &&
-		 (SID::peek(_base_addr + 0x12) == 0x49)  // correct waveform: pulse + test + gate
+	if ( (MEM_READ_IO(_base_addr + 0x17) == 0x3) && 	// voice 1&2 through filter
+		 (MEM_READ_IO(_base_addr + 0x15) == 0xff) &&
+		 (MEM_READ_IO(_base_addr + 0x16) == 0xff) &&		// correct filter cutoff
+		 (MEM_READ_IO(_base_addr + 0x06) == MEM_READ_IO(_base_addr + 0x0d)) &&
+		 (MEM_READ_IO(_base_addr + 0x06) == MEM_READ_IO(_base_addr + 0x14)) &&	// all same SR
+		 (MEM_READ_IO(_base_addr + 0x04) == 0x49) &&
+		 (MEM_READ_IO(_base_addr + 0x0b) == 0x49) &&
+		 (MEM_READ_IO(_base_addr + 0x12) == 0x49)  // correct waveform: pulse + test + gate
 		) {
 
-		if (SID::peek(_base_addr + 0x06) >= 0xfb) {	// correct SR .. might shorten the tests some..
+		if (MEM_READ_IO(_base_addr + 0x06) >= 0xfb) {	// correct SR .. might shorten the tests some..
 			_used_digi_type = DigiMahoneyD418;
 
 			// getting too loud with additional voice output (see We_Are_Demo_tune_2.sid)
@@ -814,29 +802,30 @@ uint8_t DigiDetector::getD418Sample( uint8_t value) {
 uint8_t DigiDetector::detectSample(uint16_t addr, uint8_t value) {
 	if (SID::isExtMultiSidMode()) return 0;	// optimization for multi-SID
 
-	// mask out alternative addresses of d400 SID (see 5-Channel_Digi-Tune)..
-	// use in PSID would crash playback of recorded samples
-	if ((SID::getNumberUsedChips() == 1) && _is_compatible) addr &= ~(0x3e0);
-
-	// for songs like MicroProse_Soccer_V1.sid tracks >5 (PSID digis must
-	// still be handled.. like Demi-Demo_4_PSID.sid)
-	if (!_is_rsid && _is_compatible) return 0;
-
-	uint8_t reg = addr & 0x1f;
-	uint8_t voice = 0;
-    if ((reg >= 7) && (reg <=13)) { voice = 1; reg -= 7; }
-    if ((reg >= 14) && (reg <=20)) { voice = 2; reg -= 14; }
-
-	if (handleFreqModulationDigi(voice, reg, value)) return 1;
-	if (handlePulseModulationDigi(voice, reg, value)) return 1;
-	if (handleSwallowDigi(voice, reg, addr, value)) return 1;
-
-	// normal handling
-	if (_is_rsid && (addr == (_base_addr + 0x18))) {
-		if(assertSameSource(0)) recordSample(isMahoneyDigi() ? _mahoneySample[value] : getD418Sample(value), 0);	// this may lead to false positives..
-	}
-	if (!_is_compatible) {	// FIXME avoid repeated check.. see above.. cleanup!
+	if (!_is_compatible) {
 		handlePsidDigi(addr, value);
+	} else {
+		// mask out alternative addresses of d400 SID (see 5-Channel_Digi-Tune)..
+		// use in PSID would crash playback of recorded samples
+		if (SID::getNumberUsedChips() == 1) addr &= ~(0x3e0);
+
+		// for songs like MicroProse_Soccer_V1.sid tracks >5 (PSID digis must
+		// still be handled.. like Demi-Demo_4_PSID.sid)
+		if (!_is_rsid) return 0;
+
+		uint8_t reg = addr & 0x1f;
+		uint8_t voice = 0;
+		if ((reg >= 7) && (reg <=13)) { voice = 1; reg -= 7; }
+		if ((reg >= 14) && (reg <=20)) { voice = 2; reg -= 14; }
+
+		if (handleFreqModulationDigi(voice, reg, value)) return 1;
+		if (handlePulseModulationDigi(voice, reg, value)) return 1;
+		if (handleSwallowDigi(voice, reg, addr, value)) return 1;
+
+		// normal handling
+		if (addr == (_base_addr + 0x18)) {
+			if(assertSameSource(0)) recordSample(isMahoneyDigi() ? _mahoneySample[value] : getD418Sample(value), 0);	// this may lead to false positives..
+		}
 	}
 	return 0;
 }

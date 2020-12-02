@@ -247,8 +247,7 @@ void Envelope::clockEnvelope() {
 	uint8_t previous_envelope_output = state->envelope_output;
 	
 	
-	// FIXME perf opt: sustain/release probably are more probably than attack/decay.. check
-	// if a respectively ordered if/else outperforms a switch
+	// todo perf opt: sustain/release probably are more probably than attack/decay
 	switch (state->envphase) {
 		case Attack: {                          // Phase 0 : Attack
 			if (triggerLFSR_Threshold(state->attack, &state->current_LFSR) && !state->zero_lock) {	

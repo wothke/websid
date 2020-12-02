@@ -91,13 +91,3 @@ extern "C" uint8_t sysClockTest() {
 }
 #endif
 
-// -----------  hack for digi handling ----------- 
-
-static uint8_t _nmi_executing= 0;		
-	
-extern "C" uint8_t sysCheckNMIMarker() {
-	return _nmi_executing;
-}	
-extern "C" void	sysSetNMIMarker(uint8_t m) {
-	_nmi_executing= m;
-}

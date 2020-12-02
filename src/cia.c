@@ -175,8 +175,7 @@ static uint8_t _is_rsid;		// redundant: to avoid dependency
 uint8_t ciaNMI() {
 
 	struct Timer* t = &(_cia[CIA2]);
-	return t->interrupt_on;
-//	return t->interrupt_status & ICR_INTERRUPT_ON;	// FIXME: cache ?
+	return t->interrupt_on;	//  i.e. t->interrupt_status & ICR_INTERRUPT_ON
 }
 
 uint8_t ciaIRQ() {
@@ -184,8 +183,7 @@ uint8_t ciaIRQ() {
 	// I-flag will prevent this while the IRQ handler is still running).
 
 	struct Timer* t = &(_cia[CIA1]);
-	return t->interrupt_on;
-//	return t->interrupt_status & ICR_INTERRUPT_ON;	// FIXME: cache ?
+	return t->interrupt_on;	//  i.e. t->interrupt_status & ICR_INTERRUPT_ON
 }
 
 // perf optimization: inline short functions repeatedly used during clocking
@@ -590,8 +588,6 @@ static uint8_t clockT(struct Timer* t, uint8_t timer_idx) {
 }
 
 static void clock(struct Timer* t) {
-	// FIXME reminder: old impl did all the HANDLE_INTERRUPT calls here BEFORE
-	// clocking.. and always for both CIA0s! lets see how this cleanup holds up
 
 	HANDLE_INTERRUPT1(t);
 
