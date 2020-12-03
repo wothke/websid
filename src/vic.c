@@ -68,10 +68,8 @@ static uint8_t (*_stunFunc)(uint8_t x, uint16_t y, uint8_t cpr);
 // default impl
 static uint8_t intBadlineStun(uint8_t x, uint16_t y, uint8_t cpr) {
 	if (_badline_den) {	
-		// FIXME optimization?: the _y-pos and "& 0x7" checks could be cached
-		// - avoiding re-checks on each cycle - but at a cost for the 
-		// vicClock() logic; better keep the extra cost limited to 
-		// those few songs that use it
+		// note: caching the yscroll related state (see &0x7 below) actually makes
+		// songs like Spijkerhoek 3 run 10% slower! bad idea!
 		
 		if ((y >= 0x30) && (y <= 0xf7) && ((MEM_READ_IO(0xd011) & 0x7) == (y & 0x7))) {
 			if ((x >= 11) && (x <= 53)) {
@@ -340,6 +338,8 @@ void vicWriteMem(uint16_t addr, uint8_t value) {
 				// very 1st cycle of the line (ignore this special case)
 				_badline_den |= new_den;
 			}
+			memWriteIO(addr, value);
+			cacheRasterLatch();
 		}
 		case 0xd012:
 			memWriteIO(addr, value);

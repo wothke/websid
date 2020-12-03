@@ -27,7 +27,7 @@
 *    http://www.oxyron.de/html/opcodes02.html)
 *  - unhandled: "When an NMI occurs before clock 4 of a BRKn command, the BRK is
 *    finished as a NMI. In this case, BFlag on the stack will not be cleared."
-*  - BRK instruction handling is not implemented and a BRK is considered to be 
+*  - BRK instruction handling is not implemented and a BRK is considered to be
 *    a non-recoverable error
 *
 *
@@ -502,7 +502,7 @@ static const int32_t _opbase_write_cycle[256] = {
 static const int32_t _opbase_write_trigger[256] = {
 	0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,	// irq call
 	0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,	// nmi call
-	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,	// todo: check if plp (0x28) timing might be improved here
 	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
 	2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,	// rti
 	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -1052,6 +1052,13 @@ static void runPrefetchedOp() {
 	static uint16_t wval;
 	static int32_t c;  		// temp for "carry"
 
+	// ideally the most often used OPs should be retriveable
+	// most quickly.. but is is unclear what strategy the
+	// optimizer will actually be using to implement this (and
+	// the optimizer cannot know what programs will be emulated
+	// here so it has no clue what might be the most used OPs)..
+	// let's just hope it is using some constant time access scheme.
+
 //	if (_pc == 0xEA79) fprintf(stderr, "%x %x\n", memGet(0xEA79), memGet(0xEA7a));	// warmstart
 
 	// The operation MUST BE fetched in the 1st cycle (i.e. when
@@ -1071,21 +1078,6 @@ static void runPrefetchedOp() {
 	_opc = _exe_instr_opcode;	// use what was actually valid at the 1st cycle of the op
 
     switch (_mnemonics[_opc]) {
-		// ideally the most often used OPs should be retriveable
-		// most quickly.. but is is unclear what strategy the
-		// optimizer will actually be using to implement this (and
-		// the optimizer cannot know what programs will be emulated
-		// here so it has no clue what might be the most used OPs)..
-		// let's just hope it is using some constant time access scheme.
-
-		// pseudo ops
-        case sti:
-				runIRQ();
-			break;
-        case stn:
-				runNMI();
-			break;
-		
 		// regular ops
         case adc: {
 			uint8_t in1 = _a;
@@ -1270,8 +1262,10 @@ static void runPrefetchedOp() {
 				break;
 			}
 #endif
+#ifdef DEBUG
+			// avoid excessive printing to block the browser
 			EM_ASM_({ console.log('BRK from:        $' + ($0).toString(16));}, _pc-1);	// less mem than inclusion of fprintf
-
+#endif
 			// _pc has already been incremented by 1 (see above)
 			// (return address to be stored on the stack is original _pc+2 )
 			push((_pc + 1) >> 8);
@@ -1291,11 +1285,9 @@ static void runPrefetchedOp() {
             break;
         case cli:
             SETFLAG_I(0);
-
-			// known limitation: this op should have a similar delay as "sei"
-			// just in the other direction.. not implemented since it
-			// seems to be irrelevant in WebSid context (and test suite doesn't care)
-
+			// CLI can never clear the I_Flag fast enough to immediately trigger
+			// an IRQ after the CLI, i.e. this should work fine without any add-on
+			// handling
             break;
         case clv:
             SETFLAGS(FLAG_V, 0);
@@ -1407,6 +1399,7 @@ static void runPrefetchedOp() {
             }
 			break;
 		case jam:	// this op would have crashed the C64
+			EM_ASM_({ console.log('JAM 0:  $' + ($0).toString(16));}, _pc-1);	// less mem than inclusion of fprintf
 		    _pc = 0;           // just quit the emulation
             break;
         case jmp: {
@@ -1434,6 +1427,7 @@ static void runPrefetchedOp() {
             push((_pc + 1));
             wval = memGet(_pc++);
             wval |= memGet(_pc++) << 8;
+
             _pc = wval;
 
             break;
@@ -1464,7 +1458,7 @@ static void runPrefetchedOp() {
 
             SETFLAGS(FLAG_Z, !_a);
             SETFLAGS(FLAG_N, _a & 0x80);
-		} break;
+			} break;
         case lda:
             _a = getInput(&(_modes[_opc]));
 
@@ -1522,9 +1516,16 @@ static void runPrefetchedOp() {
             _p = bval & ~(FLAG_B0 | FLAG_B1);
 			_no_flag_i = !(_p & FLAG_I);
 
-			// known limitation: see sei/cli delay regarding FLAG_I (applies here too)
+			// like SEI this frist polls for IRQ before changing the flag
+			// while this happends at the end of the 1st cycle in a 2 cycle SEI
+			// this propably corresponds to 3rd cycle of the 4 cycle PLP!
 
-			// XXX CAUTION: any cached flags must also be refreshed here...
+			// "clear" is not the critical scenario here (like CLI) since
+			// IRQ is never expected to trigger immediately after the PLP.. i.e.
+			// it doesn't matter that the flag is cleared too late.
+			// however, with regard to the last 2 cycles "set" should have the
+			// same timing behavior as SEI (todo: fixme.. maybe write-cycle based impl
+			// is good enough here..)
 			}
 			break;
         case rla: {				// see Spasmolytic_part_6.sid
@@ -1612,11 +1613,13 @@ static void runPrefetchedOp() {
 
             wval = pop();
             wval |= pop() << 8;
+
             _pc = wval;	// not like 'rts'! correct address is expected here!
             break;
         case rts:
             wval = pop();
             wval |= pop() << 8;
+
 			_pc = wval + 1;
             break;
         case sbc:    {
@@ -1768,6 +1771,15 @@ static void runPrefetchedOp() {
             SETFLAGS(FLAG_Z, !_a);
             SETFLAGS(FLAG_N, _a & 0x80);
             break;
+
+		// pseudo ops
+        case sti:
+				runIRQ();
+			break;
+        case stn:
+				runNMI();
+			break;
+
 		default:
 #ifdef DEBUG
 			EM_ASM_({ console.log('op code not implemented: ' + ($0).toString(16) + ' at ' + ($1).toString(16));}, _opc, _pc);	// less mem than inclusion of fprintf

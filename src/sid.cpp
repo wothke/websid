@@ -485,11 +485,10 @@ void SID::synthSample(int16_t* buffer, int16_t** synth_trace_bufs, uint32_t offs
 		int32_t voice_out;
 		
 		if (wave_gen->isMuted() || _filter->isSilencedVoice3(voice_idx)) {
-			// mute voice while still using SID model specific "base voltage"
 			voice_out = 0;
 		} else {
 			uint8_t env_out = _env_generators[voice_idx]->getOutput();
-			int32_t outv = wave_gen->getOutput();	// at this point an unsigned 16-bit value (see Hermit's impl)
+			int32_t outv = ((wave_gen)->*(wave_gen->getOutput))(); // crappy C++ syntax for calling the "getOutput" method
 			
 			// the ideal voice_out would be signed 16-bit - but more bits are actually needed - particularily
 			// for the massively shifted 6581 signal (needed for D418 digis to work correctly)
@@ -562,7 +561,8 @@ void SID::synthSampleStripped(int16_t* buffer, int16_t** synth_trace_bufs, uint3
 	for (uint8_t voice_idx= 0; voice_idx<3; voice_idx++) {
 		
 		uint8_t env_out = _env_generators[voice_idx]->getOutput();
-		uint16_t outv = _wave_generators[voice_idx]->getOutput();
+		WaveGenerator *wave_gen= _wave_generators[voice_idx];
+		int32_t outv = ((wave_gen)->*(wave_gen->getOutput))(); // crappy C++ syntax for calling the "getOutput" method
 		
 		int32_t voice_out = (*scale) * ( env_out * (outv + _wf_zero) + _dac_offset);
 		_filter->routeSignal(&voice_out, &outf, &outo, voice_idx);

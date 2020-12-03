@@ -2,7 +2,10 @@
 * Call it cheating...
 *
 * The hacks are a means to explore the features that would be
-* needed to properly deal with the affacted songs.
+* needed to properly deal with the affected songs.
+*
+* All the remaining hacks address the lack of VIC sprite related
+* bad-cycle handling.
 *
 * WebSid (c) 2020 Jürgen Wothke
 * version 0.94
@@ -29,24 +32,6 @@ static void patchImmigrantSongIfNeeded(uint16_t init_addr) {
 	if ((init_addr == 0x080d) && memMatch(0x0826, pattern, 7)) {	
 		// just disable the display (which is causing the trouble in the first place)
 		memWriteRAM(0x0821, 0x0b);	
-	}
-}
-
-/*
-* Thats_All_Folks.sid: still some problem with nested IRQs
-* (todo: emu should be able to cope with this)
-*
-* It seems that even with the latest IRQ timing fixes (which finally
-* make all of Lorenz's tests happy) there still is an issue with this
-* song left that needs to be investigated (song uses SEI,CLI.. PLP sequences
-* that probably fail since no special handling has yet been implemented
-* for CLI and PLP...).
-*/
-static void patchThatsAllFolksIfNeeded(uint16_t init_addr) {
-	if ((init_addr == 0x4800) && (memReadRAM(0x4806)==0x48)) {	
-		memWriteRAM(0x461C, 0x4c);	// always use main loop at $4685
-		memWriteRAM(0x461D, 0x85);
-		memWriteRAM(0x461E, 0x46);		
 	}
 }
 
@@ -236,8 +221,6 @@ static void patchWeAreDemoIfNeeded(uint16_t init_addr) {
 }
 
 void hackIfNeeded(uint16_t init_addr) {
-	patchThatsAllFolksIfNeeded(init_addr);
-	
 	patchImmigrantSongIfNeeded(init_addr);
 	
 	patchUtopia6IfNeeded(init_addr);

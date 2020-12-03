@@ -116,6 +116,101 @@ static WaveformTables _wave_table;		// only need one instance of this
 
 // ------------------------ WaveGenerator impl ----------------------------------------
 
+
+// single waveforms
+uint16_t WaveGenerator::nullOutput() {
+	// emulate waveform 00 floating wave-DAC - TODO: find testcase song where this is relevant..
+	return _prev_wave_form_out;
+}
+
+uint16_t WaveGenerator::triangleOutput() {
+	_prev_wave_form_out = createTriangleOutput();
+	return _prev_wave_form_out;
+}
+
+uint16_t WaveGenerator::sawOutput() {
+	_prev_wave_form_out = createSawOutput();
+	return _prev_wave_form_out;
+}
+
+uint16_t WaveGenerator::pulseOutput() {
+#ifdef USE_HERMIT_ANTIALIAS
+	uint32_t tmp, pw;	// 16 bits used
+	calcPulseBase(&tmp, &pw);
+
+	_prev_wave_form_out = createPulseOutput(tmp, pw);
+#else
+	_prev_wave_form_out = createPulseOutput();
+#endif
+	return _prev_wave_form_out;
+}
+
+uint16_t WaveGenerator::noiseOutput() {
+	_prev_wave_form_out = createNoiseOutput(0xffff, 0);
+	return _prev_wave_form_out;
+}
+
+// combined waveforms
+uint16_t WaveGenerator::triangleSawOutput() {
+	// TRIANGLE & SAW - like in Garden_Party.sid
+	_prev_wave_form_out = combinedWF(_wave_table.TriSaw_8580, _counter >> 12, 1);			// 12 MSB needed
+	return _prev_wave_form_out;
+}
+
+uint16_t WaveGenerator::pulseTriangleOutput() {
+	uint16_t plsout;
+#ifdef USE_HERMIT_ANTIALIAS
+	uint32_t tmp, pw;	// 16 bits used
+	calcPulseBase(&tmp, &pw);
+	plsout =  ((tmp >= pw) || _test_bit) ? 0xffff : 0; //(this would be enough for simple but aliased-at-high-pitches pulse)
+#else
+//	plsout = createPulseOutput();	// plain should be good enough
+	plsout =  ((_counter >> 12 >= _pulse_width) || _test_bit) ? 0xffff : 0;
+#endif
+
+	// PULSE & TRIANGLE - like in Kentilla, Convincing, Clique_Baby, etc
+	// a good test is Last_Ninja:6 voice 1 at 35secs; here Hermit's
+	// original PulseSaw settings seem to be lacking: the respective
+	// sound has none of the crispness nor volume of the original
+
+	uint32_t c = GET_RINGMOD_COUNTER();
+	_prev_wave_form_out = plsout ? combinedWF(_wave_table.PulseTri_8580, (c ^ (c & 0x800000 ? 0xffffff : 0)) >> 11, 0) : 0;	// either on or off
+	return _prev_wave_form_out;
+}
+
+uint16_t WaveGenerator::pulseTriangleSawOutput() {
+	// PULSE & TRIANGLE & SAW	- like in Lenore.sid
+	uint16_t plsout;
+#ifdef USE_HERMIT_ANTIALIAS
+	uint32_t tmp, pw;	// 16 bits used
+	calcPulseBase(&tmp, &pw);
+	plsout =  ((tmp >= pw) || _test_bit) ? 0xffff : 0; //(this would be enough for simple but aliased-at-high-pitches pulse)
+	_prev_wave_form_out = plsout ? combinedWF(_wave_table.PulseTriSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
+#else
+//	plsout = createPulseOutput();	// plain should be good enough
+	plsout =  ((_counter >> 12 >= _pulse_width) || _test_bit) ? 0xffff : 0;
+	_prev_wave_form_out = plsout ? combinedWF(_wave_table.PulseTriSaw_8580, _counter >> 12, 1) : 0;	// 12 MSB needed
+#endif
+	return _prev_wave_form_out;
+}
+
+uint16_t WaveGenerator::pulseSawOutput() {
+	// PULSE & SAW - like in Defiler.sid, Neverending_Story.sid
+	uint16_t plsout;
+#ifdef USE_HERMIT_ANTIALIAS
+	uint32_t tmp, pw;	// 16 bits used
+	calcPulseBase(&tmp, &pw);
+	plsout =  ((tmp >= pw) || _test_bit) ? 0xffff : 0; //(this would be enough for simple but aliased-at-high-pitches pulse)
+	_prev_wave_form_out = plsout ? combinedWF(_wave_table.PulseSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
+#else
+//	plsout = createPulseOutput();	// plain should be good enough
+	plsout =  ((_counter >> 12 >= _pulse_width) || _test_bit) ? 0xffff : 0;
+	_prev_wave_form_out = plsout ? combinedWF(_wave_table.PulseSaw_8580, _counter >> 12, 1) : 0;	// 12 MSB needed
+#endif
+	return _prev_wave_form_out;
+}
+
+
 WaveGenerator::WaveGenerator(SID* sid, uint8_t voice_idx) {
 	_sid = sid;
 	_voice_idx = voice_idx;
@@ -147,6 +242,8 @@ void WaveGenerator::reset(double cycles_per_sample) {
 
 	_prev_wave_form_out = 0x7fff;	// use center to avoid distortions through envelope scaling
 	_noise_LFSR = NOISE_RESET;
+
+	getOutput = &WaveGenerator::nullOutput;
 }
 
 void WaveGenerator::setMute(uint8_t is_muted) {
@@ -164,6 +261,50 @@ void WaveGenerator::setWave(uint8_t val) {
 	_test_bit = val & TEST_BITMASK;
 	_sync_bit = val & SYNC_BITMASK;
 	_ring_bit = val & RING_BITMASK;
+
+	// rather dispatch once here than repeat the checks for each
+	// sample.. note: once again the effects of the browser's "random performance behavior"
+	// seem to be bigger than the eventual optimization effects achieved here, i.e.
+	// the exact same version may run 30% faster/slower between successive runs (due to whatever
+	// other shit the browser might be doing in the background - or maybe due to other Win10
+	// processes interfering with the measurements..)
+
+	switch (val & 0xf0) {
+		case 0:
+			getOutput = &WaveGenerator::nullOutput;
+			break;
+		case TRI_BITMASK:
+			getOutput = &WaveGenerator::triangleOutput;
+			break;
+		case SAW_BITMASK:
+			getOutput = &WaveGenerator::sawOutput;
+			break;
+		case PULSE_BITMASK:
+			getOutput = &WaveGenerator::pulseOutput;
+			break;
+		case NOISE_BITMASK:
+			getOutput = &WaveGenerator::noiseOutput;
+			break;
+
+		// commonly used combined waveforms
+		case TRI_BITMASK|SAW_BITMASK:
+			getOutput = &WaveGenerator::triangleSawOutput;
+			break;
+		case PULSE_BITMASK|TRI_BITMASK:
+			getOutput = &WaveGenerator::pulseTriangleOutput;
+			break;
+		case PULSE_BITMASK|TRI_BITMASK|SAW_BITMASK:
+			getOutput = &WaveGenerator::pulseTriangleSawOutput;
+			break;
+		case PULSE_BITMASK|SAW_BITMASK:
+			getOutput = &WaveGenerator::pulseSawOutput;
+			break;
+
+		// fallback.. old all-in-one
+		default:
+			getOutput = &WaveGenerator::exoticCombinedOutput;
+			break;
+	}
 }
 
 void WaveGenerator::setPulseWidthLow(uint8_t val) {
@@ -603,92 +744,43 @@ uint8_t	WaveGenerator::getOsc() {
 	return outv >> 8;
 }
 
-uint16_t WaveGenerator::getOutput() {
-	uint16_t outv = 0xffff;
+uint16_t WaveGenerator::exoticCombinedOutput() {
+	// fallback: the most relevant waveform combinations are already handled using
+	// dedicated methods and this here is only the fallback to handle more unusual combined
+	// waveforms - the most relevant of which are probably those involving NOISE
 
-	// FIXME would it be faster to install wf specific handler functions when wf is set? saving some
-	// repeated ifs below? or at least handle via switch/case?
-
-	int8_t combined = 0;	// flags specifically handled "combined waveforms" (not all)
-
-	// use special handling for certain combined waveforms
-	uint16_t plsout;
+	int8_t combined = 0;
 	if ((_ctrl & PULSE_BITMASK)) {
-#ifdef USE_HERMIT_ANTIALIAS
-		uint32_t tmp, pw;	// 16 bits used
-		calcPulseBase(&tmp, &pw);
-#endif
-
-		if (((_ctrl & 0xf0) == PULSE_BITMASK)) {
-			// pulse only
-#ifdef USE_HERMIT_ANTIALIAS
-			plsout = createPulseOutput(tmp, pw);
-#else
-			plsout = createPulseOutput();
-#endif
-		} else {
-			// combined waveforms with pulse (all except noise)
-
-#ifdef USE_HERMIT_ANTIALIAS
-			plsout =  ((tmp >= pw) || _test_bit) ? 0xffff : 0; //(this would be enough for simple but aliased-at-high-pitches pulse)
-#else
-			// FIXME maybe better just use the raw pulse logik again?
-			plsout = createPulseOutput();
-//			plsout =  ((_counter >> 12 >= _pulse_width) || _test_bit) ? 0xffff : 0;
-#endif
-
-			if ((_ctrl & TRI_BITMASK) && ++combined)  {
-				if (_ctrl & SAW_BITMASK) {	// PULSE & TRIANGLE & SAW	- like in Lenore.sid
-#ifdef USE_HERMIT_ANTIALIAS
-					outv = plsout ? combinedWF(_wave_table.PulseTriSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
-#else
-					outv = plsout ? combinedWF(_wave_table.PulseTriSaw_8580, _counter >> 12, 1) : 0;	// 12 MSB needed
-#endif
-				} else {
-					// PULSE & TRIANGLE - like in Kentilla, Convincing, Clique_Baby, etc
-					// a good test is Last_Ninja:6 voice 1 at 35secs; here Hermit's
-					// original PulseSaw settings seem to be lacking: the respective
-					// sound has none of the crispness nor volume of the original
-
-					uint32_t c = GET_RINGMOD_COUNTER();
-					outv = plsout ? combinedWF(_wave_table.PulseTri_8580, (c ^ (c & 0x800000 ? 0xffffff : 0)) >> 11, 0) : 0;	// either on or off
-				}
-			} else if ((_ctrl & SAW_BITMASK) && ++combined)  {	// PULSE & SAW - like in Defiler.sid, Neverending_Story.sid
-#ifdef USE_HERMIT_ANTIALIAS
-				outv = plsout ? combinedWF(_wave_table.PulseSaw_8580, tmp >> 4, 1) : 0;	// tmp 12 MSB
-#else
-				outv = plsout ? combinedWF(_wave_table.PulseSaw_8580, _counter >> 12, 1) : 0;	// 12 MSB needed
-#endif
+		// combined waveforms with pulse (all except noise)
+		if ((_ctrl & TRI_BITMASK) && ++combined)  {
+			if (_ctrl & SAW_BITMASK) {											// PULSE & TRIANGLE & SAW
+				_prev_wave_form_out = pulseTriangleSawOutput();
+			} else {
+				_prev_wave_form_out = pulseTriangleOutput();					// PULSE & TRIANGLE
 			}
+		} else if ((_ctrl & SAW_BITMASK) && ++combined)  {						// PULSE & SAW
+			_prev_wave_form_out = pulseSawOutput();
+		} else {
+			_prev_wave_form_out = 0xffff;
 		}
-	} else if ((_ctrl & TRI_BITMASK) && (_ctrl & SAW_BITMASK) && ++combined) {	// TRIANGLE & SAW - like in Garden_Party.sid
-#ifdef USE_HERMIT_ANTIALIAS
-		uint32_t tmp = _counter >> 12;
-		outv = combinedWF(_wave_table.TriSaw_8580, tmp, 1);	// tmp 12 MSB
-#else
-		outv = combinedWF(_wave_table.TriSaw_8580, _counter >> 12, 1);	// 12 MSB needed
-#endif
+	} else if ((_ctrl & TRI_BITMASK) && (_ctrl & SAW_BITMASK) && ++combined) {	// TRIANGLE & SAW
+		_prev_wave_form_out = triangleSawOutput();
+	} else {
+		_prev_wave_form_out = 0xffff;
 	}
 
-	// for the rest mix the oscillators with an AND operation as stated
-	// in the SID's reference manual - even if this is absolutely wrong
 	if (!combined) {
-		if (_ctrl & TRI_BITMASK)	outv &= createTriangleOutput();
-		if (_ctrl & SAW_BITMASK)	outv &= createSawOutput();
-		if (_ctrl & PULSE_BITMASK)	outv &= plsout;
+		// for the rest mix the oscillators with an AND operation as stated
+		// in the SID's reference manual - even if this is absolutely wrong
+
+		if (_ctrl & TRI_BITMASK)	_prev_wave_form_out &= createTriangleOutput();
+		if (_ctrl & SAW_BITMASK)	_prev_wave_form_out &= (uint16_t)(_counter >> 8);
+		if (_ctrl & PULSE_BITMASK)	_prev_wave_form_out &= (uint16_t)(_counter < _pulse_width12 ? 0 : 0xffff);
 	}
 
 	// handle noise last - since it may depend on the effect of the other waveforms
 	if (_ctrl & NOISE_BITMASK)   {
-		outv &= createNoiseOutput(outv, _ctrl & 0x70);
+		_prev_wave_form_out &= createNoiseOutput(_prev_wave_form_out, _ctrl & 0x70);
 	}
-
-	// emulate waveform 00 floating wave-DAC
-	if (_ctrl & 0xf0) {	// TODO: find testcase song where this is relevant..
-		_prev_wave_form_out = outv;
-	} else {
-		// no waveform set
-		outv = _prev_wave_form_out;
-	}
-	return outv;
+	return _prev_wave_form_out;
 }

@@ -18,6 +18,7 @@
 // now I am keeping Hermits code to ease potential cross-checks.
 //#define USE_HERMIT_ANTIALIAS
 
+
 class WaveGenerator {
 protected:
 	friend class SID;								// the only user of Voice
@@ -46,7 +47,7 @@ protected:
 	uint16_t	getFreq();
 	
 	// waveform generation
-	uint16_t	getOutput();
+	uint16_t	(WaveGenerator::*getOutput)();	// try to save additional wrapper by using pointer directly..
 	uint8_t		getOsc();
 	
 private:
@@ -64,11 +65,28 @@ private:
 	uint16_t	createPulseOutput();
 #endif
 	uint16_t	createNoiseOutput(uint16_t outv, uint8_t is_combined);
-		
+
+	
+	// functions for specific waveform combinations (used via getOutput)
+	uint16_t nullOutput();
+	uint16_t triangleOutput();
+	uint16_t sawOutput();
+	uint16_t pulseOutput();
+	uint16_t noiseOutput();
+
+	uint16_t triangleSawOutput();
+	uint16_t pulseTriangleOutput();
+	uint16_t pulseSawOutput();
+	
+	uint16_t pulseTriangleSawOutput();
+
+	uint16_t exoticCombinedOutput();
+
 private:
 	class SID*	_sid;
 	uint8_t		_voice_idx;
 	double		_cycles_per_sample;
+
 
 	uint8_t		_is_muted;			// player's separate "mute" feature
 	
