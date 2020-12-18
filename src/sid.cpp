@@ -65,8 +65,6 @@ extern "C" {
 
 // --------- HW configuration ----------------
 
-// FIXME get rid of old global vars and move them into configurator..
-
 static uint16_t	_sid_addr[MAX_SIDS];		// start addr of SID chips (0 means NOT available)
 static uint8_t 	_sid_is_6581[MAX_SIDS];		// models of installed SID chips
 static uint8_t 	_sid_target_chan[MAX_SIDS];	// output channel for the SID chips
@@ -734,10 +732,10 @@ void SID::resetAll(uint32_t sample_rate, uint32_t clock_rate, uint8_t is_rsid,
 		}
 	}
 	
-	if (!_ext_multi_sid) {
-		_vol_scale= _vol_map[_used_sids - 1] / 0xff;	// 0xff serves to normalize the 8-bit envelope
+	if (_ext_multi_sid) {
+		_vol_scale = _vol_map[_sid_2nd_chan_idx ? _used_sids >> 1 : _used_sids - 1] / 0xff;
 	} else {
-		_vol_scale= _vol_map[_sid_2nd_chan_idx ? _used_sids >> 1 : _used_sids - 1] / 0xff;
+		_vol_scale = _vol_map[_used_sids - 1] / 0xff;	// 0xff serves to normalize the 8-bit envelope
 	}
 }
 

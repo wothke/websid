@@ -189,7 +189,7 @@ void vicClockPSID() {
 	}
 }
 
-uint8_t vicIRQ() {	
+uint8_t vicIRQ() {
 	return _signal_irq; // memReadIO(0xd019) & 0x80;
 }
 

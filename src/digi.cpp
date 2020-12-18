@@ -88,7 +88,7 @@ int8_t DigiDetector::routeDigiSignal(Filter *filter, int32_t *digi_out,
 									int32_t *outf, int32_t *outo) {
 
 	if ((_used_digi_type != DigiNone) && _digi_enabled) {
-	
+
 		(*digi_out) = getSample();	// used for "scope"
 
 		// note: _used_digi_type can change within same song.. (see Storebror.sid)
@@ -161,7 +161,7 @@ void DigiDetector::recordSample(uint8_t sample, uint8_t voice) {
 	_current_digi_src = voice;
 	_digi_count++;
 
-	// FIXME: it seems plausible to presume that updates done somewhere within
+	// todo: it seems plausible to presume that updates done somewhere within
 	// the interval of the current audio sample will lead to some kind
 	// of aliasing, i.e. if the signal was "correctly" sampled every cycle
 	// then the average across the sample should be different from the "last
@@ -179,10 +179,7 @@ void DigiDetector::recordSample(uint8_t sample, uint8_t voice) {
 	// testcase: MyLife.sid
 }
 
-uint8_t _use_non_nmi_D418 = 1;
-
 uint8_t DigiDetector::assertSameSource(uint8_t voice_plus) {
-
 	// a song may perform different SID interactions that may or may not be
 	// meant to produce digi-sample output. the same program may do both,
 	// e.g. perform regular volume setting from MAIN or IRQ and also output
@@ -192,14 +189,16 @@ uint8_t DigiDetector::assertSameSource(uint8_t voice_plus) {
 	// songs (e.g. Vicious_SID_2-15638Hz.sid) alternatingly use D418 and PWM
 	// (on voice1 & voice2) from their MAIN to create sample output.
 
-	// The goal here is to filter out/ignore false positives - which may
-	// cause audible clicks.
+	// The goal here is to filter out/ignore false positives - which otherwise
+	// may cause audible clicks.
+
+	// The switch to the cycle-by-cycle emulation has rendered this function
+	// mostly obsolete.. the only scenario where it still is relevant are FM
+	// digis where the IRQ still periodically sets D418
 
 	// assumption: if some "voice specific" approach is used any D418 write
 	// will NOT be interpreted as "sample output"..
 
-	// FIXME: check if this legacy version impl can be ditched
-	
 	if (_digi_source != voice_plus) {
 		if (_digi_source & MASK_DIGI_UNUSED) {
 			_digi_source = voice_plus;		// correct it later if necessary
@@ -207,6 +206,7 @@ uint8_t DigiDetector::assertSameSource(uint8_t voice_plus) {
 			if (voice_plus == 0) {
 				// d418 write while there is already other data.. just ignore
 				return 0;
+
 			} else if (_digi_source == 0) {
 				// previously recorded D418 stuff is not really sample output
 				// problem: is has already been rendered as a "sample"..
@@ -705,11 +705,6 @@ void DigiDetector::resetCount() {
 		// test-case: Arkanoid.sid - doesn't use NMI at all
 		if (_digi_count == 0) {
 			_used_digi_type = DigiNone;
-			_use_non_nmi_D418 = 1;
-		} else {
-			// unfortunately there is a one frame delay here..
-			_use_non_nmi_D418 = _non_nmi_count_D418 > 10;
-			_non_nmi_count_D418 = 0;
 		}
 	}
 	_digi_count = 0;
@@ -759,9 +754,6 @@ void DigiDetector::reset(uint32_t clock_rate, uint8_t is_rsid, uint8_t is_compat
 	_current_digi_src = 0;
 
 	_used_digi_type = DigiNone;
-
-	_non_nmi_count_D418 = 0;
-	_use_non_nmi_D418 = 1;
 }
 
 uint8_t DigiDetector::getD418Sample( uint8_t value) {

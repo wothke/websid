@@ -591,7 +591,7 @@ static void clock(struct Timer* t) {
 
 	HANDLE_INTERRUPT1(t);
 
-	// FIXME: statically switching to a "linked" impl might speed up RSID some..
+	// todo: statically switching to a "linked" impl might speed up RSID some..
 	if (IS_B_LINKED_TO_A(t)) {	// e.g. in Graphixmania_2_part_6.sid
 		if (clockT(t, TIMER_A)) {				// underflow
 			// will trigger B count with 1 cycle delay
@@ -606,7 +606,7 @@ static void clock(struct Timer* t) {
 	HANDLE_INTERRUPT2(t, 1);
 }
 
-// FIXME todo: NOT handling an unused NMI timer saves about 10%!
+// todo: NOT handling an unused NMI timer saves about 10%!
 // until started, empty clock functions could be used..
 // this would benefit PSID & RSIDS alike.. similarily the is_b_linked_to_a
 // check could be disabled..

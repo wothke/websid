@@ -410,7 +410,7 @@ double Filter::runFilter(double filter_in, double output, double* band_pass, dou
 		(*band_pass) = tmp;
 		
 // 		if (state->band_ena) { output -= tmp; }	// orig: supposedly this is what Hermit observed on his real HW
-		if (state->band_ena) { output += tmp; }	// make it look like reSID (even if it might be wrong) fixme: check if 6581 and 8580 do this differently
+		if (state->band_ena) { output += tmp; }	// make it look like reSID (even if it might be wrong) todo: check if 6581 and 8580 do this differently
 		
 		tmp = (*low_pass) + tmp * state->cutoff;
 		(*low_pass) = tmp;

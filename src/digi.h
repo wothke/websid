@@ -125,10 +125,6 @@ private:
 	
 	// swallow's PWM
 	uint16_t _swallow_pwm[3];
-	
-	// nmi d418 (hack)
-	uint8_t _use_non_nmi_D418;
-	uint8_t _non_nmi_count_D418;
 };
 
 #endif
