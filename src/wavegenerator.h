@@ -14,9 +14,9 @@
 
 
 // Hermit's impls are quite a bit off as compared to respective oversampled
-// signals. My new impl now should be much closer to the real thing. For
-// now I am keeping Hermits code to ease potential cross-checks.
-//#define USE_HERMIT_ANTIALIAS
+// signals. My new impl now should be much closer to the real thing. 
+// Unfortunately my new impl still seems to have relavant flaws - see Jani's test cases
+#define USE_HERMIT_ANTIALIAS
 
 
 class WaveGenerator {
@@ -106,6 +106,7 @@ private:
 
 		// pulse waveform
 	uint16_t	_pulse_width;		// 12-bit "pulse width" from respective SID registers
+	uint32_t	_pulse_width12;
 #ifdef USE_HERMIT_ANTIALIAS
 	uint32_t	_pulse_out;			// 16-bit "pulse width" _pulse_width<<4 shifted for convenience)
 	uint32_t	_freq_pulse_base;	// Hermit's "anti-aliasing"
@@ -117,7 +118,6 @@ private:
 	double		_freq_inc_sample_inv;
 	double		_ffff_freq_inc_sample_inv;
 	double		_ffff_cycles_per_sample_inv;
-	uint32_t	_pulse_width12;
 	uint32_t	_pulse_width12_neg;
 	uint32_t	_pulse_width12_plus;
 	

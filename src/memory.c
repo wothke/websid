@@ -408,6 +408,8 @@ void memResetBasicROM(uint8_t* rom) {
 		memcpy(_basic_rom, rom, BASIC_SIZE);
 
 		memWriteRAM(0x1, 0x37);	// todo: better move to memRsidInit?
+	} else {
+		memset(&_basic_rom[0], 0x60, BASIC_SIZE);			// RTS by default
 	}
 }
 
