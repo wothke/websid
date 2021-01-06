@@ -741,6 +741,8 @@ uint32_t SidFileLoader::load(uint8_t* input_file_buffer, uint32_t in_buf_size, c
 	if (is_rsid)
 		startFromBasic(&_init_addr, basic_ROM && kernal_ROM, load_size);
 
+//	EM_ASM_({ console.log('START:  $' + ($0).toString(16));}, _init_addr);
+
 	storeFileInfo();
 	return 0;
 }

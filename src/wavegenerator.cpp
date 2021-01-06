@@ -222,13 +222,13 @@ void WaveGenerator::reset(double cycles_per_sample) {
 	_cycles_per_sample = cycles_per_sample;
 
     _counter = _freq = _msb_rising = _ctrl = _test_bit = _sync_bit = _ring_bit = 0;
-	_pulse_width = 0;
+	_pulse_width = _pulse_width12 = 0;
 
 #ifdef USE_HERMIT_ANTIALIAS
 	_pulse_out = _freq_pulse_base = _freq_pulse_step = _freq_saw_step = 0;
 #else
 	_freq_inc_sample_inv = _ffff_freq_inc_sample_inv = _ffff_cycles_per_sample_inv = 0;
-	_pulse_width12 = _pulse_width12_neg = _pulse_width12_plus = 0;
+	_pulse_width12_neg = _pulse_width12_plus = 0;
 #endif
 
 	_noise_oversample = _noisepos = _noiseout = 0;
@@ -320,6 +320,7 @@ void WaveGenerator::setPulseWidthLow(uint8_t val) {
 
 void WaveGenerator::setPulseWidthHigh(uint8_t val) {
 	_pulse_width = (_pulse_width & 0xff) | ((val & 0xf) << 8);
+	_pulse_width12 = ((uint32_t)_pulse_width) << 12;	// for direct comparisons with 24-bit osc accumulator
 
 #ifdef USE_HERMIT_ANTIALIAS
 	// 16 MSB pulse needed (input is 12-bit)
@@ -331,7 +332,6 @@ void WaveGenerator::setPulseWidthHigh(uint8_t val) {
 
 #ifndef USE_HERMIT_ANTIALIAS
 void WaveGenerator::updatePulseCache() {
-	_pulse_width12 = ((uint32_t)_pulse_width) << 12;	// for direct comparisons with 24-bit osc accumulator
 	_pulse_width12_neg = 0xfff000 - _pulse_width12;
 	_pulse_width12_plus = _pulse_width12 + _freq_inc_sample; // used to check PW condition for previous sample
 }
