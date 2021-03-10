@@ -44,9 +44,10 @@
 // have occured even BEFORE the NOISE output is activated. However in this emulator impl here,
 // respective updates are only performed while NOISE output is active (as a performance 
 // optimization) and the NOISE output always starts with the same values right from the start of 
-// the "random"-sequence. notice: there are undesirable side effects of when trying to fast forward
-// by using a radically different reset value (test-case: Clique_Baby).
-#define NOISE_RESET 0x7fffff
+// the "random"-sequence. ps: attempt to improve output did not succeed but shows that performance 
+// impact of always updating NOISE position is negligible.
+//#define NOISE_RESET 0x7fff8
+#define NOISE_RESET 0x7f7efe	// compromise "tuned" for Smurf_Nightmare & Clique_Baby
 
 #ifdef USE_HERMIT_ANTIALIAS
 const double SCALE_12_16 = ((double)0xffff) / 0xfff;
