@@ -39,15 +39,16 @@
 #define PULSE_BITMASK 	0x40
 #define NOISE_BITMASK 	0x80
 
-// note: noise is only ever reset via the TEST-bit but on the real HW it would then be
-// updated regardless of the selected WF, i.e. quite a bit of updating may
-// have occured even BEFORE the NOISE output is activated. However in this emulator impl here,
-// respective updates are only performed while NOISE output is active (as a performance 
-// optimization) and the NOISE output always starts with the same values right from the start of 
-// the "random"-sequence. ps: attempt to improve output did not succeed but shows that performance 
-// impact of always updating NOISE position is negligible.
-//#define NOISE_RESET 0x7fff8
-#define NOISE_RESET 0x7f7efe	// compromise "tuned" for Smurf_Nightmare & Clique_Baby
+// note: noise shift register (_noise_LFSR) is only ever reset via the TEST-bit but on the real HW. 
+// As a performance optimization the old impl only updated the _noise_LFSR while noise WF is actually 
+// used - which potentially might lead to an incorrect start position within the random-number stream. 
+// Meanwhile tests have shown that the performance impact of always updating _noise_LFSR is negligible 
+// and eventhough no problems could yet be linked to this potential flaw, the current impl now always 
+// steps the register.
+
+// test cases: Quedex, Ghouls 'n' Ghosts, Trick'n'Treat (later parts), Clique_Baby, Smurf_Nightmare
+
+#define NOISE_RESET 0x7ffff8
 
 #ifdef USE_HERMIT_ANTIALIAS
 const double SCALE_12_16 = ((double)0xffff) / 0xfff;
@@ -126,21 +127,29 @@ static WaveformTables _wave_table;		// only need one instance of this
 
 // single waveforms
 uint16_t WaveGenerator::nullOutput() {
+	createNoiseOutput(0xffff, 0); // advance the noise position
+	
 	// emulate waveform 00 floating wave-DAC - TODO: find testcase song where this is relevant..
 	return _prev_wave_form_out;
 }
 
 uint16_t WaveGenerator::triangleOutput() {
+	createNoiseOutput(0xffff, 0); // advance the noise position
+	
 	_prev_wave_form_out = createTriangleOutput();
 	return _prev_wave_form_out;
 }
 
 uint16_t WaveGenerator::sawOutput() {
+	createNoiseOutput(0xffff, 0); // advance the noise position
+	
 	_prev_wave_form_out = createSawOutput();
 	return _prev_wave_form_out;
 }
 
 uint16_t WaveGenerator::pulseOutput() {
+	createNoiseOutput(0xffff, 0); // advance the noise position
+	
 #ifdef USE_HERMIT_ANTIALIAS
 	uint32_t tmp, pw;	// 16 bits used
 	calcPulseBase(&tmp, &pw);
@@ -159,12 +168,16 @@ uint16_t WaveGenerator::noiseOutput() {
 
 // combined waveforms
 uint16_t WaveGenerator::triangleSawOutput() {
+	createNoiseOutput(0xffff, 0); // advance the noise position
+	
 	// TRIANGLE & SAW - like in Garden_Party.sid
 	_prev_wave_form_out = combinedWF(_wave_table.TriSaw_8580, _counter >> 12, 1);			// 12 MSB needed
 	return _prev_wave_form_out;
 }
 
 uint16_t WaveGenerator::pulseTriangleOutput() {
+	createNoiseOutput(0xffff, 0); // advance the noise position
+	
 	uint16_t plsout;
 #ifdef USE_HERMIT_ANTIALIAS
 	uint32_t tmp, pw;	// 16 bits used
@@ -186,6 +199,8 @@ uint16_t WaveGenerator::pulseTriangleOutput() {
 }
 
 uint16_t WaveGenerator::pulseTriangleSawOutput() {
+		createNoiseOutput(0xffff, 0); // advance the noise position
+
 	// PULSE & TRIANGLE & SAW	- like in Lenore.sid
 	uint16_t plsout;
 #ifdef USE_HERMIT_ANTIALIAS
@@ -202,6 +217,8 @@ uint16_t WaveGenerator::pulseTriangleSawOutput() {
 }
 
 uint16_t WaveGenerator::pulseSawOutput() {
+	createNoiseOutput(0xffff, 0); // advance the noise position
+	
 	// PULSE & SAW - like in Defiler.sid, Neverending_Story.sid
 	uint16_t plsout;
 #ifdef USE_HERMIT_ANTIALIAS
@@ -263,16 +280,11 @@ uint8_t	WaveGenerator::isMuted() {
 
 void WaveGenerator::setWave(uint8_t val) {
 	_ctrl = val;
-
-	if ((val & NOISE_BITMASK) && !(_ctrl & NOISE_BITMASK)) {
-		// seems resonable in order to avoid excessive noise updates..
-		_noisepos = _counter >> 20;
-	}	
 	
 	// performance optimization: read much more often then written
-	_test_bit = val & TEST_BITMASK;
-	_sync_bit = val & SYNC_BITMASK;
-	_ring_bit = val & RING_BITMASK;
+	_test_bit = (val & TEST_BITMASK) >> 3;	// 0 or 1
+	_sync_bit = val & SYNC_BITMASK;			// 0 or something else (NOT 1)
+	_ring_bit = val & RING_BITMASK;			// 0 or something else (NOT 1)
 
 	// rather dispatch once here than repeat the checks for each
 	// sample.. note: once again the effects of the browser's "random performance behavior"
@@ -655,14 +667,14 @@ static const uint32_t COMBINED_NOISE_MASK = ~((1<<22)|(1<<20)|(1<<16)|(1<<13)|(1
 #define NOISE_OVERSAMPLE(...) \
 	uint8_t noise_oversample = 0;\
 	uint32_t p = _counter >> 20;	/* testcase: Kettle.sid >> 19 is to fast */\
-	if (_noisepos != p) {\
+	if (_noisepos != p) { \
 		/* make sure to handle the correct number of updates - otherwise
 		high frequency noise would be too loud (testcase: Empty.sid):
-		p is a 4-bit counter that signals the number of overflows!*/ \
+		p is a 3-bit counter that signals the number of overflows!*/ \
 		if (p > _noisepos) {\
 			noise_oversample = p - _noisepos;\
 		} else {\
-			noise_oversample = (0xf - _noisepos) + p;\
+			noise_oversample = (0x7 - _noisepos) + p;\
 		}\
 		_noisepos = p;\
 		__VA_ARGS__ \
@@ -671,22 +683,22 @@ static const uint32_t COMBINED_NOISE_MASK = ~((1<<22)|(1<<20)|(1<<16)|(1<<13)|(1
 uint16_t WaveGenerator::createNoiseOutput(uint16_t outv, uint8_t is_combined) {
 	// "random values are output through the waveform generator according to the
 	// frequency setting" (http://www.ffd2.com/fridge/blahtune/SID.primer)
-
-	// known limitation of current impl: "_noise_LFSR" shift register is only
-	// updated when noise is actually used (correctly it should always be clocked -
-	// but given the rather expensive _noiseout calculation it seems acceptable to
-	// do both on demand only)
-	// problem: the NOISE will NOT start at the correct position within the "random-number"
-	// sequence and this may lead to noticable errors (test-cases: Clique_Baby, Smurf_Nightmare).
 	
 	NOISE_OVERSAMPLE({
 		// impl consistent with: http://www.sidmusic.org/sid/sidtech5.html
-		// doc here is probably wrong: http://www.oxyron.de/html/registers_sid.html
-
+		// doc here is probably wrong: http://www.oxyron.de/html/registers_sid.html though 
+		// it doesn't seem to make much of a difference which one is used..
+		
+		// issue: the "noise_oversample" only signals how often the noise was shifted during
+		//        the interval of the sample but BUT NOT the respective timing! e.g. with one update 
+		//        that occurs at the very end of the interval the result should mainly reflect the
+		//        *previous* noise value but instead the new value is used exclusively (etc)!
+		
 		uint32_t noiseout = 0;
 		for (uint8_t i= 0; i<noise_oversample; i++) {
 			// clock the noise shift register
-			_noise_LFSR = (_noise_LFSR << 1) | (GET_BIT(_noise_LFSR, 22) ^ GET_BIT(_noise_LFSR, 17));
+			uint8_t feed = (GET_BIT(_noise_LFSR, 22) ^ GET_BIT(_noise_LFSR, 17)) ? 1 : _test_bit;			
+			_noise_LFSR = ((_noise_LFSR << 1) | feed) & 0x7fffff;	// 23-bit register
 
 			// extract bits used for wave-output
 			//                          src-bit-pos - dest-bit-pos
@@ -698,7 +710,6 @@ uint16_t WaveGenerator::createNoiseOutput(uint16_t outv, uint8_t is_combined) {
 						 ((_noise_LFSR >> (7           - 2) ) & 0x04 ) |
 						 ((_noise_LFSR >> (4           - 1) ) & 0x02 ) |
 						 ((_noise_LFSR >> (2           - 0) ) & 0x01 );
-
 			noiseout += o;		// sum of i 8-bit-values
 
 			if (is_combined) {
@@ -728,7 +739,7 @@ uint16_t WaveGenerator::createNoiseOutput(uint16_t outv, uint8_t is_combined) {
 									(GET_BIT(o, 2) << 7) |
 									(GET_BIT(o, 1) << 4) |
 									(GET_BIT(o, 0) << 2);
-
+									
 				_noise_LFSR &= COMBINED_NOISE_MASK | feedback;	// feed back into shift register
 			}
 		}
@@ -802,6 +813,8 @@ uint16_t WaveGenerator::exoticCombinedOutput() {
 	// handle noise last - since it may depend on the effect of the other waveforms
 	if (_ctrl & NOISE_BITMASK)   {
 		_prev_wave_form_out &= createNoiseOutput(_prev_wave_form_out, _ctrl & 0x70);
+	} else if (!combined) {
+		createNoiseOutput(0xffff, 0); // advance the noise position
 	}
 	return _prev_wave_form_out;
 }
