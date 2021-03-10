@@ -41,14 +41,12 @@
 
 // note: noise is only ever reset via the TEST-bit but on the real HW it would then be
 // updated regardless of the selected WF, i.e. quite a bit of updating may
-// have occured even BEFORE the NOISE output is activated. However in this impl here,
+// have occured even BEFORE the NOISE output is activated. However in this emulator impl here,
 // respective updates are only performed while NOISE output is active (as a performance 
-// optimization) and the output always reflects the same values right from the start of 
-// the "random"-sequence. It seems that when starting from the correct reset value
-// 0x7ffff8 the output sequence is at a point that does not sound nice when used for "drum
-// instruments". The below NOISE_RESET value tries to "fast forward" to some point in the 
-// random-number sequence that produces a more pleasing audio result.
-#define NOISE_RESET 0x73f5f8
+// optimization) and the NOISE output always starts with the same values right from the start of 
+// the "random"-sequence. notice: there are undesirable side effects of when trying to fast forward
+// by using a radically different reset value (test-case: Clique_Baby).
+#define NOISE_RESET 0x7fffff
 
 #ifdef USE_HERMIT_ANTIALIAS
 const double SCALE_12_16 = ((double)0xffff) / 0xfff;
@@ -676,8 +674,9 @@ uint16_t WaveGenerator::createNoiseOutput(uint16_t outv, uint8_t is_combined) {
 	// known limitation of current impl: "_noise_LFSR" shift register is only
 	// updated when noise is actually used (correctly it should always be clocked -
 	// but given the rather expensive _noiseout calculation it seems acceptable to
-	// do both on demand only - as an attempt to compensate for this limitation the
-	// "noise reset" default value is somewhat adjusted)
+	// do both on demand only)
+	// problem: the NOISE will NOT start at the correct position within the "random-number"
+	// sequence and this may lead to noticable errors (test-cases: Clique_Baby, Smurf_Nightmare).
 	
 	NOISE_OVERSAMPLE({
 		// impl consistent with: http://www.sidmusic.org/sid/sidtech5.html
