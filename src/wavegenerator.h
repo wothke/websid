@@ -127,7 +127,6 @@ private:
 #endif
 
 		// noise waveform
-	uint8_t		_noise_oversample;	// number of noise-updates per sample
     uint32_t	_noisepos;			// update trigger
     uint32_t	_noise_LFSR;
     uint16_t	_noiseout;			// wave output

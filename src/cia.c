@@ -847,7 +847,13 @@ void ciaReset(uint8_t is_rsid, uint8_t is_ntsc) {
 	initMem(0xdc01, 0xff);	 	// Master_Blaster_intro.sid/instantfunk.sid actually check this
 
 	// CIA 1 defaults	(by default C64 is configured with CIA1 timer / not raster irq)
+
+	// XXX FIXME BUG: internally used "ciaWriteMem" here depends on the timer's state
+	// which at this point has not been initiallized yet; specifically "memory_address"
+	// is still 0 which means that this write will incorrectly go into the ZP
+	// see https://github.com/wothke/websid/issues/8 :
 	initMem(0xdc0d, 0x81);	// interrupt control	(interrupt through timer A)
+	
 	initMem(0xdc0e, 0x01); 	// control timer A: start - must already be started (e.g. Phobia, GianaSisters, etc expect it)
 	initMem(0xdc0f, 0x08); 	// control timer B (start/stop) means auto-restart
 

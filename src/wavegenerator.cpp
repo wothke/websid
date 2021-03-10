@@ -39,8 +39,16 @@
 #define PULSE_BITMASK 	0x40
 #define NOISE_BITMASK 	0x80
 
-#define NOISE_TRIGGER 0x80000		// threshold that triggers shift of the noise register
-#define NOISE_RESET 0x7ffffc		// which one is correct? 0x7ffff8?
+// note: noise is only ever reset via the TEST-bit but on the real HW it would then be
+// updated regardless of the selected WF, i.e. quite a bit of updating may
+// have occured even BEFORE the NOISE output is activated. However in this impl here,
+// respective updates are only performed while NOISE output is active (as a performance 
+// optimization) and the output always reflects the same values right from the start of 
+// the "random"-sequence. It seems that when starting from the correct reset value
+// 0x7ffff8 the output sequence is at a point that does not sound nice when used for "drum
+// instruments". The below NOISE_RESET value tries to "fast forward" to some point in the 
+// random-number sequence that produces a more pleasing audio result.
+#define NOISE_RESET 0x73f5f8
 
 #ifdef USE_HERMIT_ANTIALIAS
 const double SCALE_12_16 = ((double)0xffff) / 0xfff;
@@ -231,7 +239,7 @@ void WaveGenerator::reset(double cycles_per_sample) {
 	_pulse_width12_neg = _pulse_width12_plus = 0;
 #endif
 
-	_noise_oversample = _noisepos = _noiseout = 0;
+	_noisepos = _noiseout = 0;
 	_freq_inc_sample = _prev_wav_data = 0;
 
 #ifdef PSID_DEBUG_ADSR
@@ -257,6 +265,11 @@ uint8_t	WaveGenerator::isMuted() {
 void WaveGenerator::setWave(uint8_t val) {
 	_ctrl = val;
 
+	if ((val & NOISE_BITMASK) && !(_ctrl & NOISE_BITMASK)) {
+		// seems resonable in order to avoid excessive noise updates..
+		_noisepos = _counter >> 20;
+	}	
+	
 	// performance optimization: read much more often then written
 	_test_bit = val & TEST_BITMASK;
 	_sync_bit = val & SYNC_BITMASK;
@@ -349,13 +362,6 @@ void WaveGenerator::updateFreqCache() {
 	_saw_range = 0xffff - saw_sample_step;
 	_saw_base = saw_sample_step + _saw_range;		// includes  +saw_sample_step/2 error (same as in regular signal)
 #endif
-
-	// oversample high freq noise to avoid excessive loudness (testcase: Empty.sid)
-	// at ~22 cycles per sample, frequencies above 0xBA2E should trigger noise recalc
-	// 2x within same sample and with 0xFFFF it should be almost 3x..
-	_noise_oversample = (uint8_t)round(_freq_inc_sample / NOISE_TRIGGER);
-	if (!_noise_oversample) _noise_oversample = 1;
-
 #ifdef USE_HERMIT_ANTIALIAS
 	// optimization for Hermit's waveform generation:
 	_freq_saw_step = _freq_inc_sample / 0x1200000;			// for SAW
@@ -646,26 +652,39 @@ uint16_t WaveGenerator::createPulseOutput() {
 
 static const uint32_t COMBINED_NOISE_MASK = ~((1<<22)|(1<<20)|(1<<16)|(1<<13)|(1<<11)|(1<<7)|(1<<4)|(1<<2));
 
+
+#define NOISE_OVERSAMPLE(...) \
+	uint8_t noise_oversample = 0;\
+	uint32_t p = _counter >> 20;	/* testcase: Kettle.sid >> 19 is to fast */\
+	if (_noisepos != p) {\
+		/* make sure to handle the correct number of updates - otherwise
+		high frequency noise would be too loud (testcase: Empty.sid):
+		p is a 4-bit counter that signals the number of overflows!*/ \
+		if (p > _noisepos) {\
+			noise_oversample = p - _noisepos;\
+		} else {\
+			noise_oversample = (0xf - _noisepos) + p;\
+		}\
+		_noisepos = p;\
+		__VA_ARGS__ \
+	}
+
 uint16_t WaveGenerator::createNoiseOutput(uint16_t outv, uint8_t is_combined) {
 	// "random values are output through the waveform generator according to the
 	// frequency setting" (http://www.ffd2.com/fridge/blahtune/SID.primer)
 
-	// known limitation of current impl: 1) "_noise_LFSR" shift register is only
+	// known limitation of current impl: "_noise_LFSR" shift register is only
 	// updated when noise is actually used (correctly it should always be clocked -
 	// but given the rather expensive _noiseout calculation it seems acceptable to
-	// do both on demand only)
-
-	// testcase: Kettle.sid >> 19 is to fast
-	uint32_t p = _counter >> 20;	// check complete "prefix" (not just bit 19) so as not to miss 2x updates..
-
-	if (_noisepos != p) {
-		_noisepos = p;
-
+	// do both on demand only - as an attempt to compensate for this limitation the
+	// "noise reset" default value is somewhat adjusted)
+	
+	NOISE_OVERSAMPLE({
 		// impl consistent with: http://www.sidmusic.org/sid/sidtech5.html
 		// doc here is probably wrong: http://www.oxyron.de/html/registers_sid.html
 
 		uint32_t noiseout = 0;
-		for (uint8_t i= 0; i<_noise_oversample; i++) {
+		for (uint8_t i= 0; i<noise_oversample; i++) {
 			// clock the noise shift register
 			_noise_LFSR = (_noise_LFSR << 1) | (GET_BIT(_noise_LFSR, 22) ^ GET_BIT(_noise_LFSR, 17));
 
@@ -680,7 +699,7 @@ uint16_t WaveGenerator::createNoiseOutput(uint16_t outv, uint8_t is_combined) {
 						 ((_noise_LFSR >> (4           - 1) ) & 0x02 ) |
 						 ((_noise_LFSR >> (2           - 0) ) & 0x01 );
 
-			noiseout += o;
+			noiseout += o;		// sum of i 8-bit-values
 
 			if (is_combined) {
 				// test-case: Hollywood_Poker_Pro.sid (also Wizax_demo.sid, Billie_Jean.sid)
@@ -713,8 +732,10 @@ uint16_t WaveGenerator::createNoiseOutput(uint16_t outv, uint8_t is_combined) {
 				_noise_LFSR &= COMBINED_NOISE_MASK | feedback;	// feed back into shift register
 			}
 		}
-		_noiseout = (noiseout * 0x101) / _noise_oversample;	// scale 8-bit to 16-bit
-	}
+		_noiseout = (noiseout * 0x101) / noise_oversample;	// scale 8-bit to 16-bit
+	});
+	
+
 	return _noiseout;
 }
 
