@@ -12,8 +12,9 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#ifdef EMSCRIPTEN
 #include <emscripten.h>
-
+#endif
 #include "memory.h"
 
 
@@ -506,7 +507,11 @@ uint16_t memPsidMain(uint16_t free_space, uint16_t play_addr) {
 	uint8_t bank = memReadRAM(0x1); // test-case: Madonna_Mix.sid
 
 	if (!free_space) {
+#ifdef EMSCRIPTEN
 		EM_ASM_({ console.log("FATAL ERROR: no free memory for driver");});
+#else
+		fprintf(stderr, "FATAL ERROR: no free memory for driver");
+#endif
 		return 0;
 	} else {
 	    memcpy(&_memory[free_space], _driverPSID, 33);

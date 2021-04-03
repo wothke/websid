@@ -16,7 +16,11 @@ extern "C" {
 }
 #include "sid.h"
 
+#ifdef EMSCRIPTEN
 #include <emscripten.h>
+#else
+#include <cstdio>
+#endif
 
 // if PSID 'init' subroutine takes longer than 4 secs then something
 // is wrong (mb in endless loop) test case: PSID "ALiH" type players
@@ -40,7 +44,11 @@ extern "C" uint8_t sysClockTimeout() {
 	cpuClock();
 	
 	if (sysCycles() >= CYCLELIMIT ) {
+#ifdef EMSCRIPTEN
 		EM_ASM_({ console.log('ERROR: PSID INIT hangs');});	// less mem than inclusion of fprintf
+#else
+		fprintf(stderr, "ERROR: PSID INIT hangs\n");
+#endif
 		return 0;
 	}
 	// this is probably overkill for PSID crap..

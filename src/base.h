@@ -8,9 +8,14 @@ typedef unsigned char uint8_t;
 typedef short int16_t;
 typedef unsigned short uint16_t;
 
+#ifndef EMSCRIPTEN
+#include <sys/types.h>
+typedef __uint32_t uint32_t;
+
+#else
 typedef signed long int32_t;
 typedef unsigned long uint32_t;
-
+#endif
 
 
 #define OPT_USE_INLINE_ACCESS

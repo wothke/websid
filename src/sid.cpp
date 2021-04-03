@@ -373,8 +373,8 @@ bool isDebug(uint8_t voice_idx) {
 void SID::poke(uint8_t reg, uint8_t val) {
     uint8_t voice_idx = 0;
 	if (reg < 7) {}
-    if ((reg >= 7) && (reg <= 13)) { voice_idx = 1; reg -= 7; }
-    if ((reg >= 14) && (reg <= 20)) { voice_idx = 2; reg -= 14; }
+    else if (reg <= 13) { voice_idx = 1; reg -= 7; }
+    else if (reg <= 20) { voice_idx = 2; reg -= 14; }
 
 	// writes that impact the envelope generator
 	if ((reg >= 0x4) && (reg <= 0x6)) {
@@ -430,6 +430,12 @@ void SID::poke(uint8_t reg, uint8_t val) {
     return;
 }
 
+#ifdef RPI4 
+// extension callback used by the RaspberryPi4 version to play on an actual SID chip
+extern void recordPokeSID(uint32_t ts, uint8_t reg, uint8_t value);
+#include "system.h"
+#endif
+
 void SID::writeMem(uint16_t addr, uint8_t value) {
 	_digi->detectSample(addr, value);
 
@@ -438,6 +444,9 @@ void SID::writeMem(uint16_t addr, uint8_t value) {
 	// no reason anymore to NOT always write (unlike old/un-synced version)
 	
 	const uint16_t reg = addr & 0x1f;
+#ifdef RPI4
+	recordPokeSID(SYS_CYCLES(), reg, value);
+#endif
 	
 	poke(reg, value);
 	memWriteIO(addr, value);

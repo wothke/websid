@@ -370,7 +370,7 @@ static uint8_t adjustBranchTaken(const uint16_t* pc, uint8_t opc, uint8_t* lead_
 }
 
 // determines next operation with its duration and interrupt lead time
-static void prefetchOperation( int16_t* opcode, int8_t* cycles, uint8_t* lead_time, uint8_t* trigger) {
+static void prefetchOperation( int16_t* opcode, int8_t* cycles, uint8_t* lead_time, int8_t* trigger) {
 
 	// The operation MUST BE fetched in the 1st cycle (i.e. when
 	// prefetching is none - or the wrong command could be used
@@ -944,8 +944,9 @@ static void runPrefetchedOp() {
 	/*		if (_pc == 0xFFE5) {	// get a char
 				// tests only call this to wait AFTER an error
 
+#ifdef EMSCRIPTEN
 				EM_ASM_({ console.log("test failed?");});
-
+#endif
 				uint16_t wval = pop();
 				wval |= pop() << 8;	// RTS to where it came from
 				_pc = wval + 1;
@@ -960,7 +961,9 @@ static void runPrefetchedOp() {
 				memWriteRAM(0x030C, 0);
 
 				// easier to deal with this in JavaScript (pervent optimizer renaming the func)
+#ifdef EMSCRIPTEN
 				EM_ASM_({ window['outputPETSCII'](($0));}, _a);
+#endif
 
 				uint16_t wval = pop();
 				wval |= pop() << 8;	// RTS to where it came from
@@ -969,7 +972,9 @@ static void runPrefetchedOp() {
 			} else if (_pc == 0xBDCE) {	// print AX as number via BDCD
 				// just another way of printing PETSCII
 				// easier to deal with this in JavaScript (pervent optimizer renaming the func)
+#ifdef EMSCRIPTEN
 				EM_ASM_({ window['outputPETSCII'](($0));}, _x);
+#endif
 
 				uint16_t wval = pop();
 				wval |= pop() << 8;	// RTS to where it came from
@@ -986,7 +991,9 @@ static void runPrefetchedOp() {
 				_load_filename[len] = 0;
 
 				// easier to deal with this in JavaScript (pervent optimizer renaming the func)
+#ifdef EMSCRIPTEN
 				EM_ASM_({ window['loadFileError'](Pointer_stringify($0));}, _load_filename);
+#endif
 
 				test_running = 0;
 				break;
@@ -1003,7 +1010,12 @@ static void runPrefetchedOp() {
 #endif
 #ifdef DEBUG
 			// excessive printing may block the browser
+			
+#ifdef EMSCRIPTEN
 			EM_ASM_({ console.log('BRK from:        $' + ($0).toString(16));}, _pc-1);
+#else
+			fprintf(stderr, "BRK from:        $%x\n", _pc-1);
+#endif
 #endif
 			// _pc has already been incremented by 1 (see above)
 			// (return address to be stored on the stack is original _pc+2 )
@@ -1158,8 +1170,12 @@ static void runPrefetchedOp() {
             }
 			break;
 
-		case jam:	// this op would have crashed the C64
+		case jam:	// this op would have crashed the C64		
+#ifdef EMSCRIPTEN
 			EM_ASM_({ console.log('JAM 0:  $' + ($0).toString(16));}, _pc-1);	// less mem than inclusion of fprintf
+#else
+			fprintf(stderr, "JAM 0:  $%x\n", _pc-1);
+#endif
 		    _pc = 0;           // just quit the emulation
             break;
 
@@ -1183,7 +1199,7 @@ static void runPrefetchedOp() {
             }
 			} break;
 
-        case jsr:
+        case jsr: {
 			// _pc has already been incremented by 1 (see above)
 			// (return address to be stored on the stack is original _pc+2 )
             push((_pc + 1) >> 8);
@@ -1193,7 +1209,7 @@ static void runPrefetchedOp() {
 
             _pc = wval;
 
-            break;
+			} break;
 
 		case lae: { // aka LAS, aka LAR .. just for the tests
             uint8_t bval = getInput(&(_modes[_opc]));

@@ -126,7 +126,7 @@ the left are for successive cycles.
 
 
 static uint8_t _offset_lo_byte[2] = {0x04, 0x06};
-static uint8_t _offset_hi_byte[2] = {0x05, 0x07};
+// static uint8_t _offset_hi_byte[2] = {0x05, 0x07};	unused just doc
 
 
 /**
@@ -276,9 +276,14 @@ static void initTimer(struct Timer* t, uint8_t timer_idx) {
 // memory.
 // CAUTION: make sure to sync ALL redundant state vars that might be
 // added as performance optimizations!
+
+static void initTimerBase(uint16_t memory_address, struct Timer* t) {
+	t->memory_address = memory_address;
+}
+
 static void initTimerData(uint16_t memory_address, struct Timer* t) {
 
-	t->memory_address = memory_address;
+//	t->memory_address = memory_address;	// too late since init is using before..
 
 	// perf optimization to save ops later
 	t->b_is_linked_to_a = (memReadIO(t->memory_address + 0x0f) & CRB_MODE_MASK) == CRB_MODE_UNDERFLOW_A;
@@ -841,6 +846,9 @@ void ciaSetDefaultsPSID(uint8_t is_timer_driven) {
 void ciaReset(uint8_t is_rsid, uint8_t is_ntsc) {
 	ciaClock = &ciaClockRSID;	// default
 
+	initTimerBase(ADDR_CIA1, &(_cia[0]));	// quickhack to at least avoid potential segfault below due uninitialized memory_address
+	initTimerBase(ADDR_CIA2, &(_cia[1]));	
+	
 	_is_rsid = is_rsid;
 
 	initMem(0xdc00, 0x7f);	 	// S_W_A_F_2_tune_1.sid

@@ -28,7 +28,11 @@
 #include <stdio.h>
 #include <math.h>
 
+#ifdef EMSCRIPTEN
 #include <emscripten.h>
+#else
+#define EMSCRIPTEN_KEEPALIVE
+#endif
 
 extern "C" {
 #include "system.h"	
@@ -41,20 +45,15 @@ extern "C" void 	sidWriteMem(uint16_t addr, uint8_t value);
 
 #include "loaders.h"	
 
-
-
 static FileLoader*	_loader;
 
 // --------- audio output buffer management ------------------------
 
-
 // keep it down to one screen to allow for  
 // more direct feedback to WebAudio side:
 #define BUFLEN 96000/50	
-
-static uint32_t 	_soundBufferLen = BUFLEN;
-
 #define CHANNELS 2
+
 static int16_t 		_soundBuffer[BUFLEN * CHANNELS];
 
 // max 10 sids*4 voices (1 digi channel)
@@ -308,6 +307,11 @@ extern "C" uint32_t EMSCRIPTEN_KEEPALIVE playTune(uint32_t selected_track, uint3
 	// garbage song will still take 10 secs before it plays
 	_skip_silence_loop = 10;
 	
+	// XXX FIXME the separate handling of the INIT call is an annoying legacy
+	// of the old impl.. respective PSID handling should better to moved into
+	// the respective C64 side driver so that users of the emulator do not need
+	// to handle this potentially long running emu scenario (see SID callbacks 
+	// triggered on Raspberry SID device).
 	_loader->initTune(_sample_rate, selected_track);
 
 	resetAudioBuffers();

@@ -22,6 +22,8 @@ Known limitations: see src/KnownLimitations.txt for details
 
 An online demo of the emulator can be accessed using: http://www.wothke.ch/tinyrsid/index.php/explorer?playlistId=103 or http://www.wothke.ch/websid/
 
+A special application for using the emulator with a real SID chip on a Raspberry PI 4 can be found in the "raspi" folder.
+
 
 ## Credits
 

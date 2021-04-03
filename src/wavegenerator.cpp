@@ -21,11 +21,11 @@
 #include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
+#include <fenv.h>
 
 #include "sid.h"
 
 #include "wavegenerator.h"
-
 
 // waveform control register flags
 	// other flags
@@ -362,6 +362,7 @@ void WaveGenerator::updatePulseCache() {
 #endif
 
 void WaveGenerator::updateFreqCache() {
+	
 	_freq_inc_sample = _cycles_per_sample * _freq;	// per 1-sample interval (e.g. ~22 cycles)
 #ifndef USE_HERMIT_ANTIALIAS
 	_freq_inc_sample_inv = 1.0 / _freq_inc_sample; 	// use faster multiplications later
@@ -375,10 +376,17 @@ void WaveGenerator::updateFreqCache() {
 #endif
 #ifdef USE_HERMIT_ANTIALIAS
 	// optimization for Hermit's waveform generation:
-	_freq_saw_step = _freq_inc_sample / 0x1200000;			// for SAW
+	_freq_saw_step = _freq_inc_sample / 0x1200000;			// for SAW  (e.g. 51k/0x1200000	-> 0.0027)
 
 	_freq_pulse_base = ((uint32_t)_freq_inc_sample) >> 9;	// for PULSE: 15 MSB needed
-	_freq_pulse_step = 256 / (((uint32_t)_freq_inc_sample) >> 16);	// testcase: Dirty_64, Ice_Guys
+	
+	// shifting with INT precision is a bad idea since it may preduce 0
+//	_freq_pulse_step = 256 / (((uint32_t)_freq_inc_sample) >> 16);	// testcase: Dirty_64, Ice_Guys
+	double d= _freq_inc_sample / pow(2, 16);
+	if (d == 0) {
+		d= __DBL_MIN__;	// prevent null pointer exceptions
+	}
+	_freq_pulse_step = 256 / d;	// testcase: Dirty_64, Ice_Guys
 #else
 	updatePulseCache();
 #endif
@@ -743,7 +751,7 @@ uint16_t WaveGenerator::createNoiseOutput(uint16_t outv, uint8_t is_combined) {
 				_noise_LFSR &= COMBINED_NOISE_MASK | feedback;	// feed back into shift register
 			}
 		}
-		_noiseout = (noiseout * 0x101) / noise_oversample;	// scale 8-bit to 16-bit
+		_noiseout = (noiseout * 0x101) / (noise_oversample ? noise_oversample : 1);	// scale 8-bit to 16-bit
 	});
 	
 

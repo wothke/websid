@@ -71,7 +71,9 @@
 #include <string.h>
 #include <stdio.h>
 
+#ifdef EMSCRIPTEN
 #include <emscripten.h>
+#endif
 
 #include "cpu.h"
 #include "system.h"
@@ -323,7 +325,7 @@ static int8_t _exe_instr_cycles_remain;
 static int8_t _exe_write_trigger;
 
 
-#include "cpu_operations.c"	/* prefetchOperation & runPrefetchedOp */
+#include "cpu_operations.inc"	/* prefetchOperation & runPrefetchedOp */
 
 /*
 * Notes on VIC "bad lines": VIC may "stun" the CPU for 40 (+up to 3) cycles

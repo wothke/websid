@@ -632,7 +632,7 @@ int32_t DigiDetector::genPsidSample(int32_t sample_in)
 
         _frac_pos += _clock_rate / _sample_period;
 
-        if (_frac_pos > SID::getSampleFreq()) {
+        if (_frac_pos > (int32_t)SID::getSampleFreq()) {
             _frac_pos %= SID::getSampleFreq();
 
 			// Naechstes Samples holen

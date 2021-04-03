@@ -20,7 +20,9 @@
 #include <stdio.h>
 #include <math.h>
 
+#ifdef EMSCRIPTEN
 #include <emscripten.h>
+#endif
 
 extern "C" {
 #include "core.h"
@@ -513,7 +515,11 @@ uint16_t MusFileLoader::loadComputeSidplayerData(uint8_t *mus_song_file, uint32_
 	uint16_t v1len, v2len, v3len, track_data_len;
 	musGetSizes(mus_song_file, &v1len, &v2len, &v3len, &track_data_len);
 	if (track_data_len >= mus_song_file_len) {
+#ifdef EMSCRIPTEN
 		EM_ASM_({ console.log('info cannot be retrieved  from corrupt .mus file');});	// less mem than inclusion of fprintf
+#else
+		fprintf(stderr, "info cannot be retrieved  from corrupt .mus file\n");
+#endif
 		return 0;
 	}
 
@@ -655,7 +661,11 @@ void startFromBasic(uint16_t* init_addr, uint8_t roms_available, int32_t load_si
 			// to make sure that RAM is is consistently initialized
 			(*init_addr) = 0xa7ae;	// BASIC "next statement"
 		} else {
-			EM_ASM_({ console.log("FATAL ERROR: This BASIC song requires emulator to be configured with optional KERNAL ROM and BASIC ROM");});
+#ifdef EMSCRIPTEN
+			EM_ASM_({ console.log("FATAL ERROR: This BASIC song requires emulator to be configured with optional KERNAL ROM and BASIC ROM");});			
+#else
+			fprintf(stderr, "FATAL ERROR: This BASIC song requires emulator to be configured with optional KERNAL ROM and BASIC ROM\n");
+#endif
 		}
 	} else {
 

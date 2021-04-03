@@ -34,7 +34,9 @@ extern "C" {
 }
 #include "sid.h"
 
+#ifdef EMSCRIPTEN
 #include <emscripten.h>
+#endif
 
 // the clocks used in the emulation do not usually match the used audio
 // output sample rate and fractional overflows are handled here:
@@ -146,6 +148,8 @@ void runEmulation(uint8_t is_simple_sid_mode, int16_t* synth_buffer,
 	}
 }
 
+// XXX bad API design.. the batch size is actually controlled by samples_per_call and it may
+// result in more or less than "one frame". the below 1x per frame hacks obviously will not work anymore.. 
 uint8_t Core::runOneFrame(uint8_t is_simple_sid_mode, uint8_t speed, int16_t* synth_buffer, 
 							int16_t** synth_trace_bufs, uint16_t samples_per_call) {
 								
@@ -218,7 +222,7 @@ void Core::startupTune(uint32_t sample_rate, uint8_t selected_track,
 						uint8_t is_compatible, uint8_t basic_mode, 
 						uint16_t free_space, uint16_t* init_addr, uint16_t load_end_addr, 
 						uint16_t play_addr) {
-	
+
 	resetDefaults(sample_rate, is_rsid, is_ntsc, is_compatible);
 	
 	memRestoreSnapshot();	// previous sub-tune run may have corrupted the RAM
