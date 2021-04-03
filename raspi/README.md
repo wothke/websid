@@ -43,7 +43,7 @@ PSID (Lightforce.sid) and 3-12ms for an RSID (LMan - Vortex.sid). This performan
 leaves some margin for error but it is obviously not enough leeway to integrate additional 
 1MHz synchonisation directly into the emulation logic. (The measurements are an indication 
 that the program might be successfully adapted to also run on slower Raspberry Pi 3 
-devices - in case anyone what's to try that. If necessary, WebSid's SID chip emulation 
+devices - in case anyone wants to try that. If necessary, WebSid's SID chip emulation 
 could here still be disabled as a performance optimization. To be run on other 
 Raspberry models the "getBaseAddress" function in rpi4_utils.cpp would in any case need 
 to be adapted.)
