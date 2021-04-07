@@ -43,7 +43,7 @@ PSID (Lightforce.sid) and 3-12ms for an RSID (LMan - Vortex.sid). This performan
 leaves some margin for error but it is obviously not enough leeway to integrate additional 
 1MHz synchonisation directly into the emulation logic. (The measurements are an indication 
 that the program might be successfully adapted to also run on slower Raspberry Pi 3 
-devices - in case anyone wants to try that. If necessary, WebSid's SID chip emulation 
+devices - in case anyone what's to try that. If necessary, WebSid's SID chip emulation 
 could here still be disabled as a performance optimization. To be run on other 
 Raspberry models the "getBaseAddress" function in rpi4_utils.cpp would in any case need 
 to be adapted.)
@@ -78,7 +78,8 @@ timing critical (see performance considerations above).
    
 ## Depencencies
 
-requires "Wiring Pi" library - see https://github.com/WiringPi/WiringPi
+Either uses the bundled stripped down version of the "Wiring Pi" library, or a regular
+"Wiring Pi" library: see https://github.com/WiringPi/WiringPi (see Makefile)
 
 ## License
 Terms of Use: This software is licensed under a CC BY-NC-SA (http://creativecommons.org/licenses/by-nc-sa/4.0/)
