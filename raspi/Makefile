@@ -18,7 +18,7 @@ WSRCDIR=./wiringPi
 OBJDIR = ./obj
 CCOBJS = $(OBJDIR)/cia.o $(OBJDIR)/cpu.o $(OBJDIR)/hacks.o $(OBJDIR)/memory.o $(OBJDIR)/vic.o  $(OBJDIR)/wiringPi.o 
 CXXOBJS = $(OBJDIR)/core.o $(OBJDIR)/digi.o $(OBJDIR)/envelope.o $(OBJDIR)/filter.o $(OBJDIR)/loaders.o $(OBJDIR)/sid.o $(OBJDIR)/system.o $(OBJDIR)/wavegenerator.o $(OBJDIR)/sidplayer.o 
-CXXROBJS = $(OBJDIR)/main.o $(OBJDIR)/rpi4_utils.o $(OBJDIR)/gpio.o $(OBJDIR)/cp1252.o
+CXXROBJS = $(OBJDIR)/main.o $(OBJDIR)/rpi4_utils.o $(OBJDIR)/gpio_sid.o $(OBJDIR)/cp1252.o $(OBJDIR)/playback_handler.o $(OBJDIR)/device_driver_handler.o $(OBJDIR)/fallback_handler.o
 	
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.c

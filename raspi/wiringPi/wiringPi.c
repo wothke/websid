@@ -28,6 +28,10 @@
  */
 
 // Revisions:
+//  10 Apr 2021:
+//      Threw out all the stuff that I am not actually using in my RP4 specific
+//      project and added API that I actually need (see "added" in header file)
+//
 //	19 Jul 2012:
 //		Moved to the LGPL
 //		Added an abstraction layer to the main routines to save a tiny
@@ -111,19 +115,6 @@ static int wiringPiMode = WPI_MODE_UNINITIALISED ;
 
 int wiringPiDebug       = FALSE ;
 int wiringPiReturnCodes = FALSE ;
-
-
-
-// sysFds:
-//	Map a file descriptor from the /sys/class/gpio/gpioX/value
-
-static int sysFds [64] =
-{
-  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-} ;
 
 
 // Doing it the Arduino way with lookup tables...
@@ -258,15 +249,15 @@ static uint8_t gpioToGPCLR [] =
 // GPPUD:
 //	GPIO Pin pull up/down register
 
-#define	GPPUD	37
+//#define	GPPUD	37
 
 /* 2711 has a different mechanism for pin pull-up/down/enable  */
-#define GPPUPPDN0                57        /* Pin pull-up/down for pins 15:0  */
+//#define GPPUPPDN0                57        /* Pin pull-up/down for pins 15:0  */
 //#define GPPUPPDN1                58        /* Pin pull-up/down for pins 31:16 */
 //#define GPPUPPDN2                59        /* Pin pull-up/down for pins 47:32 */
 //#define GPPUPPDN3                60        /* Pin pull-up/down for pins 57:48 */
 
-static volatile unsigned int piGpioPupOffset = 0 ;
+//static volatile unsigned int piGpioPupOffset = 0 ;
 
 /*
  * Functions
@@ -362,25 +353,25 @@ int wpiPinToPhys(int wpiPin) {
 
 void pinMode (int pin, int mode)
 {	
-  int    fSel, shift/*, alt */;
-  if (mode != OUTPUT) {
-	  fprintf(stderr, "error: in pinMode (int pin, int mode) - unsupported mode\n");
-	  return;
-  }
-  
-    if (wiringPiMode == WPI_MODE_PINS)
-      pin = pinToGpio [pin] ;
-    else if (wiringPiMode == WPI_MODE_PHYS)
-      pin = physToGpio [pin] ;
-    else if (wiringPiMode != WPI_MODE_GPIO)
-      return ;
+	int    fSel, shift/*, alt */;
+	if (mode != OUTPUT) {
+		fprintf(stderr, "error: pinMode (int pin, int mode) only supports OUTPUT mode\n");
+		return;
+	}
+
+	if (wiringPiMode == WPI_MODE_PINS)
+		pin = pinToGpio [pin] ;
+	else if (wiringPiMode == WPI_MODE_PHYS)
+		pin = physToGpio [pin] ;
+	else if (wiringPiMode != WPI_MODE_GPIO)
+		return ;
 
 
-    fSel    = gpioToGPFSEL [pin] ;
-    shift   = gpioToShift  [pin] ;
+	fSel    = gpioToGPFSEL [pin] ;
+	shift   = gpioToShift  [pin] ;
 
 	// OUTPUT mode only
-      *(gpio + fSel) = (*(gpio + fSel) & ~(7 << shift)) | (1 << shift) ;
+	*(gpio + fSel) = (*(gpio + fSel) & ~(7 << shift)) | (1 << shift) ;
 }
 
 
@@ -392,66 +383,59 @@ void pinMode (int pin, int mode)
 
 void digitalWrite (int pin, int value)
 {
- // struct wiringPiNodeStruct *node = wiringPiNodes ;
+	if (wiringPiMode == WPI_MODE_PINS)
+		pin = pinToGpio [pin] ;
+	else if (wiringPiMode == WPI_MODE_PHYS)
+		pin = physToGpio [pin] ;
+	else if (wiringPiMode != WPI_MODE_GPIO)
+		return ;
 
-    /**/ if (wiringPiMode == WPI_MODE_GPIO_SYS)	// Sys mode
-    {
-      if (sysFds [pin] != -1)
-      {
 	if (value == LOW)
-	  write (sysFds [pin], "0\n", 2) ;
+		*(gpio + gpioToGPCLR [pin]) = 1 << (pin & 31) ;
 	else
-	  write (sysFds [pin], "1\n", 2) ;
-      }
-      return ;
-    }
-    else if (wiringPiMode == WPI_MODE_PINS)
-      pin = pinToGpio [pin] ;
-    else if (wiringPiMode == WPI_MODE_PHYS)
-      pin = physToGpio [pin] ;
-    else if (wiringPiMode != WPI_MODE_GPIO)
-      return ;
-
-    if (value == LOW)
-      *(gpio + gpioToGPCLR [pin]) = 1 << (pin & 31) ;
-    else
-      *(gpio + gpioToGPSET [pin]) = 1 << (pin & 31) ;
+		*(gpio + gpioToGPSET [pin]) = 1 << (pin & 31) ;
 }
 
 /*
  * digitalWriteAll:
  *	Pi Specific
- *	Write an 16-bit word to the first 16 GPIO pins - try to do it as
- *	fast as possible.
+ *	Write a maxPin-bit word to the first maxPin GPIO pins - try to do it as
+ *	fast as possible. The "mask" allows to specifically exclude pins in that 
+ *  range (e.g. so as not to touch standard SPI pins, etc)
  * note: the above two functions cannot be combined since they overwrite the
  * same registers
  *********************************************************************************
  */
 void digitalBulkWrite   (uint32_t toggles, uint32_t mask, uint8_t maxPin)
 {
-  uint32_t pinSet = 0 ;
-  uint32_t pinClr = 0 ;
-  uint32_t currentBitMask = 1 ;
-  uint32_t outMask = 0 ;
-  int pin ;
+	uint32_t pinSet = 0 ;
+	uint32_t pinClr = 0 ;
+	uint32_t currentBitMask = 1 ;
+	uint32_t outMask = 0 ;
+	int pin ;
 
-    for (pin = 0 ; pin < maxPin ; ++pin)
-    {
+	for (pin = 0 ; pin < maxPin ; ++pin)
+	{
 		uint32_t gpioPin = (1 << pinToGpio [pin]);
-		
-		if ((mask && currentBitMask) == 1) {
+
+		if (mask & currentBitMask) {
 			outMask |= gpioPin;
 		}
-		
-      if ((toggles & currentBitMask) == 0)
-		pinClr |= gpioPin ;
-      else
-		pinSet |= gpioPin ;
 
-      currentBitMask <<= 1 ;
-    }	
-    *(gpio + gpioToGPCLR [0]) = pinClr & outMask ;
-    *(gpio + gpioToGPSET [0]) = pinSet & outMask;
+		if ((toggles & currentBitMask) == 0) {
+			pinClr |= gpioPin ;
+		} else {
+			pinSet |= gpioPin ;
+		}
+		currentBitMask <<= 1 ;
+	}	
+	*(gpio + gpioToGPSET [0]) = pinSet & outMask;
+
+	// "clear" is used to activate the SID's CS, i.e. "clearing" 
+	// should better be done *after* the "setting" (for a more general
+	// purpose solution the user should be able to control what is
+	// done first..)
+	*(gpio + gpioToGPCLR [0]) = pinClr & outMask ;
 }
 
 
@@ -513,7 +497,7 @@ int wiringPiSetup (void)
 
 	// raspberry 4b specific:
 	piGpioBase = GPIO_PERI_BASE_2711 ;
-	piGpioPupOffset = GPPUPPDN0 ;
+//	piGpioPupOffset = GPPUPPDN0 ;
 
 // Open the master /dev/ memory control device
 // Device strategy: December 2016:
@@ -530,7 +514,7 @@ int wiringPiSetup (void)
     else
       return wiringPiFailure (WPI_ALMOST, "wiringPiSetup: Unable to open /dev/mem or /dev/gpiomem: %s.\n"
 	"  Aborting your program because if it can not access the GPIO\n"
-	"  hardware then it most certianly won't work\n"
+	"  hardware then it most certainly won't work\n"
 	"  Try running with sudo?\n", strerror (errno)) ;
   }
 

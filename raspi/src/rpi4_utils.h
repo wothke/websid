@@ -1,5 +1,5 @@
 /**
-* Provides utilities.
+* Provides various Raspberry Pi related utilities.
 *
 * WebSid (c) 2021 Jürgen Wothke
 * version 1.0
@@ -17,9 +17,10 @@
 extern volatile uint32_t *timer_regs;
 
 /**
-* Setup that must be performed before SYS_COUNT_LOW can be used.
+* Setup that must be performed before micros can be used.
 */
 void systemTimerSetup();
+void systemTimerTeardown();
 
 /**
 * Gets the low 32-bits of the CPU's mirco second counter.
@@ -30,7 +31,7 @@ void systemTimerSetup();
 * Since this is used in timing critical polling loop it is 
 * implemented as light-weight as possible.
 */
-#define SYS_COUNT_LOW() timer_regs[1]
+#define micros() timer_regs[1]		/* the low 32-bits of the system counter */
 
 // ---------- exception handling related --------------
 typedef void (*callback_function)(int);

@@ -21,4 +21,4 @@ pin numbering - which may be useful if code needs to be migrated to a different 
 
 ## License
 
-LGPL
+LGPL (applies specifially to this folder but NOT to the rest of this project)

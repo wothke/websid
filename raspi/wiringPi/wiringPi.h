@@ -37,10 +37,6 @@
 
 #define	UNU	__attribute__((unused))
 
-// Mask for the bottom 64 pins which belong to the Raspberry Pi
-//	The others are available for the other devices
-
-#define	PI_GPIO_MASK	(0xFFFFFFC0)
 
 // Handy defines
 
@@ -48,9 +44,7 @@
 
 #define	WPI_MODE_PINS		 0
 #define	WPI_MODE_GPIO		 1
-#define	WPI_MODE_GPIO_SYS	 2
 #define	WPI_MODE_PHYS		 3
-#define	WPI_MODE_PIFACE		 4
 #define	WPI_MODE_UNINITIALISED	-1
 
 // Pin modes

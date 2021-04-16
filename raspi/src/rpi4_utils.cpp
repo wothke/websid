@@ -25,10 +25,14 @@
 
 #define TIMER_OFFSET 0x3000
 
+using namespace std;
+
+
+// ---------- direkt access to the CPU's, memory mapped internal micro second counter -----------------
+
 volatile uint32_t *timer_regs = 0;
 
 uint32_t getBaseAddress() {
-	// see wiringPi.c
 	char buf[512];
 	FILE * fp = fopen ("/proc/cpuinfo", "r");
 
@@ -37,7 +41,7 @@ uint32_t getBaseAddress() {
 	if (fp != NULL) {
 		while (fgets(buf, sizeof(buf), fp) != NULL) {
 			if(strstr(buf,"Raspberry Pi 4")) {	// just check "Model".. "Hardware" and/or "Revision" might used instead
-				fprintf(stderr, "detected : %s", strchr(buf, ':')+1);
+				cout << "detected :" << strchr(buf, ':')+1  << endl;
 				addr = 0xFE000000;
 				break;
 			}
@@ -49,9 +53,9 @@ uint32_t getBaseAddress() {
 		// see https://www.raspberrypi.org/app/uploads/2012/02/BCM2835-ARM-Peripherals.pdf
 		// vs 
 		// https://www.raspberrypi.org/documentation/hardware/raspberrypi/bcm2711/rpi_DATA_2711_1p0.pdf
-		fprintf(stderr, "error: program currently only works for Raspberry Pi 4..\n\
-in order to make it work on other devices the correct base address would need\n\
-to be setup here (but those devices might be too slow anyway).");
+		cout << "error: program currently only works for Raspberry Pi 4.." << endl <<
+				"in order to make it work on other devices the correct base address would need" << endl <<
+				"to be setup here (but those devices might be too slow anyway)." << endl;
 		exit(1);
 	}
 	return addr;
@@ -64,13 +68,23 @@ void systemTimerSetup() {
 	int memfd = -1;
 	memfd = open("/dev/mem", O_RDWR|O_SYNC);
 	if(memfd < 0) {
-		fprintf(stderr, "error: memory map setup\n");
+		cout << "error: memory map setup" << endl;
 		exit(1);
 	}
 	timer_regs = (uint32_t *)mmap(0, 0x1000, PROT_READ|PROT_WRITE,
-				MAP_SHARED|MAP_LOCKED, memfd, base_addr+TIMER_OFFSET);		
+				MAP_SHARED|MAP_LOCKED, memfd, base_addr+TIMER_OFFSET);
+
+	if (!timer_regs) {
+		cout << "failed to mmap system timer" << endl;
+	}
 }
 
+void systemTimerTeardown() {
+	if (timer_regs) munmap((void*)timer_regs, 0x1000);
+	timer_regs= 0;
+}
+
+// ---------- signal handing to catch ctrl-c and floating-point related bugs -----------------
 
 // simple mapping of signal codes that might be useful in the 
 // "unheard of" event of some WebSid bug 
@@ -92,12 +106,11 @@ const char *SIGS[9] = {
 	// ..
 };
 
-
 void installSigHandler(callback_function callback) {
 	// garbage C++ does not allow to handle float-exceptions (etc) as regular exceptions..
     std::shared_ptr<void(int)> handler(
         signal(SIGFPE, [](int signum) {
-			fprintf(stderr, "Error: signal %d: %s\n", signum, SIGS[signum]);
+			cout << "Error: signal " << signum << ": " << SIGS[signum] << endl;
 		  
 			/* if this happens, using gdb should be used to get a meaningful stacktrace:
 			
@@ -108,18 +121,11 @@ void installSigHandler(callback_function callback) {
 			*/
 
 			throw std::logic_error("SIGFPE"); 
-		}),
+		}),		
         [](__sighandler_t f) { signal(SIGFPE, f); });
 		
 		
-	// used to handle ctrl-C
-	// handle ctrl-C
-	struct sigaction sigIntHandler;
-
-	sigIntHandler.sa_handler = callback;
-	sigemptyset(&sigIntHandler.sa_mask);
-	sigIntHandler.sa_flags = 0;
-	sigaction(SIGINT, &sigIntHandler, NULL);
+     sigset(SIGINT, callback);	// handle ctrl-C
 }
 
 
@@ -143,23 +149,36 @@ void migrateThreadToCore3() {
 }
 
 void startHyperdrive() {
-	// it looks as if each core is represented as a "cpuX" here.. and it seems reasonable
-	// that both, the dedicated core as well as the core used by linux should be boosted to max
-	system("sudo cp /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq "
-		"/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq");
+	
+	// issue: the /sys/devices/system/cpu/cpu3/cpufreq/scaling_max_freq setting manipulated in 
+	// userland does NOT seem to have a permanent effect here, i.e. with the websid_module installed 
+	// the cpuinfo_cur_freq for core #3 by default seems to be idling at 600MHz! and only when the
+	// playback thread is run it goes up to 1500MHz (it is unclear how this might interfer with the
+	// timing and the interpretation of the system counter)
+		
+	// although recommended on "stackoverflow" the below does not seem to work at 
+	// all.. in any case it does not seem to have a permament effect on the system 
+	// and resets even without the below stopHyperdrive call
+	
+	// supposedly this setting actually applies to all the cores..
+	system("sudo cp /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq "	// 1500000
+		"/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq");			//  600000
 				
+	// .. so this may not be necessary:
 	system("sudo cp /sys/devices/system/cpu/cpu3/cpufreq/cpuinfo_max_freq "
 		"/sys/devices/system/cpu/cpu3/cpufreq/scaling_max_freq");
-		
+	
+	// .. supposedly the micro clock glitches at 1.5Hz - todo: try to find test case
+	
 	// FIXME clock change might mess up SPI timing and for future A/D measurement 
 	// extensions it might be necessary to run those off a dedicated core with some optimized
 	// clock speed
 }
 
-void stopHyperdrive() {
+void stopHyperdrive() {	
 	// restore to default
 	system("sudo cp /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq "
 		"/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq");
 	system("sudo cp /sys/devices/system/cpu/cpu3/cpufreq/scaling_min_freq "
-		"/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq");
+		"/sys/devices/system/cpu/cpu3/cpufreq/scaling_max_freq");
 }
